@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <rect width="512" height="512" rx="80" fill="#1e40af"/>
+  <text x="256" y="190" text-anchor="middle" font-family="Arial,sans-serif" font-weight="800" font-size="128" fill="white">IO</text>
+  <text x="256" y="280" text-anchor="middle" font-family="Arial,sans-serif" font-weight="600" font-size="38" fill="#93c5fd">IMPRIMERIE</text>
+  <text x="256" y="330" text-anchor="middle" font-family="Arial,sans-serif" font-weight="600" font-size="38" fill="#93c5fd">OGOOUE</text>
+  <rect x="100" y="370" width="312" height="6" rx="3" fill="#3b82f6"/>
+</svg>
