@@ -237,16 +237,29 @@ export default function DevisFactures() {
     ).join('');
     const settings = JSON.parse(localStorage.getItem('io_settings') || '{}');
     const companyName = settings.nom_entreprise || 'Imprimerie Ogooué';
+    const companyAddr = settings.adresse || 'Libreville, Gabon';
+    const companyTel = settings.telephone || '';
+    const logoUrl = settings.logo || '/logo.png';
 
     w.document.write(`<!DOCTYPE html><html><head><title>${doc.numero}</title>
       <style>body{font-family:Arial,sans-serif;max-width:800px;margin:40px auto;color:#333}
-      h1{color:#4f46e5;margin-bottom:4px}table{width:100%;border-collapse:collapse;margin-top:20px}
+      table{width:100%;border-collapse:collapse;margin-top:20px}
       th{background:#f8f9fa;padding:10px 8px;text-align:left;font-size:13px;border-bottom:2px solid #dee2e6}
       .total{text-align:right;font-size:18px;font-weight:bold;margin-top:20px;padding-top:10px;border-top:2px solid #333}
+      .header{display:flex;align-items:center;gap:16px;margin-bottom:4px}
+      .header img{width:70px;height:70px;object-fit:contain}
+      .header h1{color:#0ea5e9;margin:0;font-size:22px}
+      .header p{color:#666;margin:2px 0;font-size:13px}
       @media print{body{margin:20px}}</style></head><body>
-      <h1>${companyName}</h1>
-      <p style="color:#666;margin-top:0">Libreville, Gabon</p>
-      <hr style="margin:20px 0">
+      <div class="header">
+        <img src="${logoUrl}" alt="Logo" />
+        <div>
+          <h1>${companyName}</h1>
+          <p>${companyAddr}</p>
+          ${companyTel ? `<p>Tél: ${companyTel}</p>` : ''}
+        </div>
+      </div>
+      <hr style="margin:16px 0;border:none;border-top:2px solid #0ea5e9">
       <div style="display:flex;justify-content:space-between">
         <div><strong>${TYPES[doc._type].label} N° ${doc.numero}</strong><br>Date: ${doc.date || '-'}</div>
         <div style="text-align:right"><strong>${doc.client_nom}</strong><br>${doc.client_adresse || ''}</div>

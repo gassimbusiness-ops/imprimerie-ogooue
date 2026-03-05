@@ -203,13 +203,11 @@ export default function Sidebar({ open, onClose }) {
         {/* Logo */}
         <div className="flex h-16 items-center justify-between border-b border-sidebar-border px-4">
           <Link to="/" className="flex items-center gap-3" onClick={onClose}>
-            {companyLogo ? (
-              <img src={companyLogo} alt="Logo" className="h-9 w-9 rounded-lg object-contain" />
-            ) : (
-              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-sidebar-primary">
-                <Printer className="h-5 w-5 text-white" />
-              </div>
-            )}
+            <img
+              src={companyLogo || '/logo.png'}
+              alt="Imprimerie Ogooué"
+              className="h-10 w-10 rounded-lg object-contain"
+            />
             <div className="leading-tight">
               <p className="text-sm font-bold text-sidebar-foreground">
                 Imprimerie

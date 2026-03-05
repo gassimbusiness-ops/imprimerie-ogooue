@@ -33,9 +33,7 @@ export default function ClientLayout() {
               {menuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
             </Button>
             <Link to="/client" className="flex items-center gap-2">
-              <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary">
-                <Printer className="h-5 w-5 text-white" />
-              </div>
+              <img src="/logo.png" alt="Imprimerie Ogooué" className="h-10 w-10 rounded-lg object-contain" />
               <div className="hidden sm:block">
                 <p className="text-sm font-bold leading-tight">Imprimerie Ogooué</p>
                 <p className="text-[10px] text-muted-foreground">Espace Client</p>

@@ -39,10 +39,8 @@ export default function Login() {
       <div className="w-full max-w-sm space-y-6">
         {/* Logo */}
         <div className="text-center">
-          <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-primary shadow-lg shadow-primary/25">
-            <Printer className="h-8 w-8 text-white" />
-          </div>
-          <h1 className="mt-4 text-2xl font-bold text-foreground">
+          <img src="/logo.png" alt="Imprimerie Ogooué" className="mx-auto h-28 w-28 object-contain" />
+          <h1 className="mt-2 text-2xl font-bold text-foreground">
             Imprimerie Ogooué
           </h1>
           <p className="text-sm text-muted-foreground">

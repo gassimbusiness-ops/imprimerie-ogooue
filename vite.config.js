@@ -8,11 +8,11 @@ export default defineConfig({
     react(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['apple-touch-icon.png', 'pwa-192x192.svg', 'pwa-512x512.svg'],
+      includeAssets: ['apple-touch-icon.png', 'logo.png', 'favicon.ico'],
       manifest: {
         name: 'Imprimerie Ogooue - Gestion',
         short_name: 'Imprimerie Ogooue',
-        description: 'Application de gestion de l\'Imprimerie Ogooué — rapports, stocks, commandes, clients et plus.',
+        description: 'Application de gestion de l\'Imprimerie Ogooue — rapports, stocks, commandes, clients et plus.',
         theme_color: '#1e40af',
         background_color: '#0f172a',
         display: 'standalone',
@@ -36,17 +36,6 @@ export default defineConfig({
             sizes: '512x512',
             type: 'image/png',
             purpose: 'maskable',
-          },
-          {
-            src: 'pwa-192x192.svg',
-            sizes: '192x192',
-            type: 'image/svg+xml',
-          },
-          {
-            src: 'pwa-512x512.svg',
-            sizes: '512x512',
-            type: 'image/svg+xml',
-            purpose: 'any',
           },
         ],
       },

@@ -1,7 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="180" height="180" viewBox="0 0 180 180">
-  <rect width="180" height="180" rx="30" fill="#1e40af"/>
-  <text x="90" y="68" text-anchor="middle" font-family="Arial,sans-serif" font-weight="800" font-size="44" fill="white">IO</text>
-  <text x="90" y="100" text-anchor="middle" font-family="Arial,sans-serif" font-weight="600" font-size="13" fill="#93c5fd">IMPRIMERIE</text>
-  <text x="90" y="118" text-anchor="middle" font-family="Arial,sans-serif" font-weight="600" font-size="13" fill="#93c5fd">OGOOUE</text>
-  <rect x="36" y="132" width="108" height="3" rx="1.5" fill="#3b82f6"/>
-</svg>

@@ -19,6 +19,9 @@ dist-ssr
 # Deploy artifacts
 *.zip
 
+# Claude Code
+.claude/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

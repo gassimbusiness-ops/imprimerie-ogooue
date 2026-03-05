@@ -1,0 +1,62 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="500" height="500" viewBox="0 0 500 500">
+  <!-- Background -->
+  <rect width="500" height="500" fill="white"/>
+
+  <!-- CMYK Splashes -->
+  <!-- Cyan splash (left) -->
+  <circle cx="145" cy="180" r="45" fill="#00AEEF"/>
+  <circle cx="120" cy="150" r="30" fill="#00AEEF"/>
+  <circle cx="105" cy="210" r="20" fill="#00AEEF"/>
+  <circle cx="130" cy="125" r="15" fill="#00AEEF"/>
+  <circle cx="95" cy="175" r="12" fill="#00AEEF"/>
+
+  <!-- Magenta splash (top) -->
+  <circle cx="250" cy="100" r="42" fill="#EC008C"/>
+  <circle cx="220" cy="75" r="28" fill="#EC008C"/>
+  <circle cx="280" cy="80" r="25" fill="#EC008C"/>
+  <circle cx="255" cy="55" r="18" fill="#EC008C"/>
+  <circle cx="230" cy="110" r="15" fill="#EC008C"/>
+
+  <!-- Yellow splash (right-top) -->
+  <circle cx="340" cy="120" r="38" fill="#FFF200"/>
+  <circle cx="365" cy="95" r="25" fill="#FFF200"/>
+  <circle cx="325" cy="90" r="20" fill="#FFF200"/>
+  <circle cx="370" cy="135" r="15" fill="#FFF200"/>
+
+  <!-- Black splash (right) -->
+  <circle cx="365" cy="185" r="35" fill="#231F20"/>
+  <circle cx="385" cy="160" r="22" fill="#231F20"/>
+  <circle cx="350" cy="155" r="16" fill="#231F20"/>
+  <circle cx="390" cy="200" r="14" fill="#231F20"/>
+  <circle cx="370" cy="220" r="10" fill="#231F20"/>
+  <circle cx="395" cy="180" r="8" fill="#231F20"/>
+
+  <!-- Printer body -->
+  <rect x="140" y="185" width="220" height="110" rx="8" fill="white" stroke="#231F20" stroke-width="5"/>
+
+  <!-- Paper tray top -->
+  <rect x="165" y="170" width="170" height="35" rx="3" fill="white" stroke="#231F20" stroke-width="4"/>
+  <rect x="175" y="178" width="150" height="20" rx="2" fill="#f0f0f0" stroke="#231F20" stroke-width="2"/>
+
+  <!-- Printer details -->
+  <circle cx="175" cy="230" r="6" fill="#231F20"/>
+  <circle cx="195" cy="230" r="4" fill="#231F20"/>
+
+  <!-- Paper output slot -->
+  <rect x="180" y="255" width="30" height="8" rx="2" fill="#231F20"/>
+  <rect x="220" y="255" width="30" height="8" rx="2" fill="#231F20"/>
+  <rect x="260" y="255" width="30" height="8" rx="2" fill="#231F20"/>
+  <rect x="300" y="255" width="30" height="8" rx="2" fill="#231F20"/>
+
+  <!-- Paper coming out bottom -->
+  <rect x="170" y="290" width="160" height="30" rx="2" fill="white" stroke="#231F20" stroke-width="3"/>
+
+  <!-- Text: imprimerie -->
+  <text x="250" y="385" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-weight="700" font-size="38" fill="#333333">imprimerie</text>
+
+  <!-- Separator line -->
+  <line x1="155" y1="400" x2="345" y2="400" stroke="#333333" stroke-width="2.5"/>
+
+  <!-- Text: OGOOUE -->
+  <text x="250" y="445" text-anchor="middle" font-family="Arial,Helvetica,sans-serif" font-weight="800" font-size="52" fill="#00AEEF">OGOOUE</text>
+</svg>
