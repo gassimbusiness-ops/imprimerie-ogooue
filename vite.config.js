@@ -4,10 +4,14 @@ import { VitePWA } from 'vite-plugin-pwa'
 import path from 'path'
 
 export default defineConfig({
+  define: {
+    __APP_BUILD__: JSON.stringify(new Date().toISOString()),
+  },
   plugins: [
     react(),
     VitePWA({
       registerType: 'autoUpdate',
+      injectRegister: false,
       includeAssets: ['apple-touch-icon.png', 'logo.png', 'favicon.ico'],
       manifest: {
         name: 'Imprimerie Ogooue - Gestion',
