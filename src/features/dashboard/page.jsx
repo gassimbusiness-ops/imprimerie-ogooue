@@ -18,6 +18,9 @@ import {
   Clock,
   Plus,
   Package,
+  Landmark,
+  Building2,
+  Globe,
 } from 'lucide-react';
 import {
   AreaChart,
@@ -53,6 +56,7 @@ export default function Dashboard() {
   const [rapports, setRapports] = useState([]);
   const [clients, setClients] = useState([]);
   const [produits, setProduits] = useState([]);
+  const [comptes, setComptes] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -60,10 +64,12 @@ export default function Dashboard() {
       db.rapports.list(),
       db.clients.list(),
       db.produits.list(),
-    ]).then(([r, c, p]) => {
+      db.comptes_bancaires.list(),
+    ]).then(([r, c, p, cb]) => {
       setRapports(r.sort((a, b) => b.date.localeCompare(a.date)));
       setClients(c);
       setProduits(p);
+      setComptes(cb);
       setLoading(false);
     });
   }, []);
@@ -275,6 +281,40 @@ export default function Dashboard() {
           </Card>
         </div>
       </div>
+
+      {/* Soldes bancaires — admin/manager uniquement */}
+      {!isEmploye && comptes.length > 0 && (
+        <Card>
+          <CardHeader className="flex flex-row items-center justify-between">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Landmark className="h-4 w-4 text-blue-600" />
+              Trésorerie
+            </CardTitle>
+            <Link to="/finances">
+              <Button variant="ghost" size="sm" className="gap-1 text-xs">
+                Détails <ArrowRight className="h-3 w-3" />
+              </Button>
+            </Link>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+              {comptes.map((c) => (
+                <div key={c.id} className="rounded-lg border p-2.5">
+                  <div className="flex items-center gap-2 mb-1">
+                    {c.type === 'online' || c.type === 'international' ? <Globe className="h-3.5 w-3.5 text-muted-foreground" /> : <Building2 className="h-3.5 w-3.5 text-muted-foreground" />}
+                    <span className="text-xs font-medium truncate">{c.nom}</span>
+                  </div>
+                  <p className="text-sm font-bold">{fmt(c.solde)} <span className="text-[10px] font-normal text-muted-foreground">{c.devise === 'XAF' ? 'FCFA' : c.devise}</span></p>
+                </div>
+              ))}
+            </div>
+            <div className="mt-2 text-right">
+              <span className="text-xs text-muted-foreground">Total: </span>
+              <span className="text-sm font-bold text-primary">{fmt(comptes.reduce((s, c) => s + (c.solde || 0), 0))} F</span>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Recent rapports — masqué pour les employés (contient des montants financiers) */}
       {!isEmploye && (

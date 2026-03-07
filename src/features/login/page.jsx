@@ -4,11 +4,13 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Printer, Loader2, AlertCircle } from 'lucide-react';
+import { Loader2, AlertCircle, Eye, EyeOff, Lock, Mail } from 'lucide-react';
 
 export default function Login() {
   const { login } = useAuth();
   const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -19,17 +21,12 @@ export default function Login() {
       setError('Veuillez entrer votre email');
       return;
     }
+    if (!password) {
+      setError('Veuillez entrer votre mot de passe');
+      return;
+    }
     setLoading(true);
-    const result = await login(email.trim());
-    setLoading(false);
-    if (result.error) setError(result.error);
-  };
-
-  const quickLogin = async (email) => {
-    setEmail(email);
-    setLoading(true);
-    setError('');
-    const result = await login(email);
+    const result = await login(email.trim(), password);
     setLoading(false);
     if (result.error) setError(result.error);
   };
@@ -39,8 +36,8 @@ export default function Login() {
       <div className="w-full max-w-sm space-y-6">
         {/* Logo */}
         <div className="text-center">
-          <img src="/logo.png" alt="Imprimerie Ogooué" className="mx-auto h-28 w-28 object-contain" />
-          <h1 className="mt-2 text-2xl font-bold text-foreground">
+          <img src="/logo.png" alt="Imprimerie Ogooué" className="mx-auto h-28 w-28 object-contain drop-shadow-md" />
+          <h1 className="mt-3 text-2xl font-bold text-foreground">
             Imprimerie Ogooué
           </h1>
           <p className="text-sm text-muted-foreground">
@@ -49,20 +46,47 @@ export default function Login() {
         </div>
 
         {/* Login form */}
-        <Card>
+        <Card className="shadow-lg">
           <CardContent className="p-6">
             <form onSubmit={handleSubmit} className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="email">Adresse email</Label>
+                <Label htmlFor="email" className="flex items-center gap-1.5">
+                  <Mail className="h-3.5 w-3.5" /> Adresse email
+                </Label>
                 <Input
                   id="email"
                   type="email"
-                  placeholder="votre.email@imprimerie-ogooue.ga"
+                  placeholder="votre.email@exemple.com"
                   value={email}
                   onChange={(e) => { setEmail(e.target.value); setError(''); }}
                   autoFocus
                   autoComplete="email"
                 />
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="password" className="flex items-center gap-1.5">
+                  <Lock className="h-3.5 w-3.5" /> Mot de passe
+                </Label>
+                <div className="relative">
+                  <Input
+                    id="password"
+                    type={showPassword ? 'text' : 'password'}
+                    placeholder="••••••••"
+                    value={password}
+                    onChange={(e) => { setPassword(e.target.value); setError(''); }}
+                    autoComplete="current-password"
+                    className="pr-10"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword(!showPassword)}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                    tabIndex={-1}
+                  >
+                    {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
               </div>
 
               {error && (
@@ -73,71 +97,18 @@ export default function Login() {
               )}
 
               <Button type="submit" className="w-full gap-2" size="lg" disabled={loading}>
-                {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+                {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Lock className="h-4 w-4" />}
                 Se connecter
               </Button>
             </form>
           </CardContent>
         </Card>
 
-        {/* Quick login (dev mode) */}
-        <Card>
-          <CardContent className="p-4">
-            <p className="mb-3 text-center text-xs font-medium text-muted-foreground">
-              Connexion rapide
-            </p>
-            <div className="space-y-2">
-              <button
-                onClick={() => quickLogin('jp.moussavou@imprimerie-ogooue.ga')}
-                className="flex w-full items-center gap-3 rounded-lg border p-3 text-left transition-colors hover:bg-muted/50"
-              >
-                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-violet-100 text-xs font-bold text-violet-700">
-                  JP
-                </div>
-                <div>
-                  <p className="text-sm font-medium">Jean-Pierre Moussavou</p>
-                  <p className="text-xs text-muted-foreground">Administrateur</p>
-                </div>
-              </button>
-              <button
-                onClick={() => quickLogin('marie.nze@imprimerie-ogooue.ga')}
-                className="flex w-full items-center gap-3 rounded-lg border p-3 text-left transition-colors hover:bg-muted/50"
-              >
-                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-blue-100 text-xs font-bold text-blue-700">
-                  MN
-                </div>
-                <div>
-                  <p className="text-sm font-medium">Marie Nzé</p>
-                  <p className="text-xs text-muted-foreground">Manager</p>
-                </div>
-              </button>
-              <button
-                onClick={() => quickLogin('patrick.obiang@imprimerie-ogooue.ga')}
-                className="flex w-full items-center gap-3 rounded-lg border p-3 text-left transition-colors hover:bg-muted/50"
-              >
-                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 text-xs font-bold text-slate-700">
-                  PO
-                </div>
-                <div>
-                  <p className="text-sm font-medium">Patrick Obiang</p>
-                  <p className="text-xs text-muted-foreground">Employé</p>
-                </div>
-              </button>
-              <button
-                onClick={() => quickLogin('client.test@gmail.com')}
-                className="flex w-full items-center gap-3 rounded-lg border p-3 text-left transition-colors hover:bg-muted/50"
-              >
-                <div className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-100 text-xs font-bold text-emerald-700">
-                  CT
-                </div>
-                <div>
-                  <p className="text-sm font-medium">Client Test</p>
-                  <p className="text-xs text-muted-foreground">Client (Portail externe)</p>
-                </div>
-              </button>
-            </div>
-          </CardContent>
-        </Card>
+        {/* Footer */}
+        <p className="text-center text-[11px] text-muted-foreground">
+          Imprimerie OGOOUÉ — Moanda, Gabon<br />
+          Contactez l'administrateur pour obtenir vos identifiants
+        </p>
       </div>
     </div>
   );

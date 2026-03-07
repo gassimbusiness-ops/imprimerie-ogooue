@@ -1,13 +1,15 @@
 import { db } from './db';
+import { hashPassword, generateSalt } from './crypto';
 
-const SEED_KEY = 'io_seeded_v5';
+const SEED_KEY = 'io_seeded_v6';
 
 const EMPLOYES = [
-  { nom: 'Moussavou', prenom: 'Jean-Pierre', email: 'jp.moussavou@imprimerie-ogooue.ga', role: 'admin', poste: 'Directeur' },
-  { nom: 'Nzé', prenom: 'Marie', email: 'marie.nze@imprimerie-ogooue.ga', role: 'manager', poste: 'Responsable production' },
-  { nom: 'Obiang', prenom: 'Patrick', email: 'patrick.obiang@imprimerie-ogooue.ga', role: 'employe', poste: 'Opérateur' },
-  { nom: 'Mba', prenom: 'Estelle', email: 'estelle.mba@imprimerie-ogooue.ga', role: 'employe', poste: 'Opératrice' },
-  { nom: 'Ndong', prenom: 'Samuel', email: 'samuel.ndong@imprimerie-ogooue.ga', role: 'employe', poste: 'Technicien' },
+  { nom: 'Admin', prenom: 'Imprimerie', email: 'imprimerieogooue@gmail.com', role: 'admin', poste: 'Directeur Général', password: 'Pv11072023*' },
+  { nom: 'Moussavou', prenom: 'Jean-Pierre', email: 'jp.moussavou@imprimerie-ogooue.ga', role: 'manager', poste: 'Responsable production', password: 'Manager2024!' },
+  { nom: 'Nzé', prenom: 'Marie', email: 'marie.nze@imprimerie-ogooue.ga', role: 'manager', poste: 'Responsable commerciale', password: 'Manager2024!' },
+  { nom: 'Obiang', prenom: 'Patrick', email: 'patrick.obiang@imprimerie-ogooue.ga', role: 'employe', poste: 'Opérateur', password: 'Employe2024!' },
+  { nom: 'Mba', prenom: 'Estelle', email: 'estelle.mba@imprimerie-ogooue.ga', role: 'employe', poste: 'Opératrice', password: 'Employe2024!' },
+  { nom: 'Ndong', prenom: 'Samuel', email: 'samuel.ndong@imprimerie-ogooue.ga', role: 'employe', poste: 'Technicien', password: 'Employe2024!' },
 ];
 
 const CLIENTS = [
@@ -74,7 +76,7 @@ export async function seedDatabase() {
   if (localStorage.getItem(SEED_KEY)) return;
 
   // Clear old seed data if upgrading
-  const oldKeys = ['io_seeded_v1', 'io_seeded_v2', 'io_seeded_v3', 'io_seeded_v4'];
+  const oldKeys = ['io_seeded_v1', 'io_seeded_v2', 'io_seeded_v3', 'io_seeded_v4', 'io_seeded_v5'];
   const hadOldSeed = oldKeys.some((k) => localStorage.getItem(k));
   if (hadOldSeed) {
     ['io_employes', 'io_clients', 'io_produits', 'io_rapports', 'io_pointages',
@@ -84,9 +86,21 @@ export async function seedDatabase() {
     oldKeys.forEach((k) => localStorage.removeItem(k));
   }
 
+  // Create employees with hashed passwords
   const createdEmployes = [];
   for (const e of EMPLOYES) {
-    const created = await db.employes.create(e);
+    const salt = generateSalt();
+    const hash = await hashPassword(e.password, salt);
+    const created = await db.employes.create({
+      nom: e.nom,
+      prenom: e.prenom,
+      email: e.email,
+      role: e.role,
+      poste: e.poste,
+      password_hash: hash,
+      password_salt: salt,
+      password_changed_at: new Date().toISOString(),
+    });
     createdEmployes.push(created);
   }
 
@@ -146,7 +160,6 @@ export async function seedDatabase() {
       (s, r) => s + (r.depenses || []).reduce((a, d) => a + (d.montant || 0), 0), 0
     );
     const attendu = recettes - depenses;
-    // Small random variance: -2% to +1% of expected
     const variance = Math.round(attendu * (Math.random() * 0.03 - 0.02));
     const reel = attendu + variance;
     const ecart = reel - attendu;
@@ -161,7 +174,7 @@ export async function seedDatabase() {
       ecart,
       commentaire: statut === 'ok' ? '' : 'Écart constaté, vérification en cours',
       statut,
-      valide_par: statut !== 'ok' ? 'Jean-Pierre Moussavou' : '',
+      valide_par: statut !== 'ok' ? 'Imprimerie Admin' : '',
     });
   }
 
@@ -189,6 +202,26 @@ export async function seedDatabase() {
       entity_id: crypto.randomUUID(),
       metadata: {},
     });
+  }
+
+  // Seed default settings with correct company info
+  const existingSettings = localStorage.getItem('io_settings');
+  if (!existingSettings || existingSettings === '{}') {
+    localStorage.setItem('io_settings', JSON.stringify({
+      nom_entreprise: 'Imprimerie OGOOUÉ',
+      slogan: 'Votre partenaire impression à Moanda',
+      adresse: 'Carrefour Fina en face de Finam',
+      ville: 'Moanda',
+      pays: 'Gabon',
+      telephone: '060 44 46 34 / 074 42 41 42',
+      email: 'imprimerieogooue@gmail.com',
+      site_web: '',
+      nif: '256598U',
+      rccm: 'RG/FCV 2023A0407',
+      logo: '',
+      devise: 'F CFA',
+      tva: '0',
+    }));
   }
 
   localStorage.setItem(SEED_KEY, 'true');

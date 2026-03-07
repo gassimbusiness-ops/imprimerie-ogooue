@@ -102,4 +102,8 @@ export const db = {
   apports_associes: new Collection('apports_associes'),
   dettes_associes: new Collection('dettes_associes'),
   remboursements_associes: new Collection('remboursements_associes'),
+  // Phase 6: Finance avancée
+  comptes_bancaires: new Collection('comptes_bancaires'),
+  mouvements_financiers: new Collection('mouvements_financiers'),
+  depots_hebdo: new Collection('depots_hebdo'),
 };

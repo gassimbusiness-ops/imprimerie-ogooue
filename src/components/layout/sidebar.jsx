@@ -57,7 +57,7 @@ const NAV_GROUPS = [
     items: [
       { name: 'Dashboard Financier', href: '/statistiques', icon: BarChart3, module: 'statistiques' },
       { name: 'Bilans', href: '/bilans', icon: PieChart, module: 'statistiques' },
-      { name: 'Finances', href: '/finances', icon: Landmark, module: 'statistiques' },
+      { name: 'Finances', href: '/finances', icon: Landmark, module: 'finances' },
       { name: 'Objectifs', href: '/objectifs', icon: Target, module: 'statistiques' },
       { name: 'Devis & Factures', href: '/devis-factures', icon: FileText, module: 'devis_factures' },
       { name: 'Clôture de Caisse', href: '/cloture-caisse', icon: Wallet, module: 'statistiques' },
@@ -86,7 +86,7 @@ const NAV_GROUPS = [
   {
     label: 'Gouvernance',
     items: [
-      { name: 'Capital & Investisseurs', href: '/gouvernance', icon: TrendingUp, module: 'parametres' },
+      { name: 'Capital & Investisseurs', href: '/gouvernance', icon: TrendingUp, module: 'gouvernance' },
     ],
   },
   {

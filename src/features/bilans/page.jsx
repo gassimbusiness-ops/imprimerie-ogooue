@@ -7,8 +7,10 @@ import {
 } from '@/components/ui/select';
 import {
   TrendingUp, TrendingDown, DollarSign, BarChart3, PieChart as PieIcon,
-  Calendar, ArrowUpRight, ArrowDownRight, Minus,
+  Calendar, ArrowUpRight, ArrowDownRight, Minus, Download,
 } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { exportBilanPDF } from '@/services/export-pdf';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   ResponsiveContainer, PieChart, Pie, Cell,
@@ -117,6 +119,11 @@ export default function Bilans() {
           </Select>
           <input type="month" value={mois} onChange={(e) => setMois(e.target.value)}
             className="rounded-md border px-3 py-2 text-sm" />
+          <Button variant="outline" size="sm" className="gap-2" onClick={() => {
+            if (data) exportBilanPDF(data, `${periode === 'mois' ? new Date(mois + '-01').toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' }) : mois.slice(0, 4)}`);
+          }}>
+            <Download className="h-4 w-4" /> PDF
+          </Button>
         </div>
       </div>
 

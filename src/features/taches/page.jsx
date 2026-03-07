@@ -416,11 +416,11 @@ export default function Taches() {
             </div>
             <div>
               <label className="mb-1.5 block text-sm font-medium">Assigné à</label>
-              <Select value={form.assigne_a} onValueChange={(v) => setForm({ ...form, assigne_a: v })}>
+              <Select value={form.assigne_a || '__none__'} onValueChange={(v) => setForm({ ...form, assigne_a: v === '__none__' ? '' : v })}>
                 <SelectTrigger><SelectValue placeholder="Choisir un employé" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">Non assigné</SelectItem>
-                  {employes.map((e) => <SelectItem key={e.id} value={e.id}>{e.prenom} {e.nom}</SelectItem>)}
+                  <SelectItem value="__none__">Non assigné</SelectItem>
+                  {employes.filter((e) => e.role !== 'client').map((e) => <SelectItem key={e.id} value={e.id}>{e.prenom} {e.nom}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>

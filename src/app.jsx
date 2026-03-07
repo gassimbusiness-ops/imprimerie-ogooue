@@ -117,14 +117,14 @@ export default function App() {
           <Route path="catalogue" element={<RequirePermission module="stocks"><Catalogue /></RequirePermission>} />
           <Route path="prospection" element={<RequirePermission module="clients"><Prospection /></RequirePermission>} />
           <Route path="bilans" element={<RequirePermission module="statistiques"><Bilans /></RequirePermission>} />
-          <Route path="finances" element={<RequirePermission module="statistiques"><Finances /></RequirePermission>} />
+          <Route path="finances" element={<RequirePermission module="finances"><Finances /></RequirePermission>} />
           <Route path="objectifs" element={<RequirePermission module="statistiques"><Objectifs /></RequirePermission>} />
           <Route path="demandes-rh" element={<RequirePermission module="employes"><DemandesRH /></RequirePermission>} />
           <Route path="travaux" element={<RequirePermission module="statistiques"><Travaux /></RequirePermission>} />
           <Route path="evenements" element={<RequirePermission module="clients"><Evenements /></RequirePermission>} />
           <Route path="messagerie" element={<RequirePermission module="clients"><Messagerie /></RequirePermission>} />
           <Route path="tarifs-clients" element={<RequirePermission module="clients"><TarifsClients /></RequirePermission>} />
-          <Route path="gouvernance" element={<RequirePermission module="parametres"><Gouvernance /></RequirePermission>} />
+          <Route path="gouvernance" element={<RequirePermission module="gouvernance"><Gouvernance /></RequirePermission>} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
