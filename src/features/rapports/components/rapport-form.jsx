@@ -1,8 +1,7 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { db } from '@/services/db';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
 import {
   Select,
   SelectContent,
@@ -10,98 +9,163 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import {
-  Copy,
-  ShoppingBag,
-  ScanLine,
-  Keyboard,
-  CreditCard,
-  Camera,
-  Wrench,
-  Printer,
-  Plus,
-  X,
-  Save,
-  Send,
-  Loader2,
-} from 'lucide-react';
+import { X, Save, Send, Loader2, FileSpreadsheet } from 'lucide-react';
 import { toast } from 'sonner';
 
-const CATEGORIES = [
-  { key: 'copies', label: 'Copies', icon: Copy, color: 'bg-blue-500' },
-  { key: 'marchandises', label: 'Marchandises', icon: ShoppingBag, color: 'bg-purple-500' },
-  { key: 'scan', label: 'Scan', icon: ScanLine, color: 'bg-teal-500' },
-  { key: 'tirage_saisies', label: 'Tirage & Saisies', icon: Keyboard, color: 'bg-orange-500' },
-  { key: 'badges_plastification', label: 'Badges & Plastif.', icon: CreditCard, color: 'bg-pink-500' },
-  { key: 'demi_photos', label: 'Demi-Photos', icon: Camera, color: 'bg-cyan-500' },
-  { key: 'maintenance', label: 'Maintenance', icon: Wrench, color: 'bg-slate-500' },
-  { key: 'imprimerie', label: 'Imprimerie', icon: Printer, color: 'bg-indigo-500' },
+/* ─── Colonnes du tableur ─── */
+const COLUMNS = [
+  { key: 'copies', label: 'COPIES', type: 'number' },
+  { key: 'marchandises', label: 'MARCHANDISES', type: 'number' },
+  { key: 'scan', label: 'SCAN', type: 'number' },
+  { key: 'tirage_saisies', label: 'TIRAGE / SAISIES', type: 'number' },
+  { key: 'badges_plastification', label: 'BADGES / PLASTIFICATION', type: 'number' },
+  { key: 'demi_photos', label: 'DEMI-PHOTOS', type: 'number' },
+  { key: 'maintenance', label: 'MAINTENANCE', type: 'number' },
+  { key: 'imprimerie', label: 'IMPRIMERIE', type: 'number' },
+  { key: 'sorties', label: 'SORTIES', type: 'number', isSortie: true },
+  { key: 'description', label: 'DESCRIPTION', type: 'text' },
 ];
 
-function formatFCFA(n) {
-  return new Intl.NumberFormat('fr-FR').format(n || 0);
+const NUM_COLS = COLUMNS.filter((c) => c.type === 'number');
+const RECETTE_COLS = NUM_COLS.filter((c) => !c.isSortie);
+const NB_ROWS = 30;
+
+function emptyRow() {
+  const row = {};
+  COLUMNS.forEach((c) => {
+    row[c.key] = c.type === 'number' ? 0 : '';
+  });
+  return row;
 }
 
+function initRows(existing) {
+  if (existing && existing.length > 0) {
+    // Pad to NB_ROWS
+    const rows = existing.map((r) => ({ ...emptyRow(), ...r }));
+    while (rows.length < NB_ROWS) rows.push(emptyRow());
+    return rows;
+  }
+  return Array.from({ length: NB_ROWS }, () => emptyRow());
+}
+
+function fmt(n) {
+  return new Intl.NumberFormat('fr-FR').format(Math.round(n || 0));
+}
+
+function formatDate(d) {
+  if (!d) return '';
+  const dt = new Date(d + 'T00:00:00');
+  return dt.toLocaleDateString('fr-FR', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' });
+}
+
+/* ─── Composant principal ─── */
 export default function RapportForm({ rapport, onSave, onCancel }) {
   const [employes, setEmployes] = useState([]);
   const [saving, setSaving] = useState(false);
+  const tableRef = useRef(null);
 
   const [date, setDate] = useState(
     rapport?.date || new Date().toISOString().split('T')[0],
   );
   const [operateurId, setOperateurId] = useState(rapport?.operateur_id || '');
-  const [categories, setCategories] = useState(
-    rapport?.categories || CATEGORIES.reduce((acc, c) => ({ ...acc, [c.key]: 0 }), {}),
-  );
-  const [depenses, setDepenses] = useState(rapport?.depenses || []);
+  const [lignes, setLignes] = useState(() => initRows(rapport?.lignes));
 
   useEffect(() => {
     db.employes.list().then(setEmployes);
   }, []);
 
-  const updateCategory = (key, value) => {
-    const num = value === '' ? 0 : parseInt(value.replace(/\s/g, ''), 10) || 0;
-    setCategories((prev) => ({ ...prev, [key]: Math.max(0, num) }));
-  };
-
-  const addDepense = () => {
-    setDepenses((prev) => [...prev, { description: '', montant: 0 }]);
-  };
-
-  const updateDepense = (index, field, value) => {
-    setDepenses((prev) => {
+  /* ─── Cell update ─── */
+  const updateCell = useCallback((rowIdx, colKey, raw) => {
+    setLignes((prev) => {
       const copy = [...prev];
-      if (field === 'montant') {
-        copy[index].montant = parseInt(value.replace(/\s/g, ''), 10) || 0;
+      const col = COLUMNS.find((c) => c.key === colKey);
+      if (col?.type === 'number') {
+        const num = parseInt(String(raw).replace(/\s/g, ''), 10) || 0;
+        copy[rowIdx] = { ...copy[rowIdx], [colKey]: Math.max(0, num) };
       } else {
-        copy[index][field] = value;
+        copy[rowIdx] = { ...copy[rowIdx], [colKey]: raw };
       }
       return copy;
     });
-  };
+  }, []);
 
-  const removeDepense = (index) => {
-    setDepenses((prev) => prev.filter((_, i) => i !== index));
-  };
+  /* ─── Keyboard navigation ─── */
+  const handleKeyDown = useCallback((e, rowIdx, colIdx) => {
+    const numColCount = COLUMNS.length;
+    let nextRow = rowIdx;
+    let nextCol = colIdx;
 
-  const totalRec = Object.values(categories).reduce((s, v) => s + (v || 0), 0);
-  const totalDep = depenses.reduce((s, d) => s + (d.montant || 0), 0);
-  const solde = totalRec - totalDep;
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      nextRow = Math.min(rowIdx + 1, NB_ROWS - 1);
+    } else if (e.key === 'Tab' && !e.shiftKey) {
+      e.preventDefault();
+      nextCol = colIdx + 1;
+      if (nextCol >= numColCount) { nextCol = 0; nextRow = Math.min(rowIdx + 1, NB_ROWS - 1); }
+    } else if (e.key === 'Tab' && e.shiftKey) {
+      e.preventDefault();
+      nextCol = colIdx - 1;
+      if (nextCol < 0) { nextCol = numColCount - 1; nextRow = Math.max(rowIdx - 1, 0); }
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      nextRow = Math.min(rowIdx + 1, NB_ROWS - 1);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      nextRow = Math.max(rowIdx - 1, 0);
+    } else {
+      return;
+    }
+
+    const cellId = `cell-${nextRow}-${nextCol}`;
+    const el = document.getElementById(cellId);
+    if (el) { el.focus(); el.select?.(); }
+  }, []);
+
+  /* ─── Totals ─── */
+  const columnTotals = useMemo(() => {
+    const totals = {};
+    NUM_COLS.forEach((c) => {
+      totals[c.key] = lignes.reduce((s, row) => s + (row[c.key] || 0), 0);
+    });
+    return totals;
+  }, [lignes]);
+
+  const totalEntrees = useMemo(
+    () => RECETTE_COLS.reduce((s, c) => s + (columnTotals[c.key] || 0), 0),
+    [columnTotals],
+  );
+  const totalSorties = columnTotals.sorties || 0;
+  const caisse = totalEntrees - totalSorties;
 
   const selectedEmploye = employes.find((e) => e.id === operateurId);
 
+  /* ─── Save ─── */
   const handleSubmit = async (statut) => {
-    if (!date) {
-      toast.error('Veuillez sélectionner une date');
-      return;
-    }
-    if (!operateurId) {
-      toast.error('Veuillez sélectionner un opérateur');
-      return;
-    }
+    if (!date) { toast.error('Veuillez sélectionner une date'); return; }
+    if (!operateurId) { toast.error('Veuillez sélectionner un opérateur'); return; }
 
     setSaving(true);
     try {
+      // Build category totals (backward compatible with page.jsx list/tableur views)
+      const categories = {};
+      RECETTE_COLS.forEach((c) => { categories[c.key] = columnTotals[c.key] || 0; });
+
+      // Build depenses from sorties column lines
+      const depenses = lignes
+        .filter((row) => row.sorties > 0)
+        .map((row) => ({
+          description: row.description || 'Sortie',
+          montant: row.sorties,
+        }));
+
+      // Keep non-empty lines for restoration on edit
+      const savedLignes = lignes.map((row) => {
+        const hasData = COLUMNS.some((c) =>
+          c.type === 'number' ? (row[c.key] || 0) > 0 : (row[c.key] || '').trim() !== '',
+        );
+        return hasData ? row : null;
+      }).filter(Boolean);
+
       await onSave({
         date,
         operateur_id: operateurId,
@@ -110,7 +174,8 @@ export default function RapportForm({ rapport, onSave, onCancel }) {
           : '',
         statut,
         categories,
-        depenses: depenses.filter((d) => d.description || d.montant > 0),
+        depenses,
+        lignes: savedLignes,
       });
     } finally {
       setSaving(false);
@@ -118,168 +183,204 @@ export default function RapportForm({ rapport, onSave, onCancel }) {
   };
 
   return (
-    <div className="space-y-6 px-6 pb-6">
-      {/* Date + Opérateur */}
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <div className="space-y-2">
-          <Label>Date du rapport</Label>
-          <Input
-            type="date"
-            value={date}
-            onChange={(e) => setDate(e.target.value)}
-          />
-        </div>
-        <div className="space-y-2">
-          <Label>Opérateur</Label>
-          <Select value={operateurId} onValueChange={setOperateurId}>
-            <SelectTrigger>
-              <SelectValue placeholder="Choisir l'opérateur..." />
-            </SelectTrigger>
-            <SelectContent>
-              {employes.map((e) => (
-                <SelectItem key={e.id} value={e.id}>
-                  {e.prenom} {e.nom} — {e.poste}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </div>
+    <div className="flex flex-col h-full">
+      {/* ─── Banner ─── */}
+      <div className="bg-gradient-to-r from-blue-600 via-blue-700 to-indigo-700 px-6 py-4 text-white">
+        <h2 className="text-center text-lg font-bold tracking-wide">
+          Rapport journalier : {formatDate(date)}
+        </h2>
       </div>
 
-      {/* Catégories de recettes */}
-      <div>
-        <h3 className="mb-3 text-sm font-semibold text-foreground">
-          Recettes par catégorie
-        </h3>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          {CATEGORIES.map((cat) => {
-            const Icon = cat.icon;
-            const val = categories[cat.key] || 0;
-            return (
-              <div
-                key={cat.key}
-                className="group relative overflow-hidden rounded-xl border bg-card p-3 transition-shadow focus-within:ring-2 focus-within:ring-primary/30 hover:shadow-md"
-              >
-                <div className="mb-2 flex items-center gap-2">
-                  <div
-                    className={`flex h-7 w-7 items-center justify-center rounded-lg ${cat.color}`}
-                  >
-                    <Icon className="h-3.5 w-3.5 text-white" />
-                  </div>
-                  <span className="text-xs font-medium text-muted-foreground">
-                    {cat.label}
-                  </span>
-                </div>
-                <Input
-                  type="text"
-                  inputMode="numeric"
-                  placeholder="0"
-                  value={val === 0 ? '' : formatFCFA(val)}
-                  onChange={(e) => updateCategory(cat.key, e.target.value)}
-                  className="h-10 border-0 bg-muted/50 text-right text-lg font-bold tabular-nums placeholder:text-muted-foreground/30 focus-visible:ring-0"
-                />
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Dépenses */}
-      <div>
-        <div className="mb-3 flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-foreground">
-            Dépenses (sorties)
-          </h3>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={addDepense}
-            className="gap-1.5"
-          >
-            <Plus className="h-3.5 w-3.5" />
-            Ajouter
-          </Button>
-        </div>
-
-        {depenses.length === 0 ? (
-          <p className="rounded-lg border border-dashed py-6 text-center text-sm text-muted-foreground">
-            Aucune dépense — cliquez « Ajouter » si nécessaire
-          </p>
-        ) : (
-          <div className="space-y-2">
-            {depenses.map((dep, i) => (
-              <div key={i} className="flex items-center gap-2">
-                <Input
-                  placeholder="Description..."
-                  value={dep.description}
-                  onChange={(e) => updateDepense(i, 'description', e.target.value)}
-                  className="flex-1"
-                />
-                <Input
-                  type="text"
-                  inputMode="numeric"
-                  placeholder="Montant"
-                  value={dep.montant === 0 ? '' : formatFCFA(dep.montant)}
-                  onChange={(e) => updateDepense(i, 'montant', e.target.value)}
-                  className="w-32 text-right font-medium tabular-nums"
-                />
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="shrink-0 text-muted-foreground hover:text-destructive"
-                  onClick={() => removeDepense(i)}
-                >
-                  <X className="h-4 w-4" />
-                </Button>
-              </div>
-            ))}
+      {/* ─── Header fields ─── */}
+      <div className="border-b bg-slate-50 px-6 py-4">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-slate-600">Date *</label>
+            <Input
+              type="date"
+              value={date}
+              onChange={(e) => setDate(e.target.value)}
+              className="bg-white"
+            />
           </div>
-        )}
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-slate-600">Opérateur *</label>
+            <Select value={operateurId} onValueChange={setOperateurId}>
+              <SelectTrigger className="bg-white">
+                <SelectValue placeholder="Choisir l'opérateur..." />
+              </SelectTrigger>
+              <SelectContent>
+                {employes.map((e) => (
+                  <SelectItem key={e.id} value={e.id}>
+                    {e.prenom} {e.nom}{e.poste ? ` — ${e.poste}` : ''}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="rounded-lg border border-blue-200 bg-blue-50 p-3">
+            <p className="text-[10px] font-semibold uppercase tracking-wider text-blue-600">
+              Total Caisse (Calculé automatiquement)
+            </p>
+            <p className={`text-2xl font-black tabular-nums ${caisse >= 0 ? 'text-blue-800' : 'text-red-600'}`}>
+              {fmt(caisse)} FCFA
+            </p>
+            <p className="text-[10px] text-blue-500">Recettes totales − Dépenses totales</p>
+          </div>
+        </div>
       </div>
 
-      {/* Résumé */}
-      <div className="rounded-xl bg-muted/50 p-4">
-        <div className="flex items-center justify-between text-sm">
-          <span className="text-muted-foreground">Total recettes</span>
-          <span className="font-semibold text-emerald-600">
-            {formatFCFA(totalRec)} F
-          </span>
-        </div>
-        <div className="mt-1 flex items-center justify-between text-sm">
-          <span className="text-muted-foreground">Total dépenses</span>
-          <span className="font-semibold text-destructive">
-            {formatFCFA(totalDep)} F
-          </span>
-        </div>
-        <div className="mt-3 flex items-center justify-between border-t pt-3">
-          <span className="font-medium">Solde de la journée</span>
-          <span
-            className={`text-2xl font-bold ${solde >= 0 ? 'text-primary' : 'text-destructive'}`}
-          >
-            {formatFCFA(solde)} FCFA
-          </span>
+      {/* ─── Spreadsheet Grid ─── */}
+      <div className="flex-1 overflow-auto" ref={tableRef}>
+        <table className="w-full border-collapse text-sm" style={{ minWidth: '1100px' }}>
+          <thead className="sticky top-0 z-10">
+            <tr>
+              <th className="bg-blue-600 text-white px-2 py-2.5 text-center text-[11px] font-bold uppercase tracking-wider border border-blue-700 w-12">
+                #
+              </th>
+              {COLUMNS.map((col) => (
+                <th
+                  key={col.key}
+                  className={`px-2 py-2.5 text-center text-[11px] font-bold uppercase tracking-wider border ${
+                    col.isSortie
+                      ? 'bg-red-600 text-white border-red-700'
+                      : col.type === 'text'
+                        ? 'bg-blue-600 text-white border-blue-700'
+                        : 'bg-blue-600 text-white border-blue-700'
+                  }`}
+                  style={{ minWidth: col.type === 'text' ? '160px' : '100px' }}
+                >
+                  {col.label}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {lignes.map((row, rowIdx) => (
+              <tr
+                key={rowIdx}
+                className={`${rowIdx % 2 === 0 ? 'bg-white' : 'bg-slate-50'} hover:bg-blue-50/50 transition-colors`}
+              >
+                <td className="px-2 py-0 text-center text-xs font-semibold text-slate-400 border border-slate-200 bg-slate-100">
+                  {rowIdx + 1}
+                </td>
+                {COLUMNS.map((col, colIdx) => (
+                  <td
+                    key={col.key}
+                    className={`px-0 py-0 border ${
+                      col.isSortie ? 'border-red-200 bg-red-50/30' : 'border-slate-200'
+                    }`}
+                  >
+                    <input
+                      id={`cell-${rowIdx}-${colIdx}`}
+                      type="text"
+                      inputMode={col.type === 'number' ? 'numeric' : 'text'}
+                      className={`w-full border-0 bg-transparent px-2 py-1.5 text-xs outline-none focus:bg-blue-100 focus:ring-2 focus:ring-inset focus:ring-blue-400 tabular-nums ${
+                        col.type === 'number' ? 'text-right font-medium' : 'text-left'
+                      } ${col.isSortie ? 'text-red-700 font-semibold' : ''}`}
+                      value={
+                        col.type === 'number'
+                          ? row[col.key] === 0 ? '0' : String(row[col.key] || 0)
+                          : row[col.key] || ''
+                      }
+                      onChange={(e) => updateCell(rowIdx, col.key, e.target.value)}
+                      onKeyDown={(e) => handleKeyDown(e, rowIdx, colIdx)}
+                      onFocus={(e) => {
+                        if (col.type === 'number' && e.target.value === '0') {
+                          e.target.select();
+                        }
+                      }}
+                    />
+                  </td>
+                ))}
+              </tr>
+            ))}
+
+            {/* ─── TOTAL Row ─── */}
+            <tr className="bg-slate-200 font-bold border-t-2 border-slate-400 sticky bottom-0">
+              <td className="px-2 py-2 text-center text-xs font-black text-slate-700 border border-slate-300 bg-slate-300">
+                TOTAL
+              </td>
+              {COLUMNS.map((col) => (
+                <td
+                  key={col.key}
+                  className={`px-2 py-2 text-xs border border-slate-300 ${
+                    col.type === 'number' ? 'text-right tabular-nums' : ''
+                  } ${col.isSortie ? 'bg-red-100 text-red-700' : 'bg-slate-200'}`}
+                >
+                  {col.type === 'number' ? (
+                    <span className="font-black">
+                      {fmt(columnTotals[col.key])} F
+                    </span>
+                  ) : null}
+                </td>
+              ))}
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      {/* ─── Totals bar ─── */}
+      <div className="border-t bg-slate-50 px-6 py-2">
+        <div className="flex flex-wrap items-center justify-between gap-4 text-sm">
+          <div>
+            <span className="text-slate-500">Total entrées: </span>
+            <span className="font-bold text-emerald-600">{fmt(totalEntrees)} XAF</span>
+          </div>
+          <div>
+            <span className="text-slate-500">Total sorties: </span>
+            <span className="font-bold text-red-600">{fmt(totalSorties)} XAF</span>
+          </div>
+          <div className="text-right">
+            <span className="text-slate-500">Caisse journée </span>
+            <span className={`text-xl font-black ${caisse >= 0 ? 'text-blue-700' : 'text-red-600'}`}>
+              {fmt(caisse)} XAF
+            </span>
+          </div>
         </div>
       </div>
 
-      {/* Actions */}
-      <div className="flex justify-end gap-3 border-t pt-4">
-        <Button variant="ghost" onClick={onCancel} disabled={saving}>
-          Annuler
+      {/* ─── Résumé de la journée ─── */}
+      <div className="border-t bg-white px-6 py-4">
+        <h3 className="mb-3 text-sm font-bold text-slate-700">Résumé de la journée</h3>
+        <div className="grid grid-cols-3 gap-4">
+          <div className="rounded-lg border bg-slate-50 p-3 text-center">
+            <p className="text-[10px] font-medium text-slate-500">Total Recettes</p>
+            <p className="text-lg font-black text-emerald-600">{fmt(totalEntrees)} F</p>
+          </div>
+          <div className="rounded-lg border bg-slate-50 p-3 text-center">
+            <p className="text-[10px] font-medium text-slate-500">Total Dépenses</p>
+            <p className="text-lg font-black text-red-600">{fmt(totalSorties)} F</p>
+          </div>
+          <div className="rounded-lg border bg-slate-50 p-3 text-center">
+            <p className="text-[10px] font-medium text-slate-500">Total Caisse</p>
+            <p className={`text-lg font-black ${caisse >= 0 ? 'text-blue-700' : 'text-red-600'}`}>
+              {fmt(caisse)} F
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* ─── Actions ─── */}
+      <div className="flex items-center justify-end gap-3 border-t bg-white px-6 py-3">
+        <Button variant="ghost" size="sm" onClick={onCancel} disabled={saving} className="gap-2">
+          <X className="h-4 w-4" /> Annuler
         </Button>
         <Button
           variant="outline"
+          size="sm"
           onClick={() => handleSubmit('brouillon')}
           disabled={saving}
           className="gap-2"
         >
           {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-          Brouillon
+          Enregistrer brouillon
         </Button>
         <Button
+          size="sm"
           onClick={() => handleSubmit('soumis')}
           disabled={saving}
-          className="gap-2"
+          className="gap-2 bg-blue-600 hover:bg-blue-700"
         >
           {saving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
           Soumettre

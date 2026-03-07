@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import { db } from '@/services/db';
 import { useAuth } from '@/services/auth';
 import { logAction } from '@/services/audit';
@@ -205,6 +205,34 @@ export default function Rapports() {
     });
   };
 
+  // Inline cell editing
+  const [editingCell, setEditingCell] = useState(null); // { rapportId, catKey }
+  const [editValue, setEditValue] = useState('');
+
+  const handleCellClick = useCallback((r, catKey) => {
+    if (r.statut === 'cloture' || r.statut === 'valide') return;
+    setEditingCell({ rapportId: r.id, catKey });
+    setEditValue(String(r.categories?.[catKey] || 0));
+  }, []);
+
+  const handleCellSave = useCallback(async () => {
+    if (!editingCell) return;
+    const { rapportId, catKey } = editingCell;
+    const num = parseInt(editValue.replace(/\s/g, ''), 10) || 0;
+    const r = rapports.find((x) => x.id === rapportId);
+    if (!r) return;
+    const newCats = { ...r.categories, [catKey]: Math.max(0, num) };
+    await db.rapports.update(rapportId, { categories: newCats });
+    setEditingCell(null);
+    load();
+  }, [editingCell, editValue, rapports]);
+
+  const handleCellKeyDown = useCallback((e) => {
+    if (e.key === 'Enter') handleCellSave();
+    if (e.key === 'Escape') setEditingCell(null);
+    if (e.key === 'Tab') { e.preventDefault(); handleCellSave(); }
+  }, [handleCellSave]);
+
   if (loading) {
     return <div className="flex items-center justify-center py-20"><div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" /></div>;
   }
@@ -215,7 +243,7 @@ export default function Rapports() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="text-2xl font-bold tracking-tight">Rapports journaliers</h2>
-          <p className="text-muted-foreground">Recettes quotidiennes — mode tableur</p>
+          <p className="text-muted-foreground">Recettes quotidiennes — cliquez une cellule pour éditer</p>
         </div>
         <div className="flex items-center gap-2">
           <div className="flex rounded-lg border p-0.5">
@@ -287,73 +315,97 @@ export default function Rapports() {
         </>
       )}
 
-      {/* TABLEUR VIEW */}
+      {/* TABLEUR VIEW — édition inline */}
       {viewMode === 'tableur' && !isEmploye && (
         <Card>
           <CardContent className="p-0 overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full text-sm border-collapse">
               <thead>
-                <tr className="border-b bg-muted/50">
-                  <th className="sticky left-0 z-10 bg-muted/50 px-3 py-2.5 text-left text-[11px] font-semibold uppercase text-muted-foreground min-w-[120px]">Date</th>
-                  <th className="px-2 py-2.5 text-left text-[11px] font-semibold uppercase text-muted-foreground min-w-[100px]">Opérateur</th>
+                <tr className="border-b-2 border-primary/20 bg-muted/60">
+                  <th className="sticky left-0 z-10 bg-muted/60 px-3 py-2.5 text-left text-[11px] font-bold uppercase tracking-wider text-muted-foreground min-w-[110px]">Date</th>
+                  <th className="px-2 py-2.5 text-left text-[11px] font-bold uppercase tracking-wider text-muted-foreground min-w-[90px]">Opérateur</th>
                   {CATEGORIES.map((c) => (
-                    <th key={c.key} className="px-2 py-2.5 text-right text-[11px] font-semibold uppercase text-muted-foreground min-w-[80px]" title={c.label}>{c.short}</th>
+                    <th key={c.key} className="px-1 py-2.5 text-right text-[11px] font-bold uppercase tracking-wider text-muted-foreground min-w-[75px] border-l border-muted" title={c.label}>{c.short}</th>
                   ))}
-                  <th className="px-2 py-2.5 text-right text-[11px] font-semibold uppercase text-emerald-600 min-w-[90px]">Recettes</th>
-                  <th className="px-2 py-2.5 text-right text-[11px] font-semibold uppercase text-red-600 min-w-[80px]">Dépenses</th>
-                  <th className="px-2 py-2.5 text-right text-[11px] font-semibold uppercase text-primary min-w-[90px]">Solde</th>
-                  <th className="px-2 py-2.5 text-center text-[11px] font-semibold uppercase text-muted-foreground min-w-[80px]">Statut</th>
-                  <th className="px-2 py-2.5 text-center text-[11px] font-semibold uppercase text-muted-foreground min-w-[100px]">Actions</th>
+                  <th className="px-2 py-2.5 text-right text-[11px] font-bold uppercase tracking-wider text-emerald-700 min-w-[85px] border-l-2 border-emerald-200 bg-emerald-50/50">Total</th>
+                  <th className="px-2 py-2.5 text-right text-[11px] font-bold uppercase tracking-wider text-red-700 min-w-[75px] border-l border-muted">Dép.</th>
+                  <th className="px-2 py-2.5 text-right text-[11px] font-bold uppercase tracking-wider text-blue-700 min-w-[85px] border-l border-muted">Solde</th>
+                  <th className="px-2 py-2.5 text-center text-[11px] font-bold uppercase tracking-wider text-muted-foreground min-w-[60px] border-l border-muted">St.</th>
+                  <th className="px-2 py-2.5 text-center text-[11px] font-bold uppercase tracking-wider text-muted-foreground min-w-[90px] border-l border-muted"></th>
                 </tr>
               </thead>
-              <tbody className="divide-y">
+              <tbody>
                 {filtered.length === 0 ? (
                   <tr><td colSpan={CATEGORIES.length + 6} className="py-12 text-center text-muted-foreground">Aucun rapport pour cette période</td></tr>
-                ) : filtered.map((r) => {
+                ) : filtered.map((r, rowIdx) => {
                   const rec = totalRecettes(r);
                   const dep = totalDepenses(r);
                   const solde = rec - dep;
                   const st = STATUS_MAP[r.statut] || STATUS_MAP.brouillon;
                   const isLocked = r.statut === 'cloture' || r.statut === 'valide';
+                  const zebra = rowIdx % 2 === 0 ? '' : 'bg-muted/20';
 
                   return (
-                    <tr key={r.id} className={`hover:bg-muted/30 transition-colors ${isLocked ? 'bg-muted/10' : ''}`}>
-                      <td className="sticky left-0 z-10 bg-background px-3 py-2 font-medium text-xs">{formatDate(r.date)}</td>
-                      <td className="px-2 py-2 text-xs text-muted-foreground truncate max-w-[120px]">{r.operateur_nom?.split(' ')[0] || '—'}</td>
-                      {CATEGORIES.map((c) => (
-                        <td key={c.key} className="px-2 py-2 text-right text-xs tabular-nums">
-                          {(r.categories?.[c.key] || 0) > 0 ? fmt(r.categories[c.key]) : <span className="text-muted-foreground/30">—</span>}
-                        </td>
-                      ))}
-                      <td className="px-2 py-2 text-right text-xs font-semibold text-emerald-600 tabular-nums">{fmt(rec)}</td>
-                      <td className="px-2 py-2 text-right text-xs font-semibold text-red-600 tabular-nums">{fmt(dep)}</td>
-                      <td className={`px-2 py-2 text-right text-xs font-bold tabular-nums ${solde >= 0 ? 'text-primary' : 'text-destructive'}`}>{fmt(solde)}</td>
-                      <td className="px-2 py-2 text-center">
-                        <Badge variant="outline" className={`text-[9px] ${st.class}`}>
-                          {isLocked && <Lock className="mr-1 h-2.5 w-2.5" />}
-                          {st.label}
+                    <tr key={r.id} className={`border-b border-muted/50 hover:bg-blue-50/40 transition-colors ${zebra} ${isLocked ? 'opacity-75' : ''}`}>
+                      <td className="sticky left-0 z-10 bg-background px-3 py-1.5 font-medium text-xs whitespace-nowrap">{formatDate(r.date)}</td>
+                      <td className="px-2 py-1.5 text-xs text-muted-foreground truncate max-w-[100px]">{r.operateur_nom?.split(' ')[0] || '—'}</td>
+                      {CATEGORIES.map((c) => {
+                        const isEditing = editingCell?.rapportId === r.id && editingCell?.catKey === c.key;
+                        const val = r.categories?.[c.key] || 0;
+                        return (
+                          <td key={c.key} className="px-1 py-1 text-right text-xs tabular-nums border-l border-muted/30">
+                            {isEditing ? (
+                              <input
+                                type="text"
+                                inputMode="numeric"
+                                autoFocus
+                                className="w-full rounded border border-primary bg-white px-1 py-0.5 text-right text-xs font-medium tabular-nums outline-none ring-1 ring-primary/30"
+                                value={editValue}
+                                onChange={(e) => setEditValue(e.target.value)}
+                                onBlur={handleCellSave}
+                                onKeyDown={handleCellKeyDown}
+                              />
+                            ) : (
+                              <button
+                                onClick={() => handleCellClick(r, c.key)}
+                                className={`w-full rounded px-1 py-0.5 text-right ${!isLocked ? 'hover:bg-primary/10 hover:ring-1 hover:ring-primary/20 cursor-cell' : 'cursor-default'}`}
+                                disabled={isLocked}
+                              >
+                                {val > 0 ? fmt(val) : <span className="text-muted-foreground/25">—</span>}
+                              </button>
+                            )}
+                          </td>
+                        );
+                      })}
+                      <td className="px-2 py-1.5 text-right text-xs font-bold text-emerald-700 tabular-nums border-l-2 border-emerald-200 bg-emerald-50/30">{fmt(rec)}</td>
+                      <td className="px-2 py-1.5 text-right text-xs font-semibold text-red-600 tabular-nums border-l border-muted/30">{fmt(dep)}</td>
+                      <td className={`px-2 py-1.5 text-right text-xs font-bold tabular-nums border-l border-muted/30 ${solde >= 0 ? 'text-blue-700' : 'text-destructive'}`}>{fmt(solde)}</td>
+                      <td className="px-1 py-1.5 text-center border-l border-muted/30">
+                        <Badge variant="outline" className={`text-[8px] px-1.5 py-0 ${st.class}`}>
+                          {isLocked && <Lock className="mr-0.5 h-2 w-2" />}
+                          {st.label.slice(0, 4)}
                         </Badge>
                       </td>
-                      <td className="px-2 py-2">
-                        <div className="flex items-center justify-center gap-0.5">
-                          <button onClick={() => setViewing(r)} className="rounded p-1 hover:bg-muted" title="Voir"><Eye className="h-3.5 w-3.5 text-muted-foreground" /></button>
+                      <td className="px-1 py-1.5 border-l border-muted/30">
+                        <div className="flex items-center justify-center gap-0">
+                          <button onClick={() => setViewing(r)} className="rounded p-1 hover:bg-muted" title="Voir"><Eye className="h-3 w-3 text-muted-foreground" /></button>
                           {!isLocked && (
-                            <button onClick={() => handleEdit(r)} className="rounded p-1 hover:bg-muted" title="Modifier"><Edit className="h-3.5 w-3.5 text-muted-foreground" /></button>
+                            <button onClick={() => handleEdit(r)} className="rounded p-1 hover:bg-muted" title="Modifier"><Edit className="h-3 w-3 text-muted-foreground" /></button>
                           )}
                           {r.statut === 'soumis' && isManager && (
-                            <button onClick={() => handleValidate(r)} className="rounded p-1 hover:bg-emerald-50" title="Valider"><CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" /></button>
+                            <button onClick={() => handleValidate(r)} className="rounded p-1 hover:bg-emerald-50" title="Valider"><CheckCircle2 className="h-3 w-3 text-emerald-600" /></button>
                           )}
                           {r.statut === 'valide' && isAdmin && (
-                            <button onClick={() => handleCloturer(r)} className="rounded p-1 hover:bg-violet-50" title="Clôturer"><Lock className="h-3.5 w-3.5 text-violet-600" /></button>
+                            <button onClick={() => handleCloturer(r)} className="rounded p-1 hover:bg-violet-50" title="Clôturer"><Lock className="h-3 w-3 text-violet-600" /></button>
                           )}
                           {isLocked && isAdmin && (
-                            <button onClick={() => handleDeverrouiller(r)} className="rounded p-1 hover:bg-orange-50" title="Déverrouiller"><LockOpen className="h-3.5 w-3.5 text-orange-600" /></button>
+                            <button onClick={() => handleDeverrouiller(r)} className="rounded p-1 hover:bg-orange-50" title="Déverrouiller"><LockOpen className="h-3 w-3 text-orange-600" /></button>
                           )}
                           {isLocked && !isAdmin && (
-                            <button onClick={() => { setShowModifRequest(r); setModifMotif(''); }} className="rounded p-1 hover:bg-blue-50" title="Demander modification"><MessageSquare className="h-3.5 w-3.5 text-blue-600" /></button>
+                            <button onClick={() => { setShowModifRequest(r); setModifMotif(''); }} className="rounded p-1 hover:bg-blue-50" title="Demander modification"><MessageSquare className="h-3 w-3 text-blue-600" /></button>
                           )}
                           {r.statut === 'brouillon' && (
-                            <button onClick={() => handleDelete(r)} className="rounded p-1 hover:bg-red-50" title="Supprimer"><Trash2 className="h-3.5 w-3.5 text-red-500" /></button>
+                            <button onClick={() => handleDelete(r)} className="rounded p-1 hover:bg-red-50" title="Supprimer"><Trash2 className="h-3 w-3 text-red-500" /></button>
                           )}
                         </div>
                       </td>
@@ -362,18 +414,18 @@ export default function Rapports() {
                 })}
                 {/* Total row */}
                 {filtered.length > 0 && (
-                  <tr className="bg-muted/50 font-bold border-t-2">
-                    <td className="sticky left-0 z-10 bg-muted/50 px-3 py-2.5 text-xs">TOTAL</td>
-                    <td className="px-2 py-2.5 text-xs text-muted-foreground">{filtered.length} rapports</td>
+                  <tr className="bg-muted/60 font-bold border-t-2 border-primary/20">
+                    <td className="sticky left-0 z-10 bg-muted/60 px-3 py-2 text-xs uppercase">Total</td>
+                    <td className="px-2 py-2 text-xs text-muted-foreground">{filtered.length} j.</td>
                     {CATEGORIES.map((c) => (
-                      <td key={c.key} className="px-2 py-2.5 text-right text-xs tabular-nums">
+                      <td key={c.key} className="px-1 py-2 text-right text-xs tabular-nums border-l border-muted/30">
                         {fmt(filtered.reduce((s, r) => s + (r.categories?.[c.key] || 0), 0))}
                       </td>
                     ))}
-                    <td className="px-2 py-2.5 text-right text-xs text-emerald-600 tabular-nums">{fmt(filtered.reduce((s, r) => s + totalRecettes(r), 0))}</td>
-                    <td className="px-2 py-2.5 text-right text-xs text-red-600 tabular-nums">{fmt(filtered.reduce((s, r) => s + totalDepenses(r), 0))}</td>
-                    <td className="px-2 py-2.5 text-right text-xs text-primary tabular-nums">{fmt(filtered.reduce((s, r) => s + totalRecettes(r) - totalDepenses(r), 0))}</td>
-                    <td colSpan={2}></td>
+                    <td className="px-2 py-2 text-right text-xs text-emerald-700 tabular-nums border-l-2 border-emerald-200 bg-emerald-50/30">{fmt(filtered.reduce((s, r) => s + totalRecettes(r), 0))}</td>
+                    <td className="px-2 py-2 text-right text-xs text-red-600 tabular-nums border-l border-muted/30">{fmt(filtered.reduce((s, r) => s + totalDepenses(r), 0))}</td>
+                    <td className="px-2 py-2 text-right text-xs text-blue-700 tabular-nums border-l border-muted/30">{fmt(filtered.reduce((s, r) => s + totalRecettes(r) - totalDepenses(r), 0))}</td>
+                    <td colSpan={2} className="border-l border-muted/30"></td>
                   </tr>
                 )}
               </tbody>
@@ -462,11 +514,14 @@ export default function Rapports() {
         </div>
       )}
 
-      {/* Form Dialog */}
+      {/* Form Dialog — Mode Tableur plein écran */}
       <Dialog open={showForm} onOpenChange={setShowForm}>
-        <DialogContent className="max-h-[92vh] max-w-2xl overflow-y-auto p-0">
-          <DialogHeader className="border-b px-6 py-4">
-            <DialogTitle>{editing ? 'Modifier le rapport' : 'Nouveau rapport journalier'}</DialogTitle>
+        <DialogContent className="max-h-[95vh] w-[96vw] max-w-[1400px] overflow-hidden p-0 flex flex-col">
+          <DialogHeader className="border-b px-6 py-3 shrink-0">
+            <DialogTitle className="flex items-center gap-2">
+              <FileSpreadsheet className="h-5 w-5 text-blue-600" />
+              {editing ? 'Modifier le rapport' : 'Nouveau rapport journalier'} — Mode Tableur
+            </DialogTitle>
           </DialogHeader>
           <RapportForm rapport={editing} onSave={handleSave} onCancel={() => setShowForm(false)} />
         </DialogContent>
