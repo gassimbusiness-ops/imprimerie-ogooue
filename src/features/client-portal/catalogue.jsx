@@ -10,24 +10,51 @@ import {
 import {
   Search, ShoppingCart, Plus, Minus, Trash2, ShoppingBag, Send,
   Shirt, BookOpen, Printer, Camera, FileText, Scissors, Package, Tag,
+  Clock, DollarSign, LayoutGrid, Coffee, ChevronLeft, ChevronRight, X, ZoomIn,
 } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { toast } from 'sonner';
 
 function fmt(n) { return new Intl.NumberFormat('fr-FR').format(Math.round(n || 0)); }
 
-const CATEGORY_ICONS = {
-  Textile: Shirt, Papeterie: FileText, Impression: Printer, Reliure: BookOpen,
-  Accessoire: Tag, Machine: Printer, Photo: Camera, Default: Package,
-};
-const CATEGORY_COLORS = {
+/* Prix helpers — compatible with new prix[] structure */
+function prixRange(p) {
+  // New format: prix array
+  if (p.prix && Array.isArray(p.prix)) {
+    const vals = p.prix.map((r) => r.prix).filter((v) => v > 0);
+    if (vals.length === 0) return 'Sur devis';
+    const min = Math.min(...vals);
+    const max = Math.max(...vals);
+    return min === max ? `${fmt(min)} F` : `${fmt(min)} — ${fmt(max)} F`;
+  }
+  // Legacy format
+  return p.prix_unitaire ? `${fmt(p.prix_unitaire)} F` : 'Sur devis';
+}
+
+function prixPourQte(p, qte) {
+  if (p.prix && Array.isArray(p.prix)) {
+    const sorted = [...p.prix].sort((a, b) => a.qte_min - b.qte_min);
+    for (let i = sorted.length - 1; i >= 0; i--) {
+      if (qte >= sorted[i].qte_min) return sorted[i].prix;
+    }
+    return sorted[0]?.prix || 0;
+  }
+  return p.prix_unitaire || 0;
+}
+
+const CAT_GRADIENT = {
   Textile: 'from-blue-500 to-blue-600',
+  Accessoire: 'from-pink-500 to-rose-600',
   Papeterie: 'from-amber-500 to-orange-500',
   Impression: 'from-violet-500 to-purple-600',
-  Reliure: 'from-emerald-500 to-green-600',
-  Accessoire: 'from-pink-500 to-rose-600',
-  Machine: 'from-gray-500 to-gray-700',
-  Photo: 'from-cyan-500 to-teal-600',
+  Marketing: 'from-fuchsia-500 to-fuchsia-600',
+  Signalétique: 'from-red-500 to-red-600',
+  Autre: 'from-slate-400 to-slate-600',
+};
+const CAT_ICON = {
+  Textile: Shirt, Accessoire: Coffee, Papeterie: BookOpen,
+  Impression: DollarSign, Marketing: Tag, Signalétique: LayoutGrid,
+  Autre: Package,
 };
 
 export default function ClientCatalogue() {
@@ -36,6 +63,7 @@ export default function ClientCatalogue() {
   const [categorie, setCategorie] = useState('all');
   const [panier, setPanier] = useState([]);
   const [showPanier, setShowPanier] = useState(false);
+  const [detailProduct, setDetailProduct] = useState(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -45,10 +73,11 @@ export default function ClientCatalogue() {
     });
   }, []);
 
-  const categories = [...new Set(produits.map((p) => p.categorie).filter(Boolean))];
+  const categories = [...new Set(produits.map((p) => p.categorie).filter(Boolean))].sort();
 
   const filtered = produits.filter((p) => {
-    const matchSearch = !search || p.nom?.toLowerCase().includes(search.toLowerCase());
+    const q = search.toLowerCase();
+    const matchSearch = !search || `${p.nom} ${p.description || ''} ${(p.tags || []).join(' ')}`.toLowerCase().includes(q);
     const matchCat = categorie === 'all' || p.categorie === categorie;
     return matchSearch && matchCat;
   });
@@ -56,21 +85,26 @@ export default function ClientCatalogue() {
   const addToPanier = (produit) => {
     setPanier((prev) => {
       const existing = prev.find((p) => p.id === produit.id);
-      if (existing) return prev.map((p) => p.id === produit.id ? { ...p, qte: p.qte + 1 } : p);
-      return [...prev, { ...produit, qte: 1 }];
+      if (existing) {
+        const newQte = existing.qte + 1;
+        return prev.map((p) => p.id === produit.id ? { ...p, qte: newQte, prix_calc: prixPourQte(produit, newQte) } : p);
+      }
+      return [...prev, { ...produit, qte: 1, prix_calc: prixPourQte(produit, 1) }];
     });
     toast.success(`${produit.nom} ajouté au panier`);
   };
 
   const updateQte = (id, delta) => {
-    setPanier((prev) => prev.map((p) => p.id === id ? { ...p, qte: Math.max(1, p.qte + delta) } : p));
+    setPanier((prev) => prev.map((p) => {
+      if (p.id !== id) return p;
+      const newQte = Math.max(1, p.qte + delta);
+      return { ...p, qte: newQte, prix_calc: prixPourQte(p, newQte) };
+    }));
   };
 
-  const removeFromPanier = (id) => {
-    setPanier((prev) => prev.filter((p) => p.id !== id));
-  };
+  const removeFromPanier = (id) => setPanier((prev) => prev.filter((p) => p.id !== id));
 
-  const totalPanier = panier.reduce((s, p) => s + (p.prix_unitaire || 0) * p.qte, 0);
+  const totalPanier = panier.reduce((s, p) => s + (p.prix_calc || 0) * p.qte, 0);
 
   const envoyerDemande = async () => {
     if (panier.length === 0) { toast.error('Panier vide'); return; }
@@ -83,9 +117,12 @@ export default function ClientCatalogue() {
       montant_total: totalPanier,
       date_creation: new Date().toISOString().slice(0, 10),
       source: 'portail_client',
-      lignes: panier.map((p) => ({ produit_id: p.id, nom: p.nom, qte: p.qte, prix: p.prix_unitaire })),
+      lignes: panier.map((p) => ({
+        produit_id: p.id, nom: p.nom, qte: p.qte,
+        prix: p.prix_calc || prixPourQte(p, p.qte),
+      })),
     });
-    toast.success('Demande envoyée ! L\'imprimerie vous contactera bientôt.');
+    toast.success('Demande envoyée ! Nous vous contacterons bientôt.');
     setPanier([]);
     setShowPanier(false);
   };
@@ -144,34 +181,45 @@ export default function ClientCatalogue() {
       {/* Product grid */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
         {filtered.map((p) => {
-          const CatIcon = CATEGORY_ICONS[p.categorie] || CATEGORY_ICONS.Default;
-          const gradient = CATEGORY_COLORS[p.categorie] || 'from-gray-400 to-gray-500';
+          const CatIcon = CAT_ICON[p.categorie] || Package;
+          const gradient = CAT_GRADIENT[p.categorie] || 'from-gray-400 to-gray-500';
           const inPanier = panier.find((x) => x.id === p.id);
-          const lowStock = (p.stock_actuel || 0) <= (p.stock_minimum || 5);
+          const hasImages = p.images && p.images.length > 0;
 
           return (
             <Card key={p.id} className="overflow-hidden group hover:shadow-lg transition-all duration-200">
               {/* Product visual */}
-              <div className={`relative h-32 bg-gradient-to-br ${gradient} flex items-center justify-center`}>
-                <CatIcon className="h-12 w-12 text-white/40" />
-                {lowStock && (
-                  <Badge className="absolute top-2 right-2 bg-red-500 text-white text-[9px]">Stock faible</Badge>
+              <div
+                className={`relative h-32 ${hasImages ? 'bg-slate-100' : `bg-gradient-to-br ${gradient}`} flex items-center justify-center cursor-pointer`}
+                onClick={() => setDetailProduct(p)}
+              >
+                {hasImages ? (
+                  <img src={p.images[p.image_principale || 0] || p.images[0]} alt={p.nom} className="w-full h-full object-cover" />
+                ) : (
+                  <CatIcon className="h-12 w-12 text-white/40" />
                 )}
                 {inPanier && (
-                  <div className="absolute top-2 left-2 flex h-6 w-6 items-center justify-center rounded-full bg-white text-xs font-bold text-primary">
+                  <div className="absolute top-2 left-2 flex h-6 w-6 items-center justify-center rounded-full bg-white text-xs font-bold text-primary shadow">
                     {inPanier.qte}
                   </div>
+                )}
+                {hasImages && p.images.length > 1 && (
+                  <Badge className="absolute top-2 right-2 bg-black/40 text-white text-[9px]">{p.images.length} photos</Badge>
                 )}
               </div>
               <CardContent className="p-3">
                 <p className="font-semibold text-sm leading-tight line-clamp-2 min-h-[2.5rem]">{p.nom}</p>
                 <div className="flex items-center gap-1 mt-1.5">
                   <Badge variant="outline" className="text-[10px]">{p.categorie}</Badge>
-                  <span className="text-[10px] text-muted-foreground">Stock: {p.stock_actuel || 0}</span>
+                  {p.delai_jours > 0 && (
+                    <span className="text-[10px] text-muted-foreground flex items-center gap-0.5">
+                      <Clock className="h-2.5 w-2.5" />{p.delai_jours}j
+                    </span>
+                  )}
                 </div>
                 <div className="flex items-center justify-between mt-2.5">
-                  <p className="text-lg font-black text-primary">{fmt(p.prix_unitaire)} <span className="text-xs font-normal">F</span></p>
-                  <Button size="sm" className="h-8 w-8 p-0" onClick={() => addToPanier(p)} disabled={(p.stock_actuel || 0) === 0}>
+                  <p className="text-base font-black text-primary">{prixRange(p)}</p>
+                  <Button size="sm" className="h-8 w-8 p-0" onClick={() => addToPanier(p)}>
                     <Plus className="h-4 w-4" />
                   </Button>
                 </div>
@@ -188,6 +236,77 @@ export default function ClientCatalogue() {
         </div>
       )}
 
+      {/* Product Detail Dialog (read-only, no stock info) */}
+      <Dialog open={!!detailProduct} onOpenChange={() => setDetailProduct(null)}>
+        <DialogContent className="max-w-md max-h-[85vh] overflow-y-auto">
+          {detailProduct && (
+            <>
+              <DialogHeader>
+                <DialogTitle>{detailProduct.nom}</DialogTitle>
+              </DialogHeader>
+              <div className="space-y-3">
+                {/* Image */}
+                {detailProduct.images && detailProduct.images.length > 0 ? (
+                  <div className="h-48 bg-slate-100 rounded-lg overflow-hidden">
+                    <img src={detailProduct.images[detailProduct.image_principale || 0] || detailProduct.images[0]} alt="" className="w-full h-full object-contain" />
+                  </div>
+                ) : (
+                  <div className={`h-32 bg-gradient-to-br ${CAT_GRADIENT[detailProduct.categorie] || 'from-slate-400 to-slate-600'} rounded-lg flex items-center justify-center`}>
+                    {(() => { const I = CAT_ICON[detailProduct.categorie] || Package; return <I className="h-10 w-10 text-white/30" />; })()}
+                  </div>
+                )}
+
+                <div className="flex items-center gap-2">
+                  <Badge variant="outline">{detailProduct.categorie}</Badge>
+                  {detailProduct.delai_jours > 0 && (
+                    <span className="text-xs text-muted-foreground flex items-center gap-1">
+                      <Clock className="h-3 w-3" /> {detailProduct.delai_jours} jour{detailProduct.delai_jours > 1 ? 's' : ''}
+                    </span>
+                  )}
+                </div>
+
+                {detailProduct.description && (
+                  <p className="text-sm text-muted-foreground">{detailProduct.description}</p>
+                )}
+
+                {/* Prix table */}
+                {detailProduct.prix && detailProduct.prix.length > 0 && !detailProduct.prix.every((r) => r.prix === 0) && (
+                  <div className="rounded-lg border overflow-hidden">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="bg-muted/50">
+                          <th className="px-3 py-1.5 text-left font-medium text-muted-foreground">Quantité</th>
+                          <th className="px-3 py-1.5 text-right font-medium text-muted-foreground">Prix / {detailProduct.unite || 'pièce'}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {detailProduct.prix.map((r, i) => (
+                          <tr key={i} className="border-t">
+                            <td className="px-3 py-1.5">{r.qte_max ? `${r.qte_min} — ${r.qte_max}` : `${r.qte_min}+`}</td>
+                            <td className="px-3 py-1.5 text-right font-semibold text-primary">{r.prix > 0 ? `${fmt(r.prix)} F` : 'Sur devis'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {/* Tags */}
+                {detailProduct.tags && detailProduct.tags.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5">
+                    {detailProduct.tags.map((t) => <Badge key={t} variant="secondary" className="text-[10px]">{t}</Badge>)}
+                  </div>
+                )}
+
+                <Button className="w-full gap-2" onClick={() => { addToPanier(detailProduct); setDetailProduct(null); }}>
+                  <Plus className="h-4 w-4" /> Ajouter au panier
+                </Button>
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
       {/* Panier dialog */}
       <Dialog open={showPanier} onOpenChange={setShowPanier}>
         <DialogContent className="max-w-lg">
@@ -200,7 +319,7 @@ export default function ClientCatalogue() {
                 <div key={p.id} className="flex items-center gap-3 rounded-lg border p-2.5">
                   <div className="flex-1">
                     <p className="text-sm font-medium">{p.nom}</p>
-                    <p className="text-xs text-muted-foreground">{fmt(p.prix_unitaire)} F / unité</p>
+                    <p className="text-xs text-muted-foreground">{fmt(p.prix_calc || prixPourQte(p, p.qte))} F / {p.unite || 'unité'}</p>
                   </div>
                   <div className="flex items-center gap-1.5">
                     <Button variant="outline" size="icon" className="h-7 w-7" onClick={() => updateQte(p.id, -1)}>
@@ -211,7 +330,7 @@ export default function ClientCatalogue() {
                       <Plus className="h-3 w-3" />
                     </Button>
                   </div>
-                  <p className="text-sm font-semibold w-20 text-right">{fmt(p.prix_unitaire * p.qte)} F</p>
+                  <p className="text-sm font-semibold w-20 text-right">{fmt((p.prix_calc || prixPourQte(p, p.qte)) * p.qte)} F</p>
                   <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive" onClick={() => removeFromPanier(p.id)}>
                     <Trash2 className="h-3.5 w-3.5" />
                   </Button>
@@ -226,7 +345,9 @@ export default function ClientCatalogue() {
               <Button className="w-full gap-2" onClick={envoyerDemande}>
                 <Send className="h-4 w-4" /> Envoyer la demande de commande
               </Button>
-              <p className="text-[10px] text-center text-muted-foreground">Un employé validera votre commande et vous contactera pour confirmer le délai et le paiement.</p>
+              <p className="text-[10px] text-center text-muted-foreground">
+                Un employé validera votre commande et vous contactera pour confirmer le délai et le paiement.
+              </p>
             </div>
           )}
         </DialogContent>

@@ -21,6 +21,7 @@ import {
   Landmark,
   Building2,
   Globe,
+  BookOpen,
 } from 'lucide-react';
 import {
   AreaChart,
@@ -109,7 +110,12 @@ export default function Dashboard() {
       });
     }
 
-    const lowStock = produits.filter((p) => p.stock <= p.stock_min);
+    const lowStock = produits.filter((p) => {
+      if (p.masque) return false; // Skip hidden items
+      const qty = p.quantite ?? p.stock ?? 0;
+      const min = p.quantite_minimum ?? p.stock_min ?? 0;
+      return qty <= min;
+    });
     const pending = rapports.filter((r) => r.statut === 'soumis');
 
     return { todayRec, todayDep, monthRec, monthDep, monthTrend, chartData, lowStock, pending };
@@ -238,10 +244,10 @@ export default function Dashboard() {
                   Pointage
                 </Button>
               </Link>
-              <Link to="/stocks">
+              <Link to="/catalogue">
                 <Button variant="outline" className="h-auto w-full flex-col gap-1 py-3 text-xs">
-                  <Receipt className="h-5 w-5 text-orange-500" />
-                  Stocks
+                  <BookOpen className="h-5 w-5 text-orange-500" />
+                  Catalogue
                 </Button>
               </Link>
               {isEmploye && (
@@ -267,15 +273,23 @@ export default function Dashboard() {
               {(!stats?.lowStock?.length) ? (
                 <p className="py-2 text-center text-sm text-muted-foreground">Tous les stocks sont OK</p>
               ) : (
-                stats.lowStock.slice(0, 3).map((p) => (
-                  <div key={p.id} className="flex items-center justify-between rounded-lg bg-amber-50 p-2.5">
-                    <div>
-                      <p className="text-sm font-medium">{p.nom}</p>
-                      <p className="text-xs text-muted-foreground">{p.categorie}</p>
+                stats.lowStock.slice(0, 5).map((p) => {
+                  const qty = p.quantite ?? p.stock ?? 0;
+                  const min = p.quantite_minimum ?? p.stock_min ?? 0;
+                  return (
+                    <div key={p.id} className="flex items-center justify-between rounded-lg bg-amber-50 p-2.5">
+                      <div>
+                        <p className="text-sm font-medium">{p.nom}</p>
+                        <p className="text-xs text-muted-foreground">{p.categorie}</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <Badge variant="outline" className={`text-xs ${qty <= 0 ? 'border-red-300 text-red-700 bg-red-50' : 'border-amber-300 text-amber-700'}`}>
+                          {qty <= 0 ? 'Rupture' : `${qty} / ${min}`}
+                        </Badge>
+                      </div>
                     </div>
-                    <Badge variant="outline" className="border-amber-300 text-xs text-amber-700">{p.stock}</Badge>
-                  </div>
-                ))
+                  );
+                })
               )}
             </CardContent>
           </Card>

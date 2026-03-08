@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { useAuth } from '@/services/auth';
+import { getSettings } from '@/services/db';
 import {
   LayoutDashboard,
   FileSpreadsheet,
@@ -48,7 +49,7 @@ const NAV_GROUPS = [
       { name: 'Commandes', href: '/commandes', icon: Package, module: 'commandes' },
       { name: 'Tâches', href: '/taches', icon: CheckSquare, module: 'commandes' },
       { name: 'Travaux & Projets', href: '/travaux', icon: Hammer, module: 'statistiques' },
-      { name: 'Catalogue', href: '/catalogue', icon: BookOpen, module: 'stocks' },
+      { name: 'Catalogue', href: '/catalogue', icon: BookOpen, module: 'catalogue' },
       { name: 'Stocks', href: '/stocks', icon: Boxes, module: 'stocks' },
     ],
   },
@@ -154,16 +155,13 @@ function NavGroup({ group, pathname, onNavClick }) {
 const ROLE_LABELS = { admin: 'Administrateur', manager: 'Manager', employe: 'Employé' };
 
 function useCompanyLogo() {
-  const [logo, setLogo] = useState(() => {
-    try {
-      return JSON.parse(localStorage.getItem('io_settings') || '{}').logo || '';
-    } catch { return ''; }
-  });
+  const [logo, setLogo] = useState('');
   useEffect(() => {
-    const handler = () => {
-      try {
-        setLogo(JSON.parse(localStorage.getItem('io_settings') || '{}').logo || '');
-      } catch {}
+    getSettings().then((s) => setLogo(s.logo || ''));
+    const handler = (e) => {
+      const detail = e.detail;
+      if (detail?.logo !== undefined) { setLogo(detail.logo || ''); return; }
+      getSettings().then((s) => setLogo(s.logo || ''));
     };
     window.addEventListener('settings-updated', handler);
     return () => window.removeEventListener('settings-updated', handler);

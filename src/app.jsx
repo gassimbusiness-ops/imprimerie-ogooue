@@ -114,7 +114,7 @@ export default function App() {
           <Route path="parametres" element={<RequirePermission module="parametres"><Parametres /></RequirePermission>} />
           {/* New modules */}
           <Route path="taches" element={<RequirePermission module="commandes"><Taches /></RequirePermission>} />
-          <Route path="catalogue" element={<RequirePermission module="stocks"><Catalogue /></RequirePermission>} />
+          <Route path="catalogue" element={<RequirePermission module="catalogue"><Catalogue /></RequirePermission>} />
           <Route path="prospection" element={<RequirePermission module="clients"><Prospection /></RequirePermission>} />
           <Route path="bilans" element={<RequirePermission module="statistiques"><Bilans /></RequirePermission>} />
           <Route path="finances" element={<RequirePermission module="finances"><Finances /></RequirePermission>} />
