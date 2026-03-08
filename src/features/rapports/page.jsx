@@ -516,7 +516,7 @@ export default function Rapports() {
 
       {/* Form Dialog — Mode Tableur plein écran */}
       <Dialog open={showForm} onOpenChange={setShowForm}>
-        <DialogContent className="max-h-[95vh] w-[96vw] max-w-[1400px] overflow-hidden p-0 flex flex-col">
+        <DialogContent className="h-[95vh] w-[96vw] max-w-[1400px] overflow-hidden p-0 gap-0 flex flex-col">
           <DialogHeader className="border-b px-6 py-3 shrink-0">
             <DialogTitle className="flex items-center gap-2">
               <FileSpreadsheet className="h-5 w-5 text-blue-600" />

@@ -213,6 +213,75 @@ export function exportBilanPDF(data, periode) {
 /**
  * Export liste clients en PDF
  */
+/**
+ * Export rapport tableur (grille complète d'un jour) en PDF paysage
+ */
+export function exportRapportTableur({ date, operateur_nom, lignes, columnTotals, totalEntrees, totalSorties, caisse }) {
+  const COLS = [
+    { key: 'copies', label: 'COPIES' },
+    { key: 'marchandises', label: 'MARCH.' },
+    { key: 'scan', label: 'SCAN' },
+    { key: 'tirage_saisies', label: 'TIR/SAIS' },
+    { key: 'badges_plastification', label: 'BAD/PLAST' },
+    { key: 'demi_photos', label: 'D-PHOTOS' },
+    { key: 'maintenance', label: 'MAINT.' },
+    { key: 'imprimerie', label: 'IMPRIM.' },
+    { key: 'sorties', label: 'SORTIES', isSortie: true },
+    { key: 'description', label: 'DESCRIPTION', isText: true },
+  ];
+
+  const dateLabel = date
+    ? new Date(date + 'T00:00:00').toLocaleDateString('fr-FR', { weekday: 'long', day: '2-digit', month: '2-digit', year: 'numeric' })
+    : '—';
+
+  let html = `
+    <h2>Rapport journalier — ${dateLabel}</h2>
+    <table style="width:auto;border:none;margin-bottom:12px;">
+      <tr><td style="border:none;padding:2px 16px 2px 0;font-weight:600;">Opérateur:</td><td style="border:none;padding:2px 0;">${operateur_nom || '—'}</td></tr>
+    </table>
+    <div class="kpi-row">
+      <div class="kpi-box"><div class="label">Total Recettes</div><div class="value text-emerald">${fmt(totalEntrees)} F</div></div>
+      <div class="kpi-box"><div class="label">Total Dépenses</div><div class="value text-red">${fmt(totalSorties)} F</div></div>
+      <div class="kpi-box"><div class="label">Caisse Journée</div><div class="value text-blue">${fmt(caisse)} F</div></div>
+    </div>
+    <table>
+      <thead><tr>
+        <th style="width:30px;text-align:center;">#</th>
+        ${COLS.map((c) => `<th class="${c.isText ? 'text-left' : 'text-right'}" style="${c.isSortie ? 'background:#fee2e2;color:#dc2626;' : ''}">${c.label}</th>`).join('')}
+      </tr></thead>
+      <tbody>`;
+
+  const rows = lignes || [];
+  rows.forEach((row, i) => {
+    const hasData = COLS.some((c) => c.isText ? (row[c.key] || '').trim() : (row[c.key] || 0) > 0);
+    if (!hasData && i >= 5) return; // Show at least 5 rows
+    html += `<tr>
+      <td class="text-center" style="color:#9ca3af;font-weight:600;">${i + 1}</td>
+      ${COLS.map((c) => {
+        if (c.isText) return `<td>${row[c.key] || ''}</td>`;
+        const val = row[c.key] || 0;
+        return `<td class="text-right" style="${c.isSortie && val > 0 ? 'color:#dc2626;font-weight:600;' : ''}">${val > 0 ? fmt(val) : '—'}</td>`;
+      }).join('')}
+    </tr>`;
+  });
+
+  html += `<tr class="total-row">
+    <td class="text-center font-bold">TOT</td>
+    ${COLS.map((c) => {
+      if (c.isText) return '<td></td>';
+      const val = columnTotals?.[c.key] || 0;
+      return `<td class="text-right font-bold" style="${c.isSortie ? 'color:#dc2626;' : ''}">${fmt(val)} F</td>`;
+    }).join('')}
+  </tr>`;
+
+  html += '</tbody></table>';
+
+  printHTML(`Rapport ${dateLabel}`, html, { orientation: 'landscape' });
+}
+
+/**
+ * Export liste clients en PDF
+ */
 export function exportClientsPDF(clients) {
   let html = `<h2>Liste des Clients</h2>
     <p style="margin-bottom:8px;">${clients.length} clients au total</p>

@@ -1,5 +1,5 @@
 /**
- * Seed data from Excel files — run once to populate localStorage.
+ * Seed data from Excel files — run once to populate the database.
  * Call seedPapeterieProject() from browser console or a button.
  */
 import { db } from '@/services/db';

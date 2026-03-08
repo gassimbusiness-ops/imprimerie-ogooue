@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { db } from '@/services/db';
+import { db, getSettings } from '@/services/db';
 import { useAuth } from '@/services/auth';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -227,7 +227,7 @@ export default function DevisFactures() {
     load();
   };
 
-  const handlePrint = (doc) => {
+  const handlePrint = async (doc) => {
     const w = window.open('', '_blank', 'width=800,height=1000');
     const lines = (doc.lignes || []).map((l) =>
       `<tr><td style="padding:8px;border-bottom:1px solid #eee">${l.description}</td>
@@ -235,7 +235,7 @@ export default function DevisFactures() {
        <td style="padding:8px;border-bottom:1px solid #eee;text-align:right">${fmt(l.prix_unitaire)} F</td>
        <td style="padding:8px;border-bottom:1px solid #eee;text-align:right">${fmt((l.quantite || 0) * (l.prix_unitaire || 0))} F</td></tr>`,
     ).join('');
-    const settings = JSON.parse(localStorage.getItem('io_settings') || '{}');
+    const settings = await getSettings();
     const companyName = settings.nom_entreprise || 'Imprimerie Ogooué';
     const companyAddr = settings.adresse || 'Libreville, Gabon';
     const companyTel = settings.telephone || '';

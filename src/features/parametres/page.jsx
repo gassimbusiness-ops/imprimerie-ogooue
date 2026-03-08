@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { db } from '@/services/db';
+import { db, getSettings as loadSettingsFromDB, saveSettings as saveSettingsToDB } from '@/services/db';
 import { useAuth } from '@/services/auth';
 import { logAction } from '@/services/audit';
 import { hashPassword, generateSalt } from '@/services/crypto';
@@ -20,18 +20,12 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 
-const SETTINGS_KEY = 'io_settings';
 const ROLE_OPTIONS = [
   { value: 'admin', label: 'Administrateur', color: 'bg-violet-100 text-violet-700' },
   { value: 'manager', label: 'Manager', color: 'bg-blue-100 text-blue-700' },
   { value: 'employe', label: 'Employé', color: 'bg-slate-100 text-slate-700' },
   { value: 'client', label: 'Client', color: 'bg-emerald-100 text-emerald-700' },
 ];
-
-function getSettings() {
-  try { return JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}'); } catch { return {}; }
-}
-function saveSettings(data) { localStorage.setItem(SETTINGS_KEY, JSON.stringify(data)); }
 
 export default function Parametres() {
   const { user, isAdmin, changePassword } = useAuth();
@@ -53,24 +47,25 @@ export default function Parametres() {
   const logoRef = useRef(null);
 
   useEffect(() => {
-    const saved = getSettings();
-    setForm((f) => ({
-      ...f,
-      nom_entreprise: saved.nom_entreprise || 'Imprimerie OGOOUÉ',
-      slogan: saved.slogan || 'Votre partenaire impression à Moanda',
-      adresse: saved.adresse || 'Carrefour Fina en face de Finam',
-      ville: saved.ville || 'Moanda',
-      pays: saved.pays || 'Gabon',
-      telephone: saved.telephone || '060 44 46 34',
-      telephone2: saved.telephone2 || '074 42 41 42',
-      email: saved.email || 'imprimerieogooue@gmail.com',
-      site_web: saved.site_web || '',
-      nif: saved.nif || '256598U',
-      rccm: saved.rccm || 'RG/FCV 2023A0407',
-      logo: saved.logo || '',
-      devise: saved.devise || 'F CFA',
-      tva: saved.tva || '0',
-    }));
+    loadSettingsFromDB().then((saved) => {
+      setForm((f) => ({
+        ...f,
+        nom_entreprise: saved.nom_entreprise || 'Imprimerie OGOOUÉ',
+        slogan: saved.slogan || 'Votre partenaire impression à Moanda',
+        adresse: saved.adresse || 'Carrefour Fina en face de Finam',
+        ville: saved.ville || 'Moanda',
+        pays: saved.pays || 'Gabon',
+        telephone: saved.telephone || '060 44 46 34',
+        telephone2: saved.telephone2 || '074 42 41 42',
+        email: saved.email || 'imprimerieogooue@gmail.com',
+        site_web: saved.site_web || '',
+        nif: saved.nif || '256598U',
+        rccm: saved.rccm || 'RG/FCV 2023A0407',
+        logo: saved.logo || '',
+        devise: saved.devise || 'F CFA',
+        tva: saved.tva || '0',
+      }));
+    });
     loadUsers();
   }, []);
 
@@ -91,10 +86,9 @@ export default function Parametres() {
     reader.readAsDataURL(file);
   };
 
-  const handleSaveSettings = () => {
-    saveSettings(form);
+  const handleSaveSettings = async () => {
+    await saveSettingsToDB(form);
     toast.success('Paramètres enregistrés');
-    window.dispatchEvent(new CustomEvent('settings-updated'));
   };
 
   const openAddUser = () => {

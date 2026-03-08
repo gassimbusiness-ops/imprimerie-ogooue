@@ -1,21 +1,16 @@
 /**
- * Loads Excel-imported data from /import-data.json into localStorage.
- * Called once on app boot — idempotent via a flag.
+ * Loads Excel-imported data from /import-data.json into the database.
+ * Called once on app boot — idempotent via duplicate detection.
  */
 import { db } from './db';
 
-const IMPORT_KEY = 'io_excel_imported_v1';
-
 export async function loadImportedData() {
-  if (localStorage.getItem(IMPORT_KEY)) return;
-
   try {
     const resp = await fetch('/import-data.json');
     if (!resp.ok) return; // File doesn't exist yet — that's fine
     const data = await resp.json();
 
     if (data.rapports?.length) {
-      // Avoid duplicates: check existing dates
       const existing = await db.rapports.list();
       const existingDates = new Set(existing.map((r) => r.date));
 
@@ -37,8 +32,7 @@ export async function loadImportedData() {
       }
     }
 
-    localStorage.setItem(IMPORT_KEY, new Date().toISOString());
-    console.log('✅ Données Excel importées dans l\'app');
+    console.log('[import] Données Excel vérifiées');
   } catch {
     // Silently fail — import-data.json not available yet
   }
