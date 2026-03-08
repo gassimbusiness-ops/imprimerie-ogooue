@@ -33,6 +33,7 @@ import {
   MessageCircle,
   Tag,
   TrendingUp,
+  Megaphone,
 } from 'lucide-react';
 
 const NAV_GROUPS = [
@@ -83,6 +84,7 @@ const NAV_GROUPS = [
       { name: 'Prospection', href: '/prospection', icon: Target, module: 'clients' },
       { name: 'Messagerie', href: '/messagerie', icon: MessageCircle, module: 'clients' },
       { name: 'Événements', href: '/evenements', icon: CalendarDays, module: 'clients' },
+      { name: 'Marketing', href: '/marketing', icon: Megaphone, module: 'clients' },
       { name: 'Notifications SMS', href: '/notifications', icon: MessageSquare, module: 'clients' },
     ],
   },

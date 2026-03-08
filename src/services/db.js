@@ -161,6 +161,8 @@ export const db = {
   comptes_bancaires: new Collection('comptes_bancaires'),
   mouvements_financiers: new Collection('mouvements_financiers'),
   depots_hebdo: new Collection('depots_hebdo'),
+  campagnes_prospection: new Collection('campagnes_prospection'),
+  actions_marketing: new Collection('actions_marketing'),
 };
 
 // ── Settings helpers (shared across the app) ──
