@@ -31,6 +31,8 @@ import Evenements from '@/features/evenements/page';
 import Messagerie from '@/features/messagerie/page';
 import TarifsClients from '@/features/tarifs-clients/page';
 import Gouvernance from '@/features/gouvernance/page';
+import RapportsAnalyses from '@/features/rapports-analyses/page';
+import PerformanceRH from '@/features/performance-rh/page';
 // Client portal
 import ClientDashboard from '@/features/client-portal/dashboard';
 import ClientCatalogue from '@/features/client-portal/catalogue';
@@ -125,6 +127,8 @@ export default function App() {
           <Route path="messagerie" element={<RequirePermission module="clients"><Messagerie /></RequirePermission>} />
           <Route path="tarifs-clients" element={<RequirePermission module="clients"><TarifsClients /></RequirePermission>} />
           <Route path="gouvernance" element={<RequirePermission module="gouvernance"><Gouvernance /></RequirePermission>} />
+          <Route path="rapports-analyses" element={<RequirePermission module="statistiques"><RapportsAnalyses /></RequirePermission>} />
+          <Route path="performance-rh" element={<RequirePermission module="employes"><PerformanceRH /></RequirePermission>} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

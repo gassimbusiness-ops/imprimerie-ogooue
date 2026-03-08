@@ -63,6 +63,7 @@ const NAV_GROUPS = [
       { name: 'Devis & Factures', href: '/devis-factures', icon: FileText, module: 'devis_factures' },
       { name: 'Clôture de Caisse', href: '/cloture-caisse', icon: Wallet, module: 'statistiques' },
       { name: 'Paiements Mobile', href: '/paiements', icon: Smartphone, module: 'devis_factures' },
+      { name: 'Rapports & Analyses', href: '/rapports-analyses', icon: PieChart, module: 'statistiques' },
     ],
   },
   {
@@ -71,6 +72,7 @@ const NAV_GROUPS = [
       { name: 'Employés', href: '/employes', icon: Users, module: 'employes' },
       { name: 'Pointage', href: '/pointage', icon: Clock, module: 'pointage' },
       { name: 'Demandes RH', href: '/demandes-rh', icon: ClipboardList, module: 'employes' },
+      { name: 'Performance & Dashboard RH', href: '/performance-rh', icon: BarChart3, module: 'employes' },
     ],
   },
   {
@@ -88,6 +90,7 @@ const NAV_GROUPS = [
     label: 'Gouvernance',
     items: [
       { name: 'Capital & Investisseurs', href: '/gouvernance', icon: TrendingUp, module: 'gouvernance' },
+      { name: 'Rapports stratégiques', href: '/rapports-analyses', icon: PieChart, module: 'statistiques' },
     ],
   },
   {

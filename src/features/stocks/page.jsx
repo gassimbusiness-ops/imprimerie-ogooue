@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { db } from '@/services/db';
 import { useAuth } from '@/services/auth';
 import { logAction } from '@/services/audit';
+import { exportInventairePDF, exportCSV } from '@/services/export-pdf';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -15,7 +16,7 @@ import {
 import {
   Boxes, Search, Plus, Edit2, Trash2, PackagePlus, PackageMinus,
   AlertTriangle, Filter, Eye, EyeOff, ArrowDown, ArrowUp,
-  Package, Truck, MapPin, Clock, DollarSign, History, X,
+  Package, Truck, MapPin, Clock, DollarSign, History, X, Download, FileText,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -375,7 +376,23 @@ export default function Stocks() {
           <h2 className="text-2xl font-bold tracking-tight">Stocks Consommables</h2>
           <p className="text-muted-foreground">Gestion des matières premières et consommables</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-wrap">
+          <Button variant="outline" size="sm" className="gap-1.5" onClick={() => exportInventairePDF(filtered, { titre: filterStatus === 'alerte' ? 'Stock — Articles en alerte' : 'Inventaire Stock Complet', filtre: filterCat !== 'all' ? filterCat : '' })}>
+            <Download className="h-3.5 w-3.5" /> PDF
+          </Button>
+          <Button variant="outline" size="sm" className="gap-1.5" onClick={() => exportCSV(filtered, [
+            { label: 'Nom', accessor: 'nom' },
+            { label: 'Référence', accessor: 'reference' },
+            { label: 'Catégorie', accessor: 'categorie' },
+            { label: 'Quantité', accessor: (r) => r.quantite ?? r.stock ?? 0 },
+            { label: 'Minimum', accessor: (r) => r.quantite_minimum ?? r.stock_min ?? 0 },
+            { label: 'Unité', accessor: 'unite' },
+            { label: 'Prix unitaire', accessor: 'prix_unitaire' },
+            { label: 'Fournisseur', accessor: 'fournisseur' },
+            { label: 'Emplacement', accessor: 'emplacement' },
+          ], 'stock_inventaire.csv')}>
+            <FileText className="h-3.5 w-3.5" /> CSV
+          </Button>
           {canWrite && (
             <Button className="gap-2" onClick={openAdd}>
               <Plus className="h-4 w-4" /> Nouvel article
