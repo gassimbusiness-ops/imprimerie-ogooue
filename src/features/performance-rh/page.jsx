@@ -14,9 +14,10 @@ import {
 import {
   Users, UserCheck, Clock, AlertTriangle, Star, ClipboardList, TrendingUp,
   Plus, Edit3, Check, X, Award, Calendar, BarChart3, ChevronDown, ChevronUp,
-  Ban, CheckCircle, MessageSquare,
+  Ban, CheckCircle, MessageSquare, Brain, Loader2, Shield, Activity,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { askAI } from '@/services/ai';
 
 function fmt(n) { return new Intl.NumberFormat('fr-FR').format(Math.round(n || 0)); }
 
@@ -26,6 +27,7 @@ const TABS = [
   { id: 'dashboard', label: 'Dashboard RH', icon: BarChart3 },
   { id: 'performance', label: 'Performance', icon: Star },
   { id: 'demandes', label: 'Demandes RH', icon: ClipboardList },
+  { id: 'analyse_ia', label: 'Analyse IA', icon: Brain },
 ];
 
 function StarRating({ value, onChange, readonly = false }) {
@@ -57,6 +59,10 @@ export default function PerformanceRH() {
   const [pointages, setPointages] = useState([]);
   const [demandesRH, setDemandesRH] = useState([]);
   const [taches, setTaches] = useState([]);
+
+  // IA Analysis
+  const [iaLoading, setIaLoading] = useState(false);
+  const [iaResult, setIaResult] = useState(null);
 
   // Dialogs
   const [showEvalForm, setShowEvalForm] = useState(false);
@@ -266,6 +272,45 @@ export default function PerformanceRH() {
       });
     }
     setShowEvalForm(true);
+  };
+
+  const handleAnalyseRH = async () => {
+    setIaLoading(true);
+    try {
+      const employeData = employes.map((e) => {
+        const monthPts = pointages.filter((p) => p.employe_id === e.id && (p.date || '').slice(0, 7) === currentMonth);
+        const presents = monthPts.filter((p) => p.statut === 'present' || p.arrivee).length;
+        const retards = monthPts.filter((p) => p.retard || p.statut === 'retard').length;
+        const perf = performances.find((p) => p.employeId === e.id && p.periode === currentMonth);
+        const empTaches = taches.filter((t) => t.assignee_id === e.id || t.employe_id === e.id);
+        const tachesTerminees = empTaches.filter((t) => t.statut === 'termine' || t.statut === 'done').length;
+        return `- ${e.prenom || ''} ${e.nom || ''} (${e.poste || 'N/A'}): ${presents} jours présent, ${retards} retards, note ${perf?.notePerformance || 'N/A'}/5, ${tachesTerminees}/${empTaches.length} tâches terminées`;
+      }).join('\n');
+
+      const system = "Tu es un DRH expert pour une PME africaine (imprimerie au Gabon). Analyse ces données RH et retourne UNIQUEMENT un JSON valide : { \"score_global\": 75, \"analyse\": \"texte court\", \"employes\": [{ \"nom\": \"Nom\", \"risque\": \"faible|moyen|eleve\", \"score\": 80, \"recommandation\": \"texte\" }], \"recommandations_globales\": [\"reco1\", \"reco2\"] }";
+      const userMessage = `Employés:\n${employeData}`;
+
+      const response = await askAI(system, userMessage, 1024);
+
+      // Extract JSON from the response (handle markdown code blocks)
+      let jsonStr = response;
+      const jsonMatch = response.match(/```(?:json)?\s*([\s\S]*?)```/);
+      if (jsonMatch) jsonStr = jsonMatch[1].trim();
+      // Also try to find raw JSON object
+      if (!jsonStr.startsWith('{')) {
+        const braceMatch = jsonStr.match(/\{[\s\S]*\}/);
+        if (braceMatch) jsonStr = braceMatch[0];
+      }
+
+      const parsed = JSON.parse(jsonStr);
+      setIaResult(parsed);
+      toast.success('Analyse IA terminée');
+    } catch (err) {
+      console.error('[IA RH]', err);
+      toast.error('Erreur lors de l\'analyse IA : ' + (err.message || 'Erreur inconnue'));
+    } finally {
+      setIaLoading(false);
+    }
   };
 
   if (loading) return <div className="flex items-center justify-center py-20"><div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" /></div>;
@@ -627,6 +672,140 @@ export default function PerformanceRH() {
               )}
             </CardContent>
           </Card>
+        </>
+      )}
+
+      {/* ═══════════════ TAB ANALYSE IA ═══════════════ */}
+      {tab === 'analyse_ia' && (
+        <>
+          {/* Header */}
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <h3 className="text-lg font-bold">Analyse Prédictive RH</h3>
+              <Badge className="bg-violet-100 text-violet-700 text-[10px] gap-1">
+                <Activity className="h-3 w-3" /> Powered by AI
+              </Badge>
+            </div>
+            <Button
+              className="gap-2 bg-violet-600 hover:bg-violet-700"
+              onClick={handleAnalyseRH}
+              disabled={iaLoading}
+            >
+              {iaLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Brain className="h-4 w-4" />}
+              {iaLoading ? 'Analyse en cours...' : 'Lancer l\'analyse'}
+            </Button>
+          </div>
+
+          {/* Contenu */}
+          {!iaResult && !iaLoading && (
+            <Card>
+              <CardContent className="text-center py-16 text-muted-foreground">
+                <Brain className="h-14 w-14 mx-auto mb-4 opacity-20" />
+                <p className="font-medium text-base">Lancez l'analyse pour obtenir des insights prédictifs</p>
+                <p className="text-sm mt-1">L'IA analysera les performances, la ponctualité et les risques RH de votre équipe</p>
+              </CardContent>
+            </Card>
+          )}
+
+          {iaLoading && (
+            <Card>
+              <CardContent className="text-center py-16">
+                <Loader2 className="h-10 w-10 mx-auto mb-4 animate-spin text-violet-500" />
+                <p className="font-medium">Analyse en cours...</p>
+                <p className="text-sm text-muted-foreground mt-1">L'IA traite les données RH de votre équipe</p>
+              </CardContent>
+            </Card>
+          )}
+
+          {iaResult && !iaLoading && (
+            <>
+              {/* Score global */}
+              <Card className="border-l-4 border-l-violet-500">
+                <CardContent className="p-6">
+                  <div className="flex flex-col sm:flex-row items-center gap-6">
+                    <div className="relative flex items-center justify-center">
+                      <svg className="h-28 w-28 -rotate-90" viewBox="0 0 120 120">
+                        <circle cx="60" cy="60" r="50" fill="none" stroke="#e5e7eb" strokeWidth="10" />
+                        <circle
+                          cx="60" cy="60" r="50" fill="none"
+                          stroke={iaResult.score_global >= 70 ? '#10b981' : iaResult.score_global >= 50 ? '#f59e0b' : '#ef4444'}
+                          strokeWidth="10" strokeLinecap="round"
+                          strokeDasharray={`${(iaResult.score_global / 100) * 314} 314`}
+                        />
+                      </svg>
+                      <span className="absolute text-2xl font-bold">{iaResult.score_global}</span>
+                    </div>
+                    <div className="flex-1 text-center sm:text-left">
+                      <p className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Score global de l'équipe</p>
+                      <p className="text-sm text-muted-foreground mt-1">{iaResult.analyse}</p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Cartes employés */}
+              <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                {(iaResult.employes || []).map((emp, i) => {
+                  const riskColor = emp.risque === 'eleve' ? 'bg-red-100 text-red-700 border-red-200' :
+                    emp.risque === 'moyen' ? 'bg-orange-100 text-orange-700 border-orange-200' :
+                    'bg-emerald-100 text-emerald-700 border-emerald-200';
+                  const riskLabel = emp.risque === 'eleve' ? 'Risque élevé' :
+                    emp.risque === 'moyen' ? 'Risque moyen' : 'Risque faible';
+                  const riskIcon = emp.risque === 'eleve' ? AlertTriangle :
+                    emp.risque === 'moyen' ? Clock : Shield;
+                  const RiskIcon = riskIcon;
+                  const barColor = emp.score >= 70 ? 'bg-emerald-500' : emp.score >= 50 ? 'bg-amber-500' : 'bg-red-500';
+
+                  return (
+                    <Card key={i} className="hover:shadow-md transition-shadow">
+                      <CardContent className="p-4 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <p className="font-semibold text-sm">{emp.nom}</p>
+                          <Badge className={`text-[10px] gap-1 ${riskColor}`}>
+                            <RiskIcon className="h-3 w-3" /> {riskLabel}
+                          </Badge>
+                        </div>
+                        <div>
+                          <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
+                            <span>Score individuel</span>
+                            <span className="font-bold text-foreground">{emp.score}/100</span>
+                          </div>
+                          <div className="h-2 rounded-full bg-muted overflow-hidden">
+                            <div className={`h-full rounded-full transition-all ${barColor}`} style={{ width: `${Math.min(100, emp.score)}%` }} />
+                          </div>
+                        </div>
+                        <div className="rounded-lg bg-muted/50 p-2.5">
+                          <p className="text-[10px] font-semibold text-muted-foreground uppercase mb-1">Recommandation</p>
+                          <p className="text-xs">{emp.recommandation}</p>
+                        </div>
+                      </CardContent>
+                    </Card>
+                  );
+                })}
+              </div>
+
+              {/* Recommandations globales */}
+              {iaResult.recommandations_globales?.length > 0 && (
+                <Card>
+                  <CardHeader className="pb-2">
+                    <CardTitle className="text-sm flex items-center gap-2">
+                      <TrendingUp className="h-4 w-4 text-violet-500" /> Recommandations globales
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-2">
+                      {iaResult.recommandations_globales.map((reco, i) => (
+                        <div key={i} className="flex items-start gap-2 rounded-lg border px-3 py-2.5">
+                          <CheckCircle className="h-4 w-4 text-violet-500 shrink-0 mt-0.5" />
+                          <p className="text-sm">{reco}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+            </>
+          )}
         </>
       )}
 

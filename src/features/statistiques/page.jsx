@@ -1,7 +1,9 @@
 import { useState, useEffect, useMemo } from 'react';
 import { db } from '@/services/db';
+import { askAI } from '@/services/ai';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import {
   Select,
   SelectContent,
@@ -35,6 +37,12 @@ import {
   PieChart as PieIcon,
   Wallet,
   AlertTriangle,
+  Brain,
+  Loader2,
+  AlertTriangle as AlertIcon,
+  Lightbulb,
+  FileDown,
+  Activity,
 } from 'lucide-react';
 
 function fmt(n) {
@@ -95,6 +103,9 @@ export default function Statistiques() {
   const [clotures, setClotures] = useState([]);
   const [loading, setLoading] = useState(true);
   const [period, setPeriod] = useState('30d');
+  const [showIA, setShowIA] = useState(false);
+  const [iaLoading, setIaLoading] = useState(false);
+  const [iaResult, setIaResult] = useState(null);
 
   useEffect(() => {
     Promise.all([
@@ -195,6 +206,30 @@ export default function Statistiques() {
     return { totalRec, totalDep, benefice, avgDaily, margePercent, trend, catData, top5, dailyData, monthlyData, ecartTotal, ecartsMajeurs, recentClotures };
   }, [filtered, rapports, clotures, period]);
 
+  const handleAnalyseIA = async () => {
+    if (!stats) return;
+    setIaLoading(true);
+    setIaResult(null);
+    try {
+      const system = 'Tu es expert-comptable pour une PME africaine (imprimerie au Gabon). Analyse ces données financières et retourne UNIQUEMENT un JSON valide (pas de markdown, pas de texte avant/après) : { "analyse": "texte court 2-3 phrases", "alertes": ["alerte1", "alerte2"], "recommandations": ["reco1", "reco2", "reco3"], "score_sante": 75 }';
+      const userMsg = `Recettes mois : ${stats.totalRec} FCFA | Dépenses : ${stats.totalDep} FCFA | Solde : ${stats.benefice} FCFA | Nombre de rapports : ${filtered.length}`;
+      const raw = await askAI(system, userMsg, 500);
+      const jsonStr = raw.trim().replace(/```json\s*/g, '').replace(/```\s*/g, '');
+      const parsed = JSON.parse(jsonStr);
+      setIaResult(parsed);
+    } catch (err) {
+      console.error('[IA Finance]', err);
+      setIaResult({
+        analyse: 'Erreur lors de l\'analyse. Veuillez réessayer.',
+        alertes: ['Impossible de contacter le service IA'],
+        recommandations: [],
+        score_sante: 0,
+      });
+    } finally {
+      setIaLoading(false);
+    }
+  };
+
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
@@ -213,17 +248,150 @@ export default function Statistiques() {
             Vue d'ensemble — Imprimerie Ogooué
           </p>
         </div>
-        <Select value={period} onValueChange={setPeriod}>
-          <SelectTrigger className="w-[160px]">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {PERIODS.map((p) => (
-              <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <div className="flex items-center gap-2">
+          <Select value={period} onValueChange={setPeriod}>
+            <SelectTrigger className="w-[160px]">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {PERIODS.map((p) => (
+                <SelectItem key={p.value} value={p.value}>{p.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button
+            onClick={() => setShowIA(!showIA)}
+            className={showIA ? 'bg-emerald-600 hover:bg-emerald-700 text-white' : 'bg-emerald-500 hover:bg-emerald-600 text-white'}
+          >
+            <Brain className="mr-2 h-4 w-4" />
+            Analyse IA
+          </Button>
+        </div>
       </div>
+
+      {/* Panneau Analyse IA */}
+      {showIA && (
+        <Card className="border-emerald-200 bg-emerald-50/30 dark:border-emerald-900 dark:bg-emerald-950/20">
+          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <Brain className="h-5 w-5 text-emerald-600" />
+              Analyse IA — Santé Financière
+            </CardTitle>
+            {!iaResult && !iaLoading && (
+              <Button onClick={handleAnalyseIA} size="sm" className="bg-emerald-500 hover:bg-emerald-600 text-white">
+                <Activity className="mr-2 h-4 w-4" />
+                Lancer l'analyse
+              </Button>
+            )}
+          </CardHeader>
+          <CardContent>
+            {/* State: pas encore lancé */}
+            {!iaResult && !iaLoading && (
+              <div className="flex flex-col items-center justify-center py-10 text-center">
+                <Brain className="mb-4 h-16 w-16 text-emerald-300" />
+                <p className="text-muted-foreground">
+                  Lancez l'analyse pour obtenir des insights prédictifs
+                </p>
+              </div>
+            )}
+
+            {/* State: chargement */}
+            {iaLoading && (
+              <div className="flex flex-col items-center justify-center py-10 text-center">
+                <Loader2 className="mb-4 h-12 w-12 animate-spin text-emerald-500" />
+                <p className="font-medium text-emerald-700">Analyse en cours...</p>
+                <p className="text-sm text-muted-foreground">L'IA examine vos données financières</p>
+              </div>
+            )}
+
+            {/* State: résultats */}
+            {iaResult && !iaLoading && (
+              <div className="space-y-4">
+                {/* Score santé financière */}
+                <div className="flex flex-col items-center rounded-xl border bg-card p-6 sm:flex-row sm:gap-6">
+                  <div className="relative mb-4 flex h-28 w-28 shrink-0 items-center justify-center sm:mb-0">
+                    <svg className="h-28 w-28 -rotate-90" viewBox="0 0 120 120">
+                      <circle cx="60" cy="60" r="50" fill="none" stroke="currentColor" strokeWidth="8" className="text-muted/30" />
+                      <circle
+                        cx="60" cy="60" r="50" fill="none"
+                        strokeWidth="8" strokeLinecap="round"
+                        strokeDasharray={`${(iaResult.score_sante / 100) * 314} 314`}
+                        stroke={iaResult.score_sante >= 70 ? '#10b981' : iaResult.score_sante >= 40 ? '#f59e0b' : '#ef4444'}
+                      />
+                    </svg>
+                    <span className={`absolute text-2xl font-bold ${iaResult.score_sante >= 70 ? 'text-emerald-600' : iaResult.score_sante >= 40 ? 'text-amber-500' : 'text-red-500'}`}>
+                      {iaResult.score_sante}
+                    </span>
+                  </div>
+                  <div className="text-center sm:text-left">
+                    <h3 className="text-lg font-bold">Score Santé Financière</h3>
+                    <p className="text-sm text-muted-foreground">{iaResult.analyse}</p>
+                  </div>
+                </div>
+
+                {/* Alertes */}
+                {iaResult.alertes && iaResult.alertes.length > 0 && (
+                  <div>
+                    <h4 className="mb-2 flex items-center gap-2 text-sm font-semibold text-red-600">
+                      <AlertIcon className="h-4 w-4" /> Alertes ({iaResult.alertes.length})
+                    </h4>
+                    <div className="space-y-2">
+                      {iaResult.alertes.map((alerte, i) => (
+                        <div key={i} className="flex items-start gap-3 rounded-lg border border-red-200 bg-red-50 p-3 dark:border-red-900 dark:bg-red-950/30">
+                          <AlertIcon className="mt-0.5 h-4 w-4 shrink-0 text-red-500" />
+                          <p className="text-sm text-red-700 dark:text-red-400">{alerte}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Recommandations */}
+                {iaResult.recommandations && iaResult.recommandations.length > 0 && (
+                  <div>
+                    <h4 className="mb-2 flex items-center gap-2 text-sm font-semibold text-emerald-600">
+                      <Lightbulb className="h-4 w-4" /> Recommandations ({iaResult.recommandations.length})
+                    </h4>
+                    <div className="space-y-2">
+                      {iaResult.recommandations.map((reco, i) => (
+                        <div key={i} className="flex items-start gap-3 rounded-lg border border-emerald-200 bg-emerald-50 p-3 dark:border-emerald-900 dark:bg-emerald-950/30">
+                          <Lightbulb className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
+                          <p className="text-sm text-emerald-700 dark:text-emerald-400">{reco}</p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Actions */}
+                <div className="flex flex-wrap gap-2 pt-2">
+                  <Button onClick={handleAnalyseIA} variant="outline" size="sm">
+                    <Activity className="mr-2 h-4 w-4" />
+                    Relancer l'analyse
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      const text = `ANALYSE IA — IMPRIMERIE OGOOUÉ\n${'='.repeat(40)}\nDate : ${new Date().toLocaleDateString('fr-FR')}\nScore santé : ${iaResult.score_sante}/100\n\nAnalyse :\n${iaResult.analyse}\n\nAlertes :\n${(iaResult.alertes || []).map((a, i) => `  ${i + 1}. ${a}`).join('\n')}\n\nRecommandations :\n${(iaResult.recommandations || []).map((r, i) => `  ${i + 1}. ${r}`).join('\n')}`;
+                      const blob = new Blob([text], { type: 'text/plain' });
+                      const url = URL.createObjectURL(blob);
+                      const a = document.createElement('a');
+                      a.href = url;
+                      a.download = `analyse-ia-${new Date().toISOString().split('T')[0]}.txt`;
+                      a.click();
+                      URL.revokeObjectURL(url);
+                    }}
+                  >
+                    <FileDown className="mr-2 h-4 w-4" />
+                    Exporter analyse PDF
+                  </Button>
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {!stats || filtered.length === 0 ? (
         <Card>
