@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { db } from '@/services/db';
+import { useAuth } from '@/services/auth';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -58,6 +59,7 @@ const CAT_ICON = {
 };
 
 export default function ClientCatalogue() {
+  const { user } = useAuth();
   const [produits, setProduits] = useState([]);
   const [search, setSearch] = useState('');
   const [categorie, setCategorie] = useState('all');
@@ -108,21 +110,38 @@ export default function ClientCatalogue() {
 
   const envoyerDemande = async () => {
     if (panier.length === 0) { toast.error('Panier vide'); return; }
+    const clientNom = `${user?.prenom || ''} ${user?.nom || ''}`.trim() || 'Client Portail';
     const desc = panier.map((p) => `${p.qte}x ${p.nom}`).join(', ');
-    await db.commandes.create({
-      client_nom: 'Client Portail',
+    const nbArticles = panier.reduce((s, p) => s + p.qte, 0);
+    const cmd = await db.commandes.create({
+      client_nom: clientNom,
+      client_id: user?.id,
+      client_tel: user?.telephone || '',
+      client_email: user?.email || '',
       description: desc,
       service: 'Commande en ligne',
-      statut: 'en_attente',
+      statut: 'en_attente_validation',
       montant_total: totalPanier,
       date_creation: new Date().toISOString().slice(0, 10),
       source: 'portail_client',
       lignes: panier.map((p) => ({
         produit_id: p.id, nom: p.nom, qte: p.qte,
         prix: p.prix_calc || prixPourQte(p, p.qte),
+        image: p.images?.[0] || null,
       })),
+      historique_statuts: [{ statut: 'en_attente_validation', date: new Date().toISOString(), auteur: clientNom }],
     });
-    toast.success('Demande envoyée ! Nous vous contacterons bientôt.');
+    // Create notification for admin/employees
+    await db.notifications_app.create({
+      type: 'nouvelle_commande',
+      titre: '🛒 Nouvelle commande',
+      message: `Client : ${clientNom}\nProduits : ${desc}\nMontant estimé : ${fmt(totalPanier)} F`,
+      lien: '/commandes',
+      commande_id: cmd.id,
+      destinataire: 'admin',
+      lu: false,
+    });
+    toast.success('✅ Commande envoyée ! Nous la traitons dans les plus brefs délais.');
     setPanier([]);
     setShowPanier(false);
   };

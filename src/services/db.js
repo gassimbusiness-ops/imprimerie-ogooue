@@ -163,6 +163,8 @@ export const db = {
   depots_hebdo: new Collection('depots_hebdo'),
   campagnes_prospection: new Collection('campagnes_prospection'),
   actions_marketing: new Collection('actions_marketing'),
+  notifications_app: new Collection('notifications_app'),
+  fidelite_clients: new Collection('fidelite_clients'),
 };
 
 // ── Settings helpers (shared across the app) ──

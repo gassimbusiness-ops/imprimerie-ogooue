@@ -41,7 +41,7 @@ const emptyForm = {
   titre: '', type: 'promotion', statut: 'idee',
   dateDebut: '', dateFin: '', budget: '',
   cible: '', description: '', resultats: '',
-  campagneProspectionLiee: '',
+  campagneProspectionLiee: '__none__',
 };
 
 /* ─── COMPOSANT ─── */
@@ -106,7 +106,7 @@ export default function Marketing() {
       dateDebut: a.dateDebut || '', dateFin: a.dateFin || '',
       budget: a.budget || '', cible: a.cible || '',
       description: a.description || '', resultats: a.resultats || '',
-      campagneProspectionLiee: a.campagneProspectionLiee || '',
+      campagneProspectionLiee: a.campagneProspectionLiee || '__none__',
     });
     setShowForm(true);
   };
@@ -117,6 +117,7 @@ export default function Marketing() {
       ...form,
       titre: form.titre.trim(),
       budget: form.budget ? Number(form.budget) : null,
+      campagneProspectionLiee: form.campagneProspectionLiee === '__none__' ? '' : form.campagneProspectionLiee,
     };
 
     if (editItem) {
@@ -342,7 +343,7 @@ export default function Marketing() {
                 <Select value={form.campagneProspectionLiee} onValueChange={(v) => setForm({ ...form, campagneProspectionLiee: v })}>
                   <SelectTrigger><SelectValue placeholder="Aucune" /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="">Aucune</SelectItem>
+                    <SelectItem value="__none__">Aucune</SelectItem>
                     {campagnes.map((c) => <SelectItem key={c.id} value={c.id}>{c.titre || c.objetMessage}</SelectItem>)}
                   </SelectContent>
                 </Select>

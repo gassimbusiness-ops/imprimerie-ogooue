@@ -70,7 +70,7 @@ const SECTEURS = ['Administration', 'Éducation', 'Santé', 'Commerce', 'Constru
 const emptyForm = {
   type: 'entreprise', nomOuEntreprise: '', secteurActivite: 'Commerce',
   contactNom: '', telephone: '', email: '', adresse: '', localisation: '',
-  statut: 'nouveau', source: 'passage', responsableInterne: '',
+  statut: 'nouveau', source: 'passage', responsableInterne: '__none__',
   besoinsIdentifies: [], budgetEstime: '', dateProchainContact: '',
   notes: '',
 };
@@ -217,7 +217,7 @@ export default function Prospection() {
       localisation: p.localisation || '',
       statut: p.statut || 'nouveau',
       source: p.source || 'passage',
-      responsableInterne: p.responsableInterne || '',
+      responsableInterne: p.responsableInterne || '__none__',
       besoinsIdentifies: p.besoinsIdentifies || [],
       budgetEstime: p.budgetEstime || '',
       dateProchainContact: p.dateProchainContact || '',
@@ -237,6 +237,7 @@ export default function Prospection() {
       telephone: form.telephone.trim(),
       email: form.email.trim(),
       budgetEstime: form.budgetEstime ? Number(form.budgetEstime) : null,
+      responsableInterne: form.responsableInterne === '__none__' ? '' : form.responsableInterne,
     };
 
     if (editItem) {
@@ -920,7 +921,7 @@ export default function Prospection() {
               <Select value={form.responsableInterne} onValueChange={(v) => setForm({ ...form, responsableInterne: v })}>
                 <SelectTrigger><SelectValue placeholder="Aucun assigné" /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">Aucun</SelectItem>
+                  <SelectItem value="__none__">Aucun</SelectItem>
                   {employes.map((e) => <SelectItem key={e.id} value={e.id}>{e.prenom} {e.nom}</SelectItem>)}
                 </SelectContent>
               </Select>

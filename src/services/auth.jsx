@@ -117,6 +117,7 @@ export function AuthProvider({ children }) {
       nom: found.nom,
       prenom: found.prenom,
       email: found.email,
+      telephone: found.telephone || '',
       role: found.role || 'employe',
       poste: found.poste,
       _loginAt: Date.now(),

@@ -230,7 +230,7 @@ export default function Messagerie() {
         <Dialog open={showNewConv} onOpenChange={setShowNewConv}>
           <DialogContent className="max-w-sm"><DialogHeader><DialogTitle>Nouvelle conversation</DialogTitle></DialogHeader>
             <div className="space-y-4 pt-2">
-              <div><label className="mb-1.5 block text-sm font-medium">Client</label><Select value={newConvClient} onValueChange={setNewConvClient}><SelectTrigger><SelectValue placeholder="Choisir..." /></SelectTrigger><SelectContent>{clients.map((c) => <SelectItem key={c.id} value={c.id}>{c.nom}</SelectItem>)}</SelectContent></Select></div>
+              <div><label className="mb-1.5 block text-sm font-medium">Client</label><Select value={newConvClient || undefined} onValueChange={setNewConvClient}><SelectTrigger><SelectValue placeholder="Choisir un client..." /></SelectTrigger><SelectContent>{clients.map((c) => <SelectItem key={c.id} value={c.id}>{c.nom}</SelectItem>)}</SelectContent></Select></div>
               <div><label className="mb-1.5 block text-sm font-medium">Plateforme</label><Select value={newConvPlatform} onValueChange={setNewConvPlatform}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{Object.entries(PLATFORMS).map(([k, v]) => <SelectItem key={k} value={k}>{v.label}</SelectItem>)}</SelectContent></Select></div>
               <Button className="w-full" onClick={createConversation}>Créer</Button>
             </div>

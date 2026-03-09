@@ -16,7 +16,7 @@ import {
 import {
   Settings, Building2, Camera, Save, Phone, Mail, MapPin, Globe,
   Users, Shield, Key, Plus, Edit2, Trash2, UserPlus, Lock,
-  Eye, EyeOff, AlertTriangle,
+  Eye, EyeOff, AlertTriangle, Palette, Image, Type, ToggleLeft,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -45,6 +45,10 @@ export default function Parametres() {
   const [changePwdForm, setChangePwdForm] = useState({ newPwd: '', confirmPwd: '' });
   const [showPwd, setShowPwd] = useState(false);
   const logoRef = useRef(null);
+  const bannerRef = useRef(null);
+  const [bannerForm, setBannerForm] = useState({
+    texte: '', sous_texte: '', couleur: '', image: '', actif: true,
+  });
 
   useEffect(() => {
     loadSettingsFromDB().then((saved) => {
@@ -65,6 +69,16 @@ export default function Parametres() {
         devise: saved.devise || 'F CFA',
         tva: saved.tva || '0',
       }));
+      // Load banner settings
+      if (saved.banniere_client) {
+        setBannerForm({
+          texte: saved.banniere_client.texte || '',
+          sous_texte: saved.banniere_client.sous_texte || '',
+          couleur: saved.banniere_client.couleur || '',
+          image: saved.banniere_client.image || '',
+          actif: saved.banniere_client.actif !== false,
+        });
+      }
     });
     loadUsers();
   }, []);
@@ -89,6 +103,21 @@ export default function Parametres() {
   const handleSaveSettings = async () => {
     await saveSettingsToDB(form);
     toast.success('Paramètres enregistrés');
+  };
+
+  const handleBannerImageChange = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 2000000) { toast.error('Image trop grande (max 2 Mo)'); return; }
+    const reader = new FileReader();
+    reader.onload = (ev) => setBannerForm((f) => ({ ...f, image: ev.target.result }));
+    reader.readAsDataURL(file);
+  };
+
+  const handleSaveBanner = async () => {
+    const currentSettings = await loadSettingsFromDB();
+    await saveSettingsToDB({ ...currentSettings, banniere_client: bannerForm });
+    toast.success('Bannière client enregistrée');
   };
 
   const openAddUser = () => {
@@ -183,6 +212,7 @@ export default function Parametres() {
   const TABS = [
     { id: 'entreprise', label: 'Entreprise', icon: Building2 },
     ...(isAdmin ? [{ id: 'utilisateurs', label: 'Utilisateurs', icon: Users }] : []),
+    ...(isAdmin ? [{ id: 'interface_client', label: 'Interface Client', icon: Palette }] : []),
     { id: 'securite', label: 'Sécurité', icon: Shield },
   ];
 
@@ -311,6 +341,134 @@ export default function Parametres() {
                   </div>
                 );
               })}
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* ======= INTERFACE CLIENT TAB ======= */}
+      {activeTab === 'interface_client' && isAdmin && (
+        <div className="space-y-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Image className="h-4 w-4" /> Bannière de couverture
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <p className="text-sm text-muted-foreground">
+                Personnalisez la bannière affichée en haut du portail client.
+              </p>
+
+              <div className="flex items-center gap-3">
+                <label className="text-sm font-medium flex items-center gap-2">
+                  <ToggleLeft className="h-4 w-4" /> Bannière active
+                </label>
+                <button
+                  onClick={() => setBannerForm((f) => ({ ...f, actif: !f.actif }))}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${bannerForm.actif ? 'bg-primary' : 'bg-muted'}`}
+                >
+                  <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${bannerForm.actif ? 'translate-x-6' : 'translate-x-1'}`} />
+                </button>
+              </div>
+
+              <div>
+                <label className="mb-1.5 flex items-center gap-1.5 text-sm font-medium">
+                  <Type className="h-3.5 w-3.5" /> Texte d'accroche
+                </label>
+                <Input
+                  value={bannerForm.texte}
+                  onChange={(e) => setBannerForm({ ...bannerForm, texte: e.target.value })}
+                  placeholder="Bienvenue chez Imprimerie Ogooué"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1.5 block text-sm font-medium">Sous-texte</label>
+                <Input
+                  value={bannerForm.sous_texte}
+                  onChange={(e) => setBannerForm({ ...bannerForm, sous_texte: e.target.value })}
+                  placeholder="Moanda, Gabon — Votre partenaire impression"
+                />
+              </div>
+
+              <div>
+                <label className="mb-1.5 flex items-center gap-1.5 text-sm font-medium">
+                  <Palette className="h-3.5 w-3.5" /> Couleur de fond
+                </label>
+                <div className="flex items-center gap-3">
+                  <Input
+                    type="color"
+                    value={bannerForm.couleur || '#1e40af'}
+                    onChange={(e) => setBannerForm({ ...bannerForm, couleur: e.target.value })}
+                    className="h-10 w-16 p-1 cursor-pointer"
+                  />
+                  <Input
+                    value={bannerForm.couleur}
+                    onChange={(e) => setBannerForm({ ...bannerForm, couleur: e.target.value })}
+                    placeholder="#1e40af"
+                    className="flex-1"
+                  />
+                  {bannerForm.couleur && (
+                    <Button variant="ghost" size="sm" className="text-xs" onClick={() => setBannerForm({ ...bannerForm, couleur: '' })}>
+                      Par défaut
+                    </Button>
+                  )}
+                </div>
+              </div>
+
+              <div>
+                <label className="mb-1.5 flex items-center gap-1.5 text-sm font-medium">
+                  <Image className="h-3.5 w-3.5" /> Image de fond
+                </label>
+                {bannerForm.image ? (
+                  <div className="space-y-2">
+                    <div className="h-32 rounded-lg overflow-hidden bg-slate-100">
+                      <img src={bannerForm.image} alt="Banner" className="w-full h-full object-cover" />
+                    </div>
+                    <div className="flex gap-2">
+                      <Button variant="outline" size="sm" className="text-xs" onClick={() => bannerRef.current?.click()}>
+                        Changer l'image
+                      </Button>
+                      <Button variant="outline" size="sm" className="text-xs text-destructive" onClick={() => setBannerForm({ ...bannerForm, image: '' })}>
+                        Supprimer
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <Button variant="outline" className="gap-2" onClick={() => bannerRef.current?.click()}>
+                    <Camera className="h-4 w-4" /> Choisir une image
+                  </Button>
+                )}
+                <input ref={bannerRef} type="file" accept="image/*" className="hidden" onChange={handleBannerImageChange} />
+                <p className="text-[10px] text-muted-foreground mt-1">Max 2 Mo. Format recommandé : 1200x400px</p>
+              </div>
+
+              {/* Preview */}
+              <div>
+                <p className="text-sm font-medium mb-2">Aperçu</p>
+                <div
+                  className="relative rounded-xl overflow-hidden"
+                  style={bannerForm.image ? { background: `url(${bannerForm.image}) center/cover no-repeat` } : undefined}
+                >
+                  <div
+                    className={`${!bannerForm.image ? 'bg-gradient-to-br from-primary to-blue-700' : ''} p-6 text-white`}
+                    style={bannerForm.couleur && !bannerForm.image ? { background: bannerForm.couleur } : undefined}
+                  >
+                    {bannerForm.image && <div className="absolute inset-0 bg-black/40" />}
+                    <div className="relative z-10">
+                      <p className="text-lg font-bold">{bannerForm.texte || 'Bienvenue, Client !'}</p>
+                      <p className="text-white/80 text-sm mt-0.5">{bannerForm.sous_texte || 'Suivez vos commandes et gérez vos devis.'}</p>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex justify-end">
+                <Button className="gap-2" onClick={handleSaveBanner}>
+                  <Save className="h-4 w-4" /> Enregistrer la bannière
+                </Button>
+              </div>
             </CardContent>
           </Card>
         </div>

@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import {
   Dialog,
   DialogContent,
@@ -23,7 +24,6 @@ import {
   Plus,
   Search,
   Eye,
-  Edit2,
   Trash2,
   Clock,
   CheckCircle2,
@@ -32,29 +32,88 @@ import {
   ArrowRight,
   Phone,
   User,
+  Printer,
+  ShieldCheck,
+  MessageSquare,
+  StickyNote,
+  History,
+  Bell,
+  CreditCard,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
+// ── Statuts enrichis BLOC 5 ──
 const STATUTS = [
-  { value: 'nouveau', label: 'Nouveau', color: 'bg-blue-100 text-blue-700', icon: Clock },
-  { value: 'en_cours', label: 'En cours', color: 'bg-amber-100 text-amber-700', icon: Package },
-  { value: 'pret', label: 'Prêt', color: 'bg-emerald-100 text-emerald-700', icon: CheckCircle2 },
-  { value: 'livre', label: 'Livré', color: 'bg-green-100 text-green-800', icon: Truck },
-  { value: 'annule', label: 'Annulé', color: 'bg-red-100 text-red-700', icon: XCircle },
+  { value: 'en_attente_validation', label: 'En attente de validation', color: 'bg-amber-100 text-amber-700', icon: Clock },
+  { value: 'validee_attente_paiement', label: 'Validée — Attente paiement', color: 'bg-emerald-100 text-emerald-700', icon: CreditCard },
+  { value: 'en_production', label: 'En production', color: 'bg-blue-100 text-blue-700', icon: Printer },
+  { value: 'prete', label: 'Prête', color: 'bg-violet-100 text-violet-700', icon: Package },
+  { value: 'livree', label: 'Livrée', color: 'bg-green-100 text-green-800', icon: Truck },
+  { value: 'annulee', label: 'Annulée', color: 'bg-red-100 text-red-700', icon: XCircle },
 ];
 
+// Backward-compatible mapping for old statuses
+const STATUT_ALIASES = {
+  nouveau: 'en_attente_validation',
+  en_attente: 'en_attente_validation',
+  en_cours: 'en_production',
+  pret: 'prete',
+  livre: 'livree',
+  annule: 'annulee',
+};
+
+function normalizeStatut(val) {
+  return STATUT_ALIASES[val] || val || 'en_attente_validation';
+}
+
 function fmt(n) {
-  return new Intl.NumberFormat('fr-FR').format(n || 0);
+  return new Intl.NumberFormat('fr-FR').format(Math.round(n || 0));
 }
 
 function getStatut(val) {
-  return STATUTS.find((s) => s.value === val) || STATUTS[0];
+  const normalized = normalizeStatut(val);
+  return STATUTS.find((s) => s.value === normalized) || STATUTS[0];
 }
 
-const NEXT_STATUT = { nouveau: 'en_cours', en_cours: 'pret', pret: 'livre' };
+// Flow: en_attente_validation → validee_attente_paiement → en_production → prete → livree
+const NEXT_STATUT = {
+  en_attente_validation: 'validee_attente_paiement',
+  validee_attente_paiement: 'en_production',
+  en_production: 'prete',
+  prete: 'livree',
+  // Legacy support
+  nouveau: 'validee_attente_paiement',
+  en_attente: 'validee_attente_paiement',
+  en_cours: 'prete',
+  pret: 'livree',
+};
+
+// Messages de notification client par statut
+const NOTIF_CLIENT_MESSAGES = {
+  validee_attente_paiement: {
+    titre: '✅ Commande validée',
+    message: 'Votre commande a été validée ! Elle est en attente de paiement.',
+  },
+  en_production: {
+    titre: '🖨️ En production',
+    message: 'Votre commande est en cours de production !',
+  },
+  prete: {
+    titre: '📦 Commande prête',
+    message: 'Votre commande est prête à être récupérée !',
+  },
+  livree: {
+    titre: '🎉 Commande livrée',
+    message: 'Commande livrée ! Merci de votre confiance.',
+  },
+  annulee: {
+    titre: '❌ Commande annulée',
+    message: 'Votre commande a été annulée. Contactez-nous pour plus d\'informations.',
+  },
+};
 
 export default function Commandes() {
-  const { hasPermission } = useAuth();
+  const { hasPermission, user: currentUser } = useAuth();
   const canWrite = hasPermission('commandes', 'write');
   const [commandes, setCommandes] = useState([]);
   const [clients, setClients] = useState([]);
@@ -64,6 +123,8 @@ export default function Commandes() {
   const [showForm, setShowForm] = useState(false);
   const [showDetail, setShowDetail] = useState(null);
   const [editItem, setEditItem] = useState(null);
+  const [commentaireClient, setCommentaireClient] = useState('');
+  const [noteInterne, setNoteInterne] = useState('');
   const [form, setForm] = useState({
     client_id: '',
     client_nom: '',
@@ -89,19 +150,31 @@ export default function Commandes() {
         (c.numero || '').toLowerCase().includes(search.toLowerCase()) ||
         (c.description || '').toLowerCase().includes(search.toLowerCase()),
       )
-      .filter((c) => filterStatut === 'all' || c.statut === filterStatut);
+      .filter((c) => {
+        if (filterStatut === 'all') return true;
+        const norm = normalizeStatut(c.statut);
+        return norm === filterStatut;
+      });
   }, [commandes, search, filterStatut]);
 
   const stats = useMemo(() => {
-    const enCours = commandes.filter((c) => c.statut === 'en_cours' || c.statut === 'nouveau').length;
-    const prets = commandes.filter((c) => c.statut === 'pret').length;
+    const enAttente = commandes.filter((c) => {
+      const n = normalizeStatut(c.statut);
+      return n === 'en_attente_validation';
+    }).length;
+    const enProd = commandes.filter((c) => {
+      const n = normalizeStatut(c.statut);
+      return n === 'en_production' || n === 'validee_attente_paiement';
+    }).length;
+    const pretes = commandes.filter((c) => normalizeStatut(c.statut) === 'prete').length;
     const thisMonth = commandes.filter((c) => {
       const d = c.created_at?.split('T')[0] || '';
       const monthStart = new Date().toISOString().slice(0, 7) + '-01';
-      return d >= monthStart && c.statut !== 'annule';
+      const norm = normalizeStatut(c.statut);
+      return d >= monthStart && norm !== 'annulee';
     });
-    const ca = thisMonth.reduce((s, c) => s + (c.total || 0), 0);
-    return { enCours, prets, ca };
+    const ca = thisMonth.reduce((s, c) => s + (c.montant_total || c.total || 0), 0);
+    return { enAttente, enProd, pretes, ca };
   }, [commandes]);
 
   const openAdd = () => {
@@ -164,7 +237,11 @@ export default function Commandes() {
       date_echeance: form.date_echeance,
       lignes: form.lignes.filter((l) => l.description.trim()),
       total: getTotal(),
-      statut: editItem ? editItem.statut : 'nouveau',
+      montant_total: getTotal(),
+      statut: editItem ? editItem.statut : 'en_attente_validation',
+      historique_statuts: editItem?.historique_statuts || [
+        { statut: 'en_attente_validation', date: new Date().toISOString(), auteur: `${currentUser?.prenom} ${currentUser?.nom}` },
+      ],
     };
 
     if (editItem) {
@@ -178,11 +255,140 @@ export default function Commandes() {
     load();
   };
 
+  // ── Changement de statut avec notification client ──
   const handleStatutChange = async (cmd, newStatut) => {
-    await db.commandes.update(cmd.id, { statut: newStatut });
+    const auteur = `${currentUser?.prenom || ''} ${currentUser?.nom || ''}`.trim();
+    const historique = [...(cmd.historique_statuts || []), {
+      statut: newStatut,
+      date: new Date().toISOString(),
+      auteur,
+    }];
+
+    await db.commandes.update(cmd.id, {
+      statut: newStatut,
+      historique_statuts: historique,
+    });
+
+    // Envoyer notification au client
+    const notifConfig = NOTIF_CLIENT_MESSAGES[newStatut];
+    if (notifConfig && cmd.client_id) {
+      await db.notifications_app.create({
+        type: 'statut_commande',
+        titre: notifConfig.titre,
+        message: `${notifConfig.message}\nCommande : ${cmd.numero || 'CMD'}`,
+        lien: '/client/commandes',
+        commande_id: cmd.id,
+        destinataire: 'client',
+        destinataire_id: cmd.client_id,
+        lu: false,
+      });
+    }
+
     toast.success(`Commande passée à "${getStatut(newStatut).label}"`);
     load();
-    setShowDetail(null);
+    // Refresh detail
+    const updated = await db.commandes.getById(cmd.id);
+    if (updated) setShowDetail(updated);
+  };
+
+  // ── Valider la commande + créditer points fidélité ──
+  const handleValider = async (cmd) => {
+    await handleStatutChange(cmd, 'validee_attente_paiement');
+
+    // Credit fidelity points
+    if (cmd.client_id) {
+      try {
+        const allFidelite = await db.fidelite_clients.list();
+        const fidelite = allFidelite.find((f) => f.client_id === cmd.client_id);
+        if (fidelite) {
+          const montant = cmd.montant_total || cmd.total || 0;
+          const pointsCommande = Math.floor(montant / 1000) * 10; // 10 pts par 1000 FCFA
+          // Check if first order for bonus
+          const allCmds = await db.commandes.list();
+          const clientCmds = allCmds.filter((c) => c.client_id === cmd.client_id && c.id !== cmd.id && normalizeStatut(c.statut) !== 'annulee');
+          const isFirstOrder = clientCmds.length === 0;
+          const bonusPremiere = isFirstOrder ? 100 : 0;
+          const totalPoints = pointsCommande + bonusPremiere;
+
+          if (totalPoints > 0) {
+            const newTotal = (fidelite.points_actuels || 0) + totalPoints;
+            const newTotalGagnes = (fidelite.total_points_gagnes || 0) + totalPoints;
+            // Determine level
+            let niveau = 'bronze';
+            if (newTotalGagnes >= 5000) niveau = 'platine';
+            else if (newTotalGagnes >= 2000) niveau = 'or';
+            else if (newTotalGagnes >= 500) niveau = 'argent';
+
+            const hist = [...(fidelite.historique || [])];
+            if (bonusPremiere > 0) {
+              hist.push({ type: 'premiere_commande', points: 100, description: 'Bonus première commande', date: new Date().toISOString() });
+            }
+            if (pointsCommande > 0) {
+              hist.push({ type: 'commande', points: pointsCommande, description: `Commande ${cmd.numero || 'CMD'} — ${fmt(montant)} F`, date: new Date().toISOString() });
+            }
+
+            await db.fidelite_clients.update(fidelite.id, {
+              points_actuels: newTotal,
+              total_points_gagnes: newTotalGagnes,
+              niveau,
+              historique: hist,
+            });
+
+            // Check parrainage bonus (if sponsored and first order)
+            if (isFirstOrder) {
+              const employes = await db.employes.list();
+              const client = employes.find((e) => e.id === cmd.client_id);
+              if (client?.parraine_par) {
+                const parrain = employes.find((e) => e.code_parrainage === client.parraine_par);
+                if (parrain) {
+                  const parrainFid = allFidelite.find((f) => f.client_id === parrain.id);
+                  if (parrainFid) {
+                    await db.fidelite_clients.update(parrainFid.id, {
+                      points_actuels: (parrainFid.points_actuels || 0) + 200,
+                      total_points_gagnes: (parrainFid.total_points_gagnes || 0) + 200,
+                      historique: [...(parrainFid.historique || []), {
+                        type: 'parrainage_valide',
+                        points: 200,
+                        description: `Parrainage validé — ${cmd.client_nom}`,
+                        date: new Date().toISOString(),
+                      }],
+                    });
+                    await db.notifications_app.create({
+                      type: 'parrainage_bonus',
+                      titre: '🎁 +200 points parrainage !',
+                      message: `${cmd.client_nom} a passé sa première commande. Vous gagnez 200 points de fidélité !`,
+                      destinataire: 'client',
+                      destinataire_id: parrain.id,
+                      lu: false,
+                    });
+                  }
+                }
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.error('Fidelity error:', err);
+      }
+    }
+  };
+
+  // ── Annuler la commande ──
+  const handleAnnuler = async (cmd) => {
+    if (!confirm('Êtes-vous sûr de vouloir annuler cette commande ?')) return;
+    await handleStatutChange(cmd, 'annulee');
+  };
+
+  // ── Sauvegarder commentaire/note ──
+  const handleSaveComments = async (cmd) => {
+    await db.commandes.update(cmd.id, {
+      commentaire_client: commentaireClient,
+      note_interne: noteInterne,
+    });
+    toast.success('Commentaires enregistrés');
+    const updated = await db.commandes.getById(cmd.id);
+    if (updated) setShowDetail(updated);
+    load();
   };
 
   const handleDelete = async (cmd) => {
@@ -190,6 +396,13 @@ export default function Commandes() {
     await db.commandes.delete(cmd.id);
     toast.success('Commande supprimée');
     load();
+  };
+
+  // Open detail view
+  const openDetail = (cmd) => {
+    setShowDetail(cmd);
+    setCommentaireClient(cmd.commentaire_client || '');
+    setNoteInterne(cmd.note_interne || '');
   };
 
   if (loading) {
@@ -216,17 +429,23 @@ export default function Commandes() {
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <Card>
+          <CardContent className="p-4 text-center">
+            <p className="text-xs text-muted-foreground">En attente</p>
+            <p className="text-2xl font-bold text-amber-600">{stats.enAttente}</p>
+          </CardContent>
+        </Card>
         <Card>
           <CardContent className="p-4 text-center">
             <p className="text-xs text-muted-foreground">En cours</p>
-            <p className="text-2xl font-bold text-amber-600">{stats.enCours}</p>
+            <p className="text-2xl font-bold text-blue-600">{stats.enProd}</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="p-4 text-center">
             <p className="text-xs text-muted-foreground">Prêtes</p>
-            <p className="text-2xl font-bold text-emerald-600">{stats.prets}</p>
+            <p className="text-2xl font-bold text-emerald-600">{stats.pretes}</p>
           </CardContent>
         </Card>
         <Card>
@@ -244,7 +463,7 @@ export default function Commandes() {
           <Input placeholder="Rechercher une commande..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-10" />
         </div>
         <Select value={filterStatut} onValueChange={setFilterStatut}>
-          <SelectTrigger className="w-full sm:w-[180px]">
+          <SelectTrigger className="w-full sm:w-[220px]">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -269,8 +488,10 @@ export default function Commandes() {
           {filtered.map((cmd) => {
             const statut = getStatut(cmd.statut);
             const StatutIcon = statut.icon;
+            const normalized = normalizeStatut(cmd.statut);
+            const isNew = normalized === 'en_attente_validation';
             return (
-              <Card key={cmd.id} className="transition-shadow hover:shadow-md">
+              <Card key={cmd.id} className={`transition-shadow hover:shadow-md ${isNew ? 'border-amber-300 border-2' : ''}`}>
                 <CardContent className="p-4">
                   <div className="flex items-center justify-between gap-3">
                     <div className="min-w-0 flex-1">
@@ -280,21 +501,44 @@ export default function Commandes() {
                           <StatutIcon className="h-3 w-3" />
                           {statut.label}
                         </Badge>
+                        {isNew && <Badge className="bg-amber-500 text-white text-[9px] animate-pulse">NOUVEAU</Badge>}
+                        {cmd.source === 'portail_client' && (
+                          <Badge variant="outline" className="text-[9px] border-blue-200 text-blue-600">Portail Client</Badge>
+                        )}
                       </div>
                       <p className="mt-1 font-semibold">{cmd.client_nom}</p>
+                      {cmd.client_tel && (
+                        <p className="text-xs text-muted-foreground flex items-center gap-1">
+                          <Phone className="h-3 w-3" />
+                          <a href={`tel:${cmd.client_tel}`} className="hover:underline">{cmd.client_tel}</a>
+                        </p>
+                      )}
                       {cmd.description && <p className="mt-0.5 truncate text-sm text-muted-foreground">{cmd.description}</p>}
+                      {/* Mini product preview */}
+                      {cmd.lignes && cmd.lignes.length > 0 && (
+                        <div className="mt-1.5 flex items-center gap-1">
+                          {cmd.lignes.slice(0, 3).map((l, i) => (
+                            l.image ? (
+                              <img key={i} src={l.image} alt="" className="h-6 w-6 rounded object-cover border" />
+                            ) : null
+                          ))}
+                          <span className="text-xs text-muted-foreground">
+                            {cmd.lignes.length} article{cmd.lignes.length > 1 ? 's' : ''}
+                          </span>
+                        </div>
+                      )}
                       <div className="mt-1 flex flex-wrap gap-3 text-xs text-muted-foreground">
                         {cmd.date_echeance && <span>Échéance : {new Date(cmd.date_echeance + 'T00:00:00').toLocaleDateString('fr-FR')}</span>}
                         <span>Créée le {new Date(cmd.created_at).toLocaleDateString('fr-FR')}</span>
                       </div>
                     </div>
-                    <div className="text-right">
-                      <p className="text-lg font-bold">{fmt(cmd.total)} F</p>
-                      <div className="mt-1 flex gap-1">
-                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setShowDetail(cmd)}>
+                    <div className="text-right shrink-0">
+                      <p className="text-lg font-bold">{fmt(cmd.montant_total || cmd.total)} F</p>
+                      <div className="mt-1 flex gap-1 justify-end">
+                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openDetail(cmd)}>
                           <Eye className="h-3.5 w-3.5" />
                         </Button>
-                        {canWrite && cmd.statut !== 'livre' && cmd.statut !== 'annule' && (
+                        {canWrite && normalized !== 'livree' && normalized !== 'annulee' && (
                           <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => handleDelete(cmd)}>
                             <Trash2 className="h-3.5 w-3.5" />
                           </Button>
@@ -319,7 +563,7 @@ export default function Commandes() {
             <div>
               <label className="mb-1.5 block text-sm font-medium">Client</label>
               {clients.length > 0 ? (
-                <Select value={form.client_id} onValueChange={selectClient}>
+                <Select value={form.client_id || undefined} onValueChange={selectClient}>
                   <SelectTrigger><SelectValue placeholder="Sélectionner un client..." /></SelectTrigger>
                   <SelectContent>
                     {clients.map((c) => (
@@ -396,72 +640,177 @@ export default function Commandes() {
         </DialogContent>
       </Dialog>
 
-      {/* Detail Dialog */}
+      {/* Detail Dialog — Enhanced BLOC 5 */}
       <Dialog open={!!showDetail} onOpenChange={() => setShowDetail(null)}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Commande {showDetail?.numero}</DialogTitle>
+            <DialogTitle className="flex items-center gap-2">
+              Commande {showDetail?.numero}
+              {showDetail?.source === 'portail_client' && (
+                <Badge variant="outline" className="text-[10px] border-blue-200 text-blue-600">Portail Client</Badge>
+              )}
+            </DialogTitle>
           </DialogHeader>
-          {showDetail && (
-            <div className="space-y-4 pt-2">
-              <div className="flex items-center justify-between">
-                <Badge className={`${getStatut(showDetail.statut).color} gap-1`}>
-                  {getStatut(showDetail.statut).label}
-                </Badge>
-                <span className="text-sm text-muted-foreground">
-                  {new Date(showDetail.created_at).toLocaleDateString('fr-FR')}
-                </span>
-              </div>
-
-              <div className="rounded-lg bg-muted/50 p-3">
-                <div className="flex items-center gap-2">
-                  <User className="h-4 w-4 text-muted-foreground" />
-                  <span className="font-semibold">{showDetail.client_nom}</span>
+          {showDetail && (() => {
+            const normalized = normalizeStatut(showDetail.statut);
+            const statut = getStatut(showDetail.statut);
+            const isTerminal = normalized === 'livree' || normalized === 'annulee';
+            return (
+              <div className="space-y-4 pt-2">
+                {/* Statut + Date */}
+                <div className="flex items-center justify-between">
+                  <Badge className={`${statut.color} gap-1 text-sm px-3 py-1`}>
+                    <statut.icon className="h-4 w-4" />
+                    {statut.label}
+                  </Badge>
+                  <span className="text-sm text-muted-foreground">
+                    {new Date(showDetail.created_at).toLocaleDateString('fr-FR')}
+                  </span>
                 </div>
-                {showDetail.client_tel && (
-                  <div className="mt-1 flex items-center gap-2 text-sm text-muted-foreground">
-                    <Phone className="h-3.5 w-3.5" />
-                    {showDetail.client_tel}
-                  </div>
-                )}
-                {showDetail.description && (
-                  <p className="mt-2 text-sm">{showDetail.description}</p>
-                )}
-              </div>
 
-              {showDetail.lignes?.length > 0 && (
-                <div>
-                  <p className="mb-2 text-sm font-medium">Détail</p>
-                  <div className="space-y-1.5">
-                    {showDetail.lignes.map((l, i) => (
-                      <div key={i} className="flex items-center justify-between rounded bg-muted/30 px-3 py-2 text-sm">
-                        <span>{l.description}</span>
-                        <span className="font-medium">{l.quantite} x {fmt(l.prix_unitaire)} F</span>
-                      </div>
-                    ))}
+                {/* Client info */}
+                <div className="rounded-lg bg-muted/50 p-3">
+                  <div className="flex items-center gap-2">
+                    <User className="h-4 w-4 text-muted-foreground" />
+                    <span className="font-semibold">{showDetail.client_nom}</span>
                   </div>
-                  <div className="mt-2 flex justify-between border-t pt-2">
-                    <span className="font-semibold">Total</span>
-                    <span className="text-lg font-bold">{fmt(showDetail.total)} F</span>
-                  </div>
-                </div>
-              )}
-
-              {canWrite && showDetail.statut !== 'livre' && showDetail.statut !== 'annule' && (
-                <div className="flex gap-2">
-                  {NEXT_STATUT[showDetail.statut] && (
-                    <Button className="flex-1 gap-2" onClick={() => handleStatutChange(showDetail, NEXT_STATUT[showDetail.statut])}>
-                      <ArrowRight className="h-4 w-4" />
-                      Passer à "{getStatut(NEXT_STATUT[showDetail.statut]).label}"
-                    </Button>
+                  {showDetail.client_tel && (
+                    <div className="mt-1 flex items-center gap-2 text-sm text-muted-foreground">
+                      <Phone className="h-3.5 w-3.5" />
+                      <a href={`tel:${showDetail.client_tel}`} className="text-primary hover:underline">{showDetail.client_tel}</a>
+                    </div>
                   )}
-                  <Button variant="destructive" size="sm" onClick={() => handleStatutChange(showDetail, 'annule')}>
-                    Annuler
-                  </Button>
+                  {showDetail.client_email && (
+                    <p className="mt-0.5 text-xs text-muted-foreground">{showDetail.client_email}</p>
+                  )}
+                  {showDetail.description && (
+                    <p className="mt-2 text-sm">{showDetail.description}</p>
+                  )}
                 </div>
-              )}
-            </div>
-          )}
+
+                {/* Produits commandés avec images */}
+                {showDetail.lignes?.length > 0 && (
+                  <div>
+                    <p className="mb-2 text-sm font-medium flex items-center gap-1.5">
+                      <Package className="h-4 w-4 text-muted-foreground" />
+                      Produits commandés
+                    </p>
+                    <div className="space-y-2">
+                      {showDetail.lignes.map((l, i) => (
+                        <div key={i} className="flex items-center gap-3 rounded-lg bg-muted/30 px-3 py-2">
+                          {l.image && (
+                            <img src={l.image} alt="" className="h-10 w-10 rounded object-cover border shrink-0" />
+                          )}
+                          <div className="flex-1 min-w-0">
+                            <p className="text-sm font-medium truncate">{l.nom || l.description}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {l.qte || l.quantite} x {fmt(l.prix || l.prix_unitaire || 0)} F
+                            </p>
+                          </div>
+                          <span className="text-sm font-semibold shrink-0">
+                            {fmt((l.prix || l.prix_unitaire || 0) * (l.qte || l.quantite || 1))} F
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="mt-2 flex justify-between border-t pt-2">
+                      <span className="font-semibold">Total</span>
+                      <span className="text-lg font-bold">{fmt(showDetail.montant_total || showDetail.total)} F</span>
+                    </div>
+                  </div>
+                )}
+
+                {/* Commentaire pour le client */}
+                {canWrite && (
+                  <div>
+                    <label className="mb-1.5 flex items-center gap-1.5 text-sm font-medium">
+                      <MessageSquare className="h-3.5 w-3.5 text-blue-500" />
+                      Commentaire pour le client
+                      <span className="text-[10px] text-muted-foreground">(visible par le client)</span>
+                    </label>
+                    <Textarea
+                      placeholder="Message visible par le client après validation..."
+                      value={commentaireClient}
+                      onChange={(e) => setCommentaireClient(e.target.value)}
+                      className="text-sm"
+                      rows={2}
+                    />
+                  </div>
+                )}
+
+                {/* Note interne */}
+                {canWrite && (
+                  <div>
+                    <label className="mb-1.5 flex items-center gap-1.5 text-sm font-medium">
+                      <StickyNote className="h-3.5 w-3.5 text-amber-500" />
+                      Note interne
+                      <span className="text-[10px] text-muted-foreground">(non visible par le client)</span>
+                    </label>
+                    <Textarea
+                      placeholder="Notes internes, instructions pour l'équipe..."
+                      value={noteInterne}
+                      onChange={(e) => setNoteInterne(e.target.value)}
+                      className="text-sm"
+                      rows={2}
+                    />
+                  </div>
+                )}
+
+                {canWrite && (commentaireClient !== (showDetail.commentaire_client || '') || noteInterne !== (showDetail.note_interne || '')) && (
+                  <Button variant="outline" className="w-full gap-1.5 text-sm" onClick={() => handleSaveComments(showDetail)}>
+                    💾 Enregistrer les commentaires
+                  </Button>
+                )}
+
+                {/* Historique des statuts */}
+                {showDetail.historique_statuts && showDetail.historique_statuts.length > 0 && (
+                  <div>
+                    <p className="mb-2 text-sm font-medium flex items-center gap-1.5">
+                      <History className="h-4 w-4 text-muted-foreground" />
+                      Historique
+                    </p>
+                    <div className="space-y-1.5">
+                      {showDetail.historique_statuts.map((h, i) => (
+                        <div key={i} className="flex items-center gap-2 text-xs">
+                          <div className="h-2 w-2 rounded-full bg-primary shrink-0" />
+                          <span className="font-medium">{getStatut(h.statut).label}</span>
+                          <span className="text-muted-foreground">—</span>
+                          <span className="text-muted-foreground">
+                            {new Date(h.date).toLocaleDateString('fr-FR')} à {new Date(h.date).toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                          {h.auteur && <span className="text-muted-foreground italic">par {h.auteur}</span>}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Action buttons */}
+                {canWrite && !isTerminal && (
+                  <div className="flex gap-2 pt-2 border-t">
+                    {/* Bouton Valider (pour en_attente_validation) */}
+                    {normalized === 'en_attente_validation' && (
+                      <Button className="flex-1 gap-2 bg-emerald-600 hover:bg-emerald-700" onClick={() => handleValider(showDetail)}>
+                        <ShieldCheck className="h-4 w-4" />
+                        Valider la commande
+                      </Button>
+                    )}
+                    {/* Bouton progression (pour les autres statuts) */}
+                    {normalized !== 'en_attente_validation' && NEXT_STATUT[normalized] && (
+                      <Button className="flex-1 gap-2" onClick={() => handleStatutChange(showDetail, NEXT_STATUT[normalized])}>
+                        <ArrowRight className="h-4 w-4" />
+                        Passer à "{getStatut(NEXT_STATUT[normalized]).label}"
+                      </Button>
+                    )}
+                    <Button variant="destructive" className="gap-1.5" onClick={() => handleAnnuler(showDetail)}>
+                      <XCircle className="h-4 w-4" />
+                      Annuler
+                    </Button>
+                  </div>
+                )}
+              </div>
+            );
+          })()}
         </DialogContent>
       </Dialog>
     </div>
