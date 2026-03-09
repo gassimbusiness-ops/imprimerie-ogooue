@@ -34,6 +34,7 @@ import {
   Tag,
   TrendingUp,
   Megaphone,
+  Paintbrush,
 } from 'lucide-react';
 
 const NAV_GROUPS = [
@@ -51,6 +52,7 @@ const NAV_GROUPS = [
       { name: 'Tâches', href: '/taches', icon: CheckSquare, module: 'commandes' },
       { name: 'Travaux & Projets', href: '/travaux', icon: Hammer, module: 'statistiques' },
       { name: 'Catalogue', href: '/catalogue', icon: BookOpen, module: 'catalogue' },
+      { name: 'Mockups', href: '/mockup-ia', icon: Paintbrush, module: 'catalogue' },
       { name: 'Stocks', href: '/stocks', icon: Boxes, module: 'stocks' },
     ],
   },
@@ -157,7 +159,7 @@ function NavGroup({ group, pathname, onNavClick }) {
   );
 }
 
-const ROLE_LABELS = { admin: 'Administrateur', manager: 'Manager', employe: 'Employé' };
+const ROLE_LABELS = { admin: 'Administrateur', manager: 'Manager', employe: 'Employé', associe: 'Associé' };
 
 function useCompanyLogo() {
   const [logo, setLogo] = useState('');

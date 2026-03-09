@@ -48,6 +48,7 @@ export function printHTML(title, htmlContent, options = {}) {
       .footer { margin-top: 24px; padding-top: 10px; border-top: 2px solid #e5e7eb; font-size: 8px; color: #9ca3af; display: flex; justify-content: space-between; align-items: center; }
       .footer-left { }
       .footer-right { text-align: right; }
+      .signature-block { margin-top: 14px; padding-top: 8px; border-top: 1px solid #e5e7eb; text-align: center; font-size: 7.5px; color: #9ca3af; font-style: italic; line-height: 1.8; }
       .page-break { page-break-before: always; }
       @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
     </style>
@@ -90,6 +91,12 @@ export function printHTML(title, htmlContent, options = {}) {
       <div class="footer-right">
         ${companyName} — Moanda, Gabon
       </div>
+    </div>
+    <div class="signature-block">
+      ${companyName} — Impression · Sérigraphie · Personnalisation<br/>
+      RCCM : RG/FCV 2023A0407 · NIF : 256598U<br/>
+      Carrefour Fina en face de Finam — Moanda, Haut-Ogooué, Gabon<br/>
+      Tél : 060 44 46 34 / 074 42 41 42 · Email : imprimerieogooue@gmail.com
     </div>
   </body></html>`;
 

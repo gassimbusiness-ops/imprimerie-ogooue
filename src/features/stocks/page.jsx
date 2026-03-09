@@ -407,7 +407,8 @@ export default function Stocks() {
           { label: 'Articles', value: stats.total, icon: Boxes, color: 'bg-primary/10 text-primary' },
           { label: 'Alertes stock', value: stats.alertes, icon: AlertTriangle, color: stats.alertes > 0 ? 'bg-amber-500/10 text-amber-600' : 'bg-emerald-500/10 text-emerald-600' },
           { label: 'En rupture', value: stats.rupture, icon: PackageMinus, color: stats.rupture > 0 ? 'bg-red-500/10 text-red-600' : 'bg-emerald-500/10 text-emerald-600' },
-          { label: 'Valeur totale', value: `${fmt(stats.totalValue)} F`, icon: DollarSign, color: 'bg-blue-500/10 text-blue-600', isText: true },
+          // Masquer la valeur totale pour les employés (donnée financière sensible)
+          ...(user?.role !== 'employe' ? [{ label: 'Valeur totale', value: `${fmt(stats.totalValue)} F`, icon: DollarSign, color: 'bg-blue-500/10 text-blue-600', isText: true }] : []),
         ].map(({ label, value, icon: Icon, color, isText }) => (
           <Card key={label}>
             <CardContent className="p-3">

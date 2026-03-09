@@ -35,6 +35,7 @@ const PAGE_TITLES = {
   '/rapports-analyses': 'Rapports & Analyses',
   '/performance-rh': 'Performance RH',
   '/marketing': 'Marketing',
+  '/mockup-ia': 'Mockups & Visuels',
 };
 
 export default function Header({ onMenuClick }) {

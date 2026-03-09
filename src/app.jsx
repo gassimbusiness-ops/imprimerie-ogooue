@@ -34,6 +34,7 @@ import Gouvernance from '@/features/gouvernance/page';
 import RapportsAnalyses from '@/features/rapports-analyses/page';
 import PerformanceRH from '@/features/performance-rh/page';
 import Marketing from '@/features/marketing/page';
+import MockupIA from '@/features/mockup-ia/page';
 // Client portal
 import ClientDashboard from '@/features/client-portal/dashboard';
 import ClientCatalogue from '@/features/client-portal/catalogue';
@@ -41,6 +42,9 @@ import ClientCommandes from '@/features/client-portal/commandes';
 import ClientFactures from '@/features/client-portal/factures';
 import ClientMessagerie from '@/features/client-portal/messagerie';
 import ClientProfil from '@/features/client-portal/profil';
+// Associé portal
+import AssocieLayout from '@/components/layout/associe-layout';
+import AssocieDashboard from '@/features/associe-portal/dashboard';
 import { Toaster } from 'sonner';
 
 function ProtectedRoutes() {
@@ -59,6 +63,9 @@ function ProtectedRoutes() {
   // Client role → redirect to client portal
   if (user.role === 'client') return <Navigate to="/client" replace />;
 
+  // Associé role → redirect to associé portal
+  if (user.role === 'associe') return <Navigate to="/associe" replace />;
+
   return <AppLayout />;
 }
 
@@ -67,6 +74,13 @@ function ProtectedClientRoutes() {
   if (loading) return <div className="flex h-screen items-center justify-center"><div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" /></div>;
   if (!user) return <Navigate to="/login" replace />;
   return <ClientLayout />;
+}
+
+function ProtectedAssocieRoutes() {
+  const { user, loading } = useAuth();
+  if (loading) return <div className="flex h-screen items-center justify-center"><div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" /></div>;
+  if (!user) return <Navigate to="/login" replace />;
+  return <AssocieLayout />;
 }
 
 // Route guard: redirects to dashboard if user lacks permission
@@ -86,7 +100,7 @@ export default function App() {
     <>
       <Routes>
         <Route path="/login" element={
-          loading ? null : user ? (user.role === 'client' ? <Navigate to="/client" replace /> : <Navigate to="/" replace />) : <Login />
+          loading ? null : user ? (user.role === 'client' ? <Navigate to="/client" replace /> : user.role === 'associe' ? <Navigate to="/associe" replace /> : <Navigate to="/" replace />) : <Login />
         } />
 
         {/* Client portal — separate layout */}
@@ -97,6 +111,14 @@ export default function App() {
           <Route path="factures" element={<ClientFactures />} />
           <Route path="messagerie" element={<ClientMessagerie />} />
           <Route path="profil" element={<ClientProfil />} />
+        </Route>
+
+        {/* Associé portal — separate layout */}
+        <Route path="/associe" element={<ProtectedAssocieRoutes />}>
+          <Route index element={<AssocieDashboard />} />
+          <Route path="catalogue" element={<Catalogue />} />
+          <Route path="stocks" element={<Stocks />} />
+          <Route path="gouvernance" element={<Gouvernance />} />
         </Route>
 
         {/* Internal app */}
@@ -131,6 +153,7 @@ export default function App() {
           <Route path="rapports-analyses" element={<RequirePermission module="statistiques"><RapportsAnalyses /></RequirePermission>} />
           <Route path="performance-rh" element={<RequirePermission module="employes"><PerformanceRH /></RequirePermission>} />
           <Route path="marketing" element={<RequirePermission module="clients"><Marketing /></RequirePermission>} />
+          <Route path="mockup-ia" element={<RequirePermission module="catalogue"><MockupIA /></RequirePermission>} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

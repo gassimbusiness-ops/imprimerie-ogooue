@@ -165,6 +165,7 @@ export const db = {
   actions_marketing: new Collection('actions_marketing'),
   notifications_app: new Collection('notifications_app'),
   fidelite_clients: new Collection('fidelite_clients'),
+  mockups: new Collection('mockups'),
 };
 
 // ── Settings helpers (shared across the app) ──
