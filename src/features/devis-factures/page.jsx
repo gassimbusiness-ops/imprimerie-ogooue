@@ -237,7 +237,7 @@ export default function DevisFactures() {
     ).join('');
     const settings = await getSettings();
     const companyName = settings.nom_entreprise || 'Imprimerie Ogooué';
-    const companyAddr = settings.adresse || 'Libreville, Gabon';
+    const companyAddr = settings.adresse || 'Carrefour Fina en face de Finam — Moanda, Gabon';
     const companyTel = settings.telephone || '';
     const logoUrl = settings.logo || '/logo.png';
 

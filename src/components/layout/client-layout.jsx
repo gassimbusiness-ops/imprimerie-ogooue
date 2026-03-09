@@ -7,6 +7,7 @@ import {
   ShoppingBag, LogOut, Menu, X, User, Printer,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import Chatbot from '@/components/chatbot';
 
 const CLIENT_NAV = [
   { name: 'Mon Tableau de bord', href: '/client', icon: LayoutDashboard },
@@ -97,6 +98,9 @@ export default function ClientLayout() {
       <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
         <Outlet />
       </main>
+
+      {/* Chatbot - only for logged-in clients */}
+      {user && <Chatbot />}
     </div>
   );
 }

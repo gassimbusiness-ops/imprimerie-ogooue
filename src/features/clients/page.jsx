@@ -424,7 +424,7 @@ export default function Clients() {
               <Input
                 value={form.adresse}
                 onChange={(e) => setForm({ ...form, adresse: e.target.value })}
-                placeholder="Libreville, Gabon"
+                placeholder="Moanda, Gabon"
               />
             </div>
 

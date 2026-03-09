@@ -20,6 +20,8 @@ import {
   Users, FileText, ShoppingCart,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { AIButton } from '@/components/ui/ai-button';
+import { askAI, AI_PROMPTS } from '@/services/ai';
 
 /* ─── CONSTANTES ─── */
 
@@ -948,6 +950,20 @@ export default function Prospection() {
               <textarea className="flex min-h-[60px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                 value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Notes sur ce prospect..." />
             </div>
+            {canWrite && (
+              <AIButton actions={[
+                {
+                  label: 'Générer message WhatsApp',
+                  onClick: async () => {
+                    const { prompt } = AI_PROMPTS.prospection.messageProspect(
+                      form.nomOuEntreprise, form.secteurActivite,
+                      (form.besoinsIdentifies || []).join(', '), 'WhatsApp'
+                    );
+                    return askAI(AI_PROMPTS.prospection.system, prompt);
+                  }
+                }
+              ]} />
+            )}
             <div className="flex gap-3">
               <Button className="flex-1" onClick={handleSave}>{editItem ? 'Enregistrer' : 'Ajouter'}</Button>
               {editItem && canDelete && <Button variant="destructive" onClick={() => { handleDelete(editItem); setShowForm(false); }}><Trash2 className="h-4 w-4" /></Button>}
@@ -1014,6 +1030,20 @@ export default function Prospection() {
                 <textarea className="flex min-h-[120px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
                   value={campagneForm.message} onChange={(e) => setCampagneForm({ ...campagneForm, message: e.target.value })}
                   placeholder="Chers clients,&#10;&#10;Nous avons le plaisir de vous annoncer..." />
+                <AIButton actions={[
+                  {
+                    label: 'Générer le message IA',
+                    onClick: async () => {
+                      const { prompt } = AI_PROMPTS.prospection.messageCampagne(
+                        campagneForm.titre, campagneForm.destinatairesMode, campagneForm.type
+                      );
+                      return askAI(AI_PROMPTS.prospection.system, prompt);
+                    },
+                    onResult: (text) => {
+                      setCampagneForm(prev => ({ ...prev, message: text }));
+                    }
+                  }
+                ]} />
               </div>
             </div>
 

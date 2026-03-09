@@ -18,6 +18,8 @@ import {
   X, ZoomIn, Upload, Eye, ImageIcon, Shirt, Coffee,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { AIButton } from '@/components/ui/ai-button';
+import { askAI, AI_PROMPTS } from '@/services/ai';
 
 /* ─── Helpers ─── */
 function fmt(n) { return new Intl.NumberFormat('fr-FR').format(Math.round(n || 0)); }
@@ -372,7 +374,31 @@ function ProductDetail({ product, open, onClose, canWrite, onEdit, onDelete }) {
             {/* Header */}
             <div className="flex items-start justify-between gap-3">
               <div>
-                <h2 className="text-xl font-bold">{product.nom}</h2>
+                <div className="flex items-center gap-2">
+                  <h2 className="text-xl font-bold">{product.nom}</h2>
+                  {canWrite && (
+                    <AIButton actions={[
+                      {
+                        label: 'Générer une description',
+                        onClick: async () => {
+                          const { system, prompt } = AI_PROMPTS.catalogue.description(
+                            product.nom, product.categorie, product.prix?.[0]?.prix || ''
+                          );
+                          return askAI(system, prompt);
+                        },
+                      },
+                      {
+                        label: 'Suggérer des tags',
+                        onClick: async () => {
+                          const { system, prompt } = AI_PROMPTS.catalogue.tags(
+                            product.nom, product.categorie
+                          );
+                          return askAI(system, prompt);
+                        },
+                      },
+                    ]} />
+                  )}
+                </div>
                 <div className="flex items-center gap-2 mt-1">
                   <Badge variant="outline">{product.categorie}</Badge>
                   {product.sku && <span className="text-xs text-muted-foreground">SKU: {product.sku}</span>}
@@ -536,7 +562,40 @@ function ProductForm({ open, onClose, editItem, onSave }) {
 
           {/* Description */}
           <div>
-            <label className="mb-1.5 block text-sm font-medium">Description</label>
+            <div className="mb-1.5 flex items-center justify-between">
+              <label className="block text-sm font-medium">Description</label>
+              <AIButton actions={[
+                {
+                  label: 'Générer une description',
+                  onClick: async () => {
+                    const { system, prompt } = AI_PROMPTS.catalogue.description(
+                      form.nom, form.categorie, form.prix?.[0]?.prix || ''
+                    );
+                    return askAI(system, prompt);
+                  },
+                  onResult: (text) => upd('description', text),
+                },
+                {
+                  label: 'Suggérer des tags',
+                  onClick: async () => {
+                    const { system, prompt } = AI_PROMPTS.catalogue.tags(
+                      form.nom, form.categorie
+                    );
+                    return askAI(system, prompt);
+                  },
+                  onResult: (text) => {
+                    const newTags = text
+                      .split(',')
+                      .map((t) => t.trim().toLowerCase().replace(/^["']|["']$/g, ''))
+                      .filter((t) => t.length > 0);
+                    const existing = form.tags || [];
+                    const merged = [...new Set([...existing, ...newTags])];
+                    upd('tags', merged);
+                    toast.success(`${newTags.length} tag(s) ajouté(s)`);
+                  },
+                },
+              ]} />
+            </div>
             <textarea
               className="flex min-h-[60px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               value={form.description}

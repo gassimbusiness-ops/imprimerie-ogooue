@@ -52,7 +52,7 @@ const NAV_GROUPS = [
       { name: 'Tâches', href: '/taches', icon: CheckSquare, module: 'commandes' },
       { name: 'Travaux & Projets', href: '/travaux', icon: Hammer, module: 'statistiques' },
       { name: 'Catalogue', href: '/catalogue', icon: BookOpen, module: 'catalogue' },
-      { name: 'Mockups', href: '/mockup-ia', icon: Paintbrush, module: 'catalogue' },
+      { name: 'Mockups IA', href: '/mockup-ia', icon: Paintbrush, module: 'catalogue' },
       { name: 'Stocks', href: '/stocks', icon: Boxes, module: 'stocks' },
     ],
   },
@@ -62,20 +62,20 @@ const NAV_GROUPS = [
       { name: 'Dashboard Financier', href: '/statistiques', icon: BarChart3, module: 'statistiques' },
       { name: 'Bilans', href: '/bilans', icon: PieChart, module: 'statistiques' },
       { name: 'Finances', href: '/finances', icon: Landmark, module: 'finances' },
-      { name: 'Objectifs', href: '/objectifs', icon: Target, module: 'statistiques' },
       { name: 'Devis & Factures', href: '/devis-factures', icon: FileText, module: 'devis_factures' },
+      { name: 'Objectifs', href: '/objectifs', icon: Target, module: 'statistiques' },
       { name: 'Clôture de Caisse', href: '/cloture-caisse', icon: Wallet, module: 'statistiques' },
       { name: 'Paiements Mobile', href: '/paiements', icon: Smartphone, module: 'devis_factures' },
       { name: 'Rapports & Analyses', href: '/rapports-analyses', icon: PieChart, module: 'statistiques' },
+      { name: 'Avances & Charges', href: '/demandes-rh', icon: ClipboardList, module: 'employes' },
     ],
   },
   {
     label: 'Ressources humaines',
     items: [
+      { name: 'Performance & Dashboard RH', href: '/performance-rh', icon: BarChart3, module: 'employes' },
       { name: 'Employés', href: '/employes', icon: Users, module: 'employes' },
       { name: 'Pointage', href: '/pointage', icon: Clock, module: 'pointage' },
-      { name: 'Demandes RH', href: '/demandes-rh', icon: ClipboardList, module: 'employes' },
-      { name: 'Performance & Dashboard RH', href: '/performance-rh', icon: BarChart3, module: 'employes' },
     ],
   },
   {
@@ -94,7 +94,6 @@ const NAV_GROUPS = [
     label: 'Gouvernance',
     items: [
       { name: 'Capital & Investisseurs', href: '/gouvernance', icon: TrendingUp, module: 'gouvernance' },
-      { name: 'Rapports stratégiques', href: '/rapports-analyses', icon: PieChart, module: 'statistiques' },
     ],
   },
   {
@@ -150,6 +149,11 @@ function NavGroup({ group, pathname, onNavClick }) {
               >
                 <item.icon className="h-[16px] w-[16px] shrink-0" />
                 <span className="truncate">{item.name}</span>
+                {item.badge != null && item.badge > 0 && (
+                  <span className="ml-auto inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-red-500 px-1.5 text-[10px] font-bold text-white">
+                    {item.badge > 99 ? '99+' : item.badge}
+                  </span>
+                )}
               </Link>
             );
           })}

@@ -19,6 +19,8 @@ import {
   Package, Truck, MapPin, Clock, DollarSign, History, X, Download, FileText,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { AIButton } from '@/components/ui/ai-button';
+import { askAI, AI_PROMPTS } from '@/services/ai';
 
 /* ─── Helpers ─── */
 function fmt(n) { return new Intl.NumberFormat('fr-FR').format(Math.round(n || 0)); }
@@ -133,6 +135,28 @@ function StockDetail({ article, mouvements, open, onClose, canWrite, onEdit, onD
                 <Trash2 className="h-3.5 w-3.5" />
               </Button>
             </div>
+          )}
+
+          {/* AI suggestions */}
+          {canWrite && (
+            <AIButton actions={[
+              {
+                label: 'Suggérer seuil minimum',
+                onClick: async () => {
+                  const { system, prompt } = AI_PROMPTS.stocks.seuil(article.nom, article.categorie, article.unite);
+                  return askAI(system, prompt);
+                }
+              },
+              {
+                label: 'Message fournisseur',
+                onClick: async () => {
+                  const { system, prompt } = AI_PROMPTS.stocks.messageFournisseur(
+                    article.nom, article.fournisseur || '', article.quantite_minimum || 10, article.unite || 'unité'
+                  );
+                  return askAI(system, prompt);
+                }
+              }
+            ]} />
           )}
 
           {/* Movement history */}

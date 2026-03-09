@@ -26,16 +26,16 @@ const PAGE_TITLES = {
   '/bilans': 'Bilans Financiers',
   '/finances': 'Finances',
   '/objectifs': 'Objectifs',
-  '/demandes-rh': 'Demandes RH',
+  '/demandes-rh': 'Avances & Charges',
   '/travaux': 'Travaux & Projets',
   '/evenements': 'Événements & Marketing',
   '/messagerie': 'Messagerie',
   '/tarifs-clients': 'Tarifs Clients',
   '/gouvernance': 'Gouvernance & Capital',
   '/rapports-analyses': 'Rapports & Analyses',
-  '/performance-rh': 'Performance RH',
+  '/performance-rh': 'Performance & Dashboard RH',
   '/marketing': 'Marketing',
-  '/mockup-ia': 'Mockups & Visuels',
+  '/mockup-ia': 'Mockups IA',
 };
 
 export default function Header({ onMenuClick }) {
