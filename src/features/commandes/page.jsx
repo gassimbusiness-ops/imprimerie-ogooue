@@ -41,6 +41,13 @@ import {
   CreditCard,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import {
+  notifyNouvelleCommande,
+  notifyCommandeValidee,
+  notifyCommandeProduction,
+  notifyCommandePrete,
+  notifyCommandeLivree,
+} from '@/services/notifications';
 
 // ── Statuts enrichis BLOC 5 ──
 const STATUTS = [
@@ -249,6 +256,8 @@ export default function Commandes() {
       toast.success('Commande modifiée');
     } else {
       await db.commandes.create(data);
+      // Notifier le staff de la nouvelle commande
+      notifyNouvelleCommande(data.client_nom || 'Client');
       toast.success('Commande créée');
     }
     setShowForm(false);
@@ -269,19 +278,12 @@ export default function Commandes() {
       historique_statuts: historique,
     });
 
-    // Envoyer notification au client
-    const notifConfig = NOTIF_CLIENT_MESSAGES[newStatut];
-    if (notifConfig && cmd.client_id) {
-      await db.notifications_app.create({
-        type: 'statut_commande',
-        titre: notifConfig.titre,
-        message: `${notifConfig.message}\nCommande : ${cmd.numero || 'CMD'}`,
-        lien: '/client/commandes',
-        commande_id: cmd.id,
-        destinataire: 'client',
-        destinataire_id: cmd.client_id,
-        lu: false,
-      });
+    // Envoyer notification au client via le service unifié
+    if (cmd.client_id) {
+      if (newStatut === 'validee_attente_paiement') notifyCommandeValidee(cmd.client_id);
+      else if (newStatut === 'en_production') notifyCommandeProduction(cmd.client_id);
+      else if (newStatut === 'prete') notifyCommandePrete(cmd.client_id);
+      else if (newStatut === 'livree') notifyCommandeLivree(cmd.client_id);
     }
 
     toast.success(`Commande passée à "${getStatut(newStatut).label}"`);

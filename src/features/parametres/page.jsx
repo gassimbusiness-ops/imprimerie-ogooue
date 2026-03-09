@@ -24,6 +24,7 @@ const ROLE_OPTIONS = [
   { value: 'admin', label: 'Administrateur', color: 'bg-violet-100 text-violet-700' },
   { value: 'manager', label: 'Manager', color: 'bg-blue-100 text-blue-700' },
   { value: 'employe', label: 'Employé', color: 'bg-slate-100 text-slate-700' },
+  { value: 'associe', label: 'Associé', color: 'bg-indigo-100 text-indigo-700' },
   { value: 'client', label: 'Client', color: 'bg-emerald-100 text-emerald-700' },
 ];
 
@@ -513,7 +514,7 @@ export default function Parametres() {
                 <Users className="h-5 w-5 text-blue-600 shrink-0 mt-0.5" />
                 <div>
                   <p className="font-medium text-foreground">Contrôle d'accès RBAC</p>
-                  <p>4 rôles : Admin (accès total), Manager (production + validation), Employé (saisie limitée), Client (portail externe).</p>
+                  <p>5 rôles : Admin (accès total), Manager (production + validation), Employé (saisie limitée), Associé (lecture stratégique), Client (portail externe).</p>
                 </div>
               </div>
               <div className="flex items-start gap-3 rounded-lg border p-3">

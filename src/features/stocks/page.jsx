@@ -52,7 +52,8 @@ const UNITES = ['unité', 'rame', 'paquet', 'rouleau', 'flacon', 'set', 'cartouc
 /* ══════════════════════════════════════════════
    Stock Detail Dialog (with movement history)
    ══════════════════════════════════════════════ */
-function StockDetail({ article, mouvements, open, onClose, canWrite, onEdit, onDelete, onMouvement }) {
+function StockDetail({ article, mouvements, open, onClose, canWrite, onEdit, onDelete, onMouvement, userRole }) {
+  const showFinancials = userRole === 'admin' || userRole === 'manager';
   if (!article) return null;
 
   const articleMvts = mouvements
@@ -106,14 +107,18 @@ function StockDetail({ article, mouvements, open, onClose, canWrite, onEdit, onD
                 <span>{article.emplacement}</span>
               </div>
             )}
-            <div className="flex items-center gap-2">
-              <DollarSign className="h-4 w-4 text-muted-foreground" />
-              <span>{fmt(article.prix_unitaire)} F / {article.unite}</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <DollarSign className="h-4 w-4 text-muted-foreground" />
-              <span>Valeur: {fmt(article.prix_unitaire * article.quantite)} F</span>
-            </div>
+            {showFinancials && (
+              <div className="flex items-center gap-2">
+                <DollarSign className="h-4 w-4 text-muted-foreground" />
+                <span>{fmt(article.prix_unitaire)} F / {article.unite}</span>
+              </div>
+            )}
+            {showFinancials && (
+              <div className="flex items-center gap-2">
+                <DollarSign className="h-4 w-4 text-muted-foreground" />
+                <span>Valeur: {fmt(article.prix_unitaire * article.quantite)} F</span>
+              </div>
+            )}
           </div>
 
           {article.description && (
@@ -560,7 +565,7 @@ export default function Stocks() {
                     <th className="px-4 py-2.5 text-center font-medium text-muted-foreground">Stock</th>
                     <th className="px-4 py-2.5 text-center font-medium text-muted-foreground">Min</th>
                     <th className="px-4 py-2.5 text-center font-medium text-muted-foreground">Statut</th>
-                    <th className="px-4 py-2.5 text-right font-medium text-muted-foreground">Valeur</th>
+                    {(user?.role === 'admin' || user?.role === 'manager') && <th className="px-4 py-2.5 text-right font-medium text-muted-foreground">Valeur</th>}
                     {canWrite && <th className="px-4 py-2.5 text-right font-medium text-muted-foreground">Actions</th>}
                   </tr>
                 </thead>
@@ -594,7 +599,7 @@ export default function Stocks() {
                         <td className="px-4 py-2.5 text-center">
                           <Badge className={`${st.color} border text-[10px]`}>{st.label}</Badge>
                         </td>
-                        <td className="px-4 py-2.5 text-right text-xs">{fmt(prix * qty)} F</td>
+                        {(user?.role === 'admin' || user?.role === 'manager') && <td className="px-4 py-2.5 text-right text-xs">{fmt(prix * qty)} F</td>}
                         {canWrite && (
                           <td className="px-4 py-2.5 text-right">
                             <div className="flex items-center justify-end gap-1">
@@ -653,6 +658,7 @@ export default function Stocks() {
         open={showDetail}
         onClose={() => setShowDetail(false)}
         canWrite={canWrite}
+        userRole={user?.role}
         onEdit={openEdit}
         onDelete={handleDelete}
         onMouvement={openMouvement}

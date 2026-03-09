@@ -122,38 +122,51 @@ export default function Gouvernance() {
   const [filterDateDebut, setFilterDateDebut] = useState('');
   const [filterDateFin, setFilterDateFin] = useState('');
 
+  const [loadError, setLoadError] = useState(null);
+
   const load = async () => {
-    const [a, d, r, inv, mods] = await Promise.all([
-      db.apports_associes.list(),
-      db.dettes_associes.list(),
-      db.remboursements_associes.list(),
-      db.investisseurs.list(),
-      db.modifications_investisseurs.list(),
-    ]);
-    setApports(a);
-    setDettes(d);
-    setRemboursements(r);
-    setInvestisseurs(inv);
-    setModifications(mods);
-    setLoading(false);
+    try {
+      setLoadError(null);
+      const [a, d, r, inv, mods] = await Promise.all([
+        db.apports_associes.list(),
+        db.dettes_associes.list(),
+        db.remboursements_associes.list(),
+        db.investisseurs.list(),
+        db.modifications_investisseurs.list(),
+      ]);
+      setApports(a);
+      setDettes(d);
+      setRemboursements(r);
+      setInvestisseurs(inv);
+      setModifications(mods);
+    } catch (err) {
+      console.error('Gouvernance load error:', err);
+      setLoadError(err.message || 'Erreur de chargement des données');
+    } finally {
+      setLoading(false);
+    }
   };
 
   useEffect(() => {
     (async () => {
-      await seedInvestisseurs();
-      const existing = await db.apports_associes.list();
-      if (existing.length === 0) {
-        await db.apports_associes.create({
-          associe: 'oumar', type: 'apport_capital', montant: 2000000,
-          description: 'Réinvestissement en marchandises', date: '2025-06-15',
-        });
-        const existingDettes = await db.dettes_associes.list();
-        if (existingDettes.length === 0) {
-          await db.dettes_associes.create({
-            associe: 'oumar', montant_initial: 2300000, montant_restant: 2300000,
-            description: "Compte courant d'associé — avances et dépenses", date: '2025-03-01',
+      try {
+        await seedInvestisseurs();
+        const existing = await db.apports_associes.list();
+        if (existing.length === 0) {
+          await db.apports_associes.create({
+            associe: 'oumar', type: 'apport_capital', montant: 2000000,
+            description: 'Réinvestissement en marchandises', date: '2025-06-15',
           });
+          const existingDettes = await db.dettes_associes.list();
+          if (existingDettes.length === 0) {
+            await db.dettes_associes.create({
+              associe: 'oumar', montant_initial: 2300000, montant_restant: 2300000,
+              description: "Compte courant d'associé — avances et dépenses", date: '2025-03-01',
+            });
+          }
         }
+      } catch (err) {
+        console.error('Gouvernance seed error:', err);
       }
       load();
     })();
@@ -342,6 +355,15 @@ export default function Gouvernance() {
   };
 
   if (loading) return <div className="flex items-center justify-center py-20"><div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" /></div>;
+
+  if (loadError) return (
+    <div className="flex flex-col items-center justify-center py-20 gap-4">
+      <AlertTriangle className="h-10 w-10 text-amber-500" />
+      <p className="text-muted-foreground text-center">Impossible de charger les données de gouvernance</p>
+      <p className="text-xs text-muted-foreground">{loadError}</p>
+      <Button variant="outline" onClick={() => { setLoading(true); load(); }}>Réessayer</Button>
+    </div>
+  );
 
   const oumarValue = (valuation.valeur_nette * capTable.oumar) / 100;
   const senoussValue = (valuation.valeur_nette * capTable.senouss) / 100;
