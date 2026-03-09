@@ -34,8 +34,9 @@ function statusBadge(quantite, quantite_minimum) {
 
 /* ─── Constants ─── */
 const CATEGORIES = [
-  'Encres', 'Papiers', 'Vinyles', 'Transfert thermique',
-  'DTF', 'Consommables machine', 'Autre',
+  'Textile', 'Papeterie', 'Enveloppes', 'Accessoire',
+  'Machines & Outils', 'Encres', 'Papiers', 'Vinyles',
+  'Transfert thermique', 'DTF', 'Consommables machine', 'Autre',
 ];
 
 const emptyForm = {
@@ -263,6 +264,8 @@ export default function Stocks() {
       return qty <= 0 && !p.masque;
     }).length;
     const totalValue = produits.reduce((s, p) => {
+      // Use pre-calculated valeur_stock_achat if available (imported data), else compute
+      if (p.valeur_stock_achat) return s + p.valeur_stock_achat;
       const qty = p.quantite ?? p.stock ?? 0;
       const prix = p.prix_unitaire ?? p.prix_vente ?? 0;
       return s + prix * qty;

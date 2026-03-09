@@ -1,0 +1,98 @@
+[
+  {
+    "date": "2025-12-28",
+    "materiel": "Sable",
+    "quantite": 1.0,
+    "prix_unitaire": 70000.0,
+    "total": 70000.0,
+    "statut_paiement": ""
+  },
+  {
+    "date": "2026-01-04",
+    "materiel": "Sable gravier",
+    "quantite": 1.0,
+    "prix_unitaire": 80000.0,
+    "total": 80000.0,
+    "statut_paiement": ""
+  },
+  {
+    "date": "2026-01-14",
+    "materiel": "Sac de ciment",
+    "quantite": 21.0,
+    "prix_unitaire": 6500.0,
+    "total": 136500.0,
+    "statut_paiement": "8 Payé"
+  },
+  {
+    "date": "2026-01-23",
+    "materiel": "Poteaux 3m",
+    "quantite": 7.0,
+    "prix_unitaire": 7000.0,
+    "total": 49000.0,
+    "statut_paiement": ""
+  },
+  {
+    "date": null,
+    "materiel": "Briques",
+    "quantite": 600.0,
+    "prix_unitaire": 450.0,
+    "total": 270000.0,
+    "statut_paiement": ""
+  },
+  {
+    "date": "2026-02-05",
+    "materiel": "Potaux 6m",
+    "quantite": 2.0,
+    "prix_unitaire": 15000.0,
+    "total": 30000.0,
+    "statut_paiement": ""
+  },
+  {
+    "date": null,
+    "materiel": "Planche",
+    "quantite": 2.0,
+    "prix_unitaire": 4500.0,
+    "total": 9000.0,
+    "statut_paiement": ""
+  },
+  {
+    "date": null,
+    "materiel": "Lattes",
+    "quantite": 11.0,
+    "prix_unitaire": 2500.0,
+    "total": 27500.0,
+    "statut_paiement": ""
+  },
+  {
+    "date": null,
+    "materiel": "Fond de 15",
+    "quantite": 17.0,
+    "prix_unitaire": 3500.0,
+    "total": 59500.0,
+    "statut_paiement": ""
+  },
+  {
+    "date": null,
+    "materiel": "Kilo pointe 70",
+    "quantite": 2.0,
+    "prix_unitaire": 2000.0,
+    "total": 4000.0,
+    "statut_paiement": ""
+  },
+  {
+    "date": null,
+    "materiel": "Pointe toque",
+    "quantite": 0.5,
+    "prix_unitaire": 5000.0,
+    "total": 2500.0,
+    "statut_paiement": ""
+  },
+  {
+    "date": null,
+    "materiel": "Chevron",
+    "quantite": 22.0,
+    "prix_unitaire": 5000.0,
+    "total": 110000.0,
+    "statut_paiement": ""
+  }
+]

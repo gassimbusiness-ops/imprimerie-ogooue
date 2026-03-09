@@ -14,16 +14,17 @@ export default function AssocieDashboard() {
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState({
-    employes: [], stocks: [], commandes: [], produits: [],
+    employes: [], stocks: [], inventaire: [], commandes: [], produits: [],
     actionnaires: [], investissements: [], apports: [],
   });
   const [settings, setSettings] = useState(null);
 
   useEffect(() => {
     const loadData = async () => {
-      const [emp, stk, cmd, prod, act, inv, ap, s] = await Promise.all([
+      const [emp, stk, inv, cmd, prod, act, invest, ap, s] = await Promise.all([
         db.employes.list(),
         db.produits_catalogue.list(),
+        db.produits.list(), // Inventaire réel (stocks matières/textiles/machines)
         db.commandes.list(),
         db.produits_catalogue.list(),
         db.actionnaires.list(),
@@ -34,10 +35,11 @@ export default function AssocieDashboard() {
       setData({
         employes: emp.filter((e) => e.role !== 'client'),
         stocks: stk,
+        inventaire: inv,
         commandes: cmd,
         produits: prod,
         actionnaires: act,
-        investissements: inv,
+        investissements: invest,
         apports: ap,
       });
       setSettings(s);
@@ -56,6 +58,16 @@ export default function AssocieDashboard() {
     const totalCapital = data.actionnaires.reduce((s, a) => s + (a.montant_apport || 0), 0);
     const totalInvest = data.investissements.reduce((s, i) => s + (i.montant || 0), 0);
     const totalApports = data.apports.reduce((s, a) => s + (a.montant || 0), 0);
+    // Valeur inventaire (prix d'achat × quantité)
+    const valeurInventaireAchat = data.inventaire.reduce((s, p) => {
+      if (p.valeur_stock_achat) return s + p.valeur_stock_achat;
+      return s + ((p.prix_unitaire || 0) * (p.quantite || 0));
+    }, 0);
+    const valeurInventaireVente = data.inventaire.reduce((s, p) => {
+      if (p.valeur_vente_totale) return s + p.valeur_vente_totale;
+      return s + ((p.prix_vente || 0) * (p.quantite || 0));
+    }, 0);
+    const totalArticlesInventaire = data.inventaire.length;
 
     return {
       totalEmployes,
@@ -64,6 +76,9 @@ export default function AssocieDashboard() {
       totalCapital,
       totalInvest,
       totalApports,
+      valeurInventaireAchat,
+      valeurInventaireVente,
+      totalArticlesInventaire,
     };
   }, [data]);
 
@@ -112,6 +127,53 @@ export default function AssocieDashboard() {
           </Card>
         ))}
       </div>
+
+      {/* Inventaire (valeur des actifs) */}
+      <Card>
+        <CardContent className="p-4">
+          <h2 className="font-semibold text-sm flex items-center gap-2 mb-4">
+            <Boxes className="h-4 w-4 text-muted-foreground" />
+            Inventaire — Valeur des actifs ({stats.totalArticlesInventaire} articles)
+          </h2>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div className="rounded-lg border p-3 text-center">
+              <p className="text-xs text-muted-foreground">Valeur d&apos;achat (coût)</p>
+              <p className="text-lg font-bold text-blue-600">{fmt(stats.valeurInventaireAchat)} F</p>
+            </div>
+            <div className="rounded-lg border p-3 text-center">
+              <p className="text-xs text-muted-foreground">Valeur de vente (estimée)</p>
+              <p className="text-lg font-bold text-emerald-600">{fmt(stats.valeurInventaireVente)} F</p>
+            </div>
+          </div>
+          {data.inventaire.length > 0 && (
+            <div className="mt-3 max-h-60 overflow-y-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="border-b bg-muted/30">
+                    <th className="px-2 py-1.5 text-left font-medium">Article</th>
+                    <th className="px-2 py-1.5 text-center font-medium">Qté</th>
+                    <th className="px-2 py-1.5 text-right font-medium">Valeur achat</th>
+                    <th className="px-2 py-1.5 text-right font-medium">Valeur vente</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.inventaire
+                    .filter(p => (p.quantite || 0) > 0)
+                    .sort((a, b) => ((b.valeur_stock_achat || 0) - (a.valeur_stock_achat || 0)))
+                    .map((p) => (
+                    <tr key={p.id} className="border-b border-muted/20">
+                      <td className="px-2 py-1">{p.nom}</td>
+                      <td className="px-2 py-1 text-center">{p.quantite}</td>
+                      <td className="px-2 py-1 text-right">{fmt(p.valeur_stock_achat || (p.prix_unitaire || 0) * (p.quantite || 0))} F</td>
+                      <td className="px-2 py-1 text-right">{fmt(p.valeur_vente_totale || (p.prix_vente || 0) * (p.quantite || 0))} F</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Gouvernance */}
       <Card>
@@ -172,7 +234,8 @@ export default function AssocieDashboard() {
               <p className="text-sm font-semibold text-amber-800">Accès Associé</p>
               <p className="text-xs text-amber-700 mt-1">
                 En tant qu&apos;associé, vous avez un accès en lecture seule aux données stratégiques :
-                catalogue, stocks (hors valeurs financières), gouvernance, et la liste des employés.
+                inventaire (quantités et valeurs des actifs), catalogue, gouvernance, et la liste des employés.
+                L&apos;inventaire vous permet de suivre la valeur réelle de l&apos;entreprise.
                 Pour toute question, contactez l&apos;administrateur.
               </p>
             </div>

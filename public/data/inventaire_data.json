@@ -1,0 +1,482 @@
+[
+  {
+    "designation": "Tee-shirt blanc KAF enfant",
+    "quantite": 541,
+    "prix_achat_unitaire": 1000.0,
+    "valeur_stock_achat": 541000.0,
+    "prix_vente_unitaire": 3000.0,
+    "valeur_vente_totale": 1623000.0
+  },
+  {
+    "designation": "Polo blanc",
+    "quantite": 34,
+    "prix_achat_unitaire": 2500.0,
+    "valeur_stock_achat": 85000.0,
+    "prix_vente_unitaire": 5000.0,
+    "valeur_vente_totale": 170000.0
+  },
+  {
+    "designation": "Tee-shirt blanc KAF adulte",
+    "quantite": 327,
+    "prix_achat_unitaire": 1100.0,
+    "valeur_stock_achat": 359700.0,
+    "prix_vente_unitaire": 3500.0,
+    "valeur_vente_totale": 1144500.0
+  },
+  {
+    "designation": "Polo Couleur KAF",
+    "quantite": 22,
+    "prix_achat_unitaire": 2800.0,
+    "valeur_stock_achat": 61600.0,
+    "prix_vente_unitaire": 6000.0,
+    "valeur_vente_totale": 132000.0
+  },
+  {
+    "designation": "Sous chemises",
+    "quantite": 20,
+    "prix_achat_unitaire": 8000.0,
+    "valeur_stock_achat": 160000.0,
+    "prix_vente_unitaire": 10000.0,
+    "valeur_vente_totale": 200000.0
+  },
+  {
+    "designation": "Chemises cartonnés",
+    "quantite": 20,
+    "prix_achat_unitaire": 8000.0,
+    "valeur_stock_achat": 160000.0,
+    "prix_vente_unitaire": 10000.0,
+    "valeur_vente_totale": 200000.0
+  },
+  {
+    "designation": "Papier Blanc dos de relliure",
+    "quantite": 19,
+    "prix_achat_unitaire": 5000.0,
+    "valeur_stock_achat": 95000.0,
+    "prix_vente_unitaire": 30000.0,
+    "valeur_vente_totale": 570000.0
+  },
+  {
+    "designation": "Envellope",
+    "quantite": 34,
+    "prix_achat_unitaire": 3000.0,
+    "valeur_stock_achat": 102000.0,
+    "prix_vente_unitaire": 10000.0,
+    "valeur_vente_totale": 340000.0
+  },
+  {
+    "designation": "Chemises cartonnés élastique",
+    "quantite": 38,
+    "prix_achat_unitaire": 3000.0,
+    "valeur_stock_achat": 114000.0,
+    "prix_vente_unitaire": 10000.0,
+    "valeur_vente_totale": 380000.0
+  },
+  {
+    "designation": "Papier ministre",
+    "quantite": 51,
+    "prix_achat_unitaire": 1500.0,
+    "valeur_stock_achat": 76500.0,
+    "prix_vente_unitaire": 3000.0,
+    "valeur_vente_totale": 153000.0
+  },
+  {
+    "designation": "Papier opaque",
+    "quantite": 9,
+    "prix_achat_unitaire": 7000.0,
+    "valeur_stock_achat": 63000.0,
+    "prix_vente_unitaire": 7000.0,
+    "valeur_vente_totale": 63000.0
+  },
+  {
+    "designation": "Papier photo",
+    "quantite": 4,
+    "prix_achat_unitaire": 7000.0,
+    "valeur_stock_achat": 28000.0,
+    "prix_vente_unitaire": 100000.0,
+    "valeur_vente_totale": 400000.0
+  },
+  {
+    "designation": "Papier laminage",
+    "quantite": 7,
+    "prix_achat_unitaire": 6000.0,
+    "valeur_stock_achat": 42000.0,
+    "prix_vente_unitaire": 18000.0,
+    "valeur_vente_totale": 126000.0
+  },
+  {
+    "designation": "Papier couverture relliure Transparent",
+    "quantite": 23,
+    "prix_achat_unitaire": 5000.0,
+    "valeur_stock_achat": 115000.0,
+    "prix_vente_unitaire": 15000.0,
+    "valeur_vente_totale": 345000.0
+  },
+  {
+    "designation": "Papier sublimation",
+    "quantite": 54,
+    "prix_achat_unitaire": 4500.0,
+    "valeur_stock_achat": 243000.0,
+    "prix_vente_unitaire": 4500.0,
+    "valeur_vente_totale": 243000.0
+  },
+  {
+    "designation": "Papier autocolant",
+    "quantite": 7,
+    "prix_achat_unitaire": 4000.0,
+    "valeur_stock_achat": 28000.0,
+    "prix_vente_unitaire": 12000.0,
+    "valeur_vente_totale": 84000.0
+  },
+  {
+    "designation": "Papier PVC",
+    "quantite": 2,
+    "prix_achat_unitaire": 7000.0,
+    "valeur_stock_achat": 14000.0,
+    "prix_vente_unitaire": 7000.0,
+    "valeur_vente_totale": 14000.0
+  },
+  {
+    "designation": "Badges",
+    "quantite": 140,
+    "prix_achat_unitaire": 3000.0,
+    "valeur_stock_achat": 420000.0,
+    "prix_vente_unitaire": 9000.0,
+    "valeur_vente_totale": 1260000.0
+  },
+  {
+    "designation": "Enveloppe invitation",
+    "quantite": 91,
+    "prix_achat_unitaire": 10000.0,
+    "valeur_stock_achat": 910000.0,
+    "prix_vente_unitaire": 20000.0,
+    "valeur_vente_totale": 1820000.0
+  },
+  {
+    "designation": "Enveloppe mariage",
+    "quantite": 24,
+    "prix_achat_unitaire": 10000.0,
+    "valeur_stock_achat": 240000.0,
+    "prix_vente_unitaire": 20000.0,
+    "valeur_vente_totale": 480000.0
+  },
+  {
+    "designation": "Spirale",
+    "quantite": 50,
+    "prix_achat_unitaire": 2000.0,
+    "valeur_stock_achat": 100000.0,
+    "prix_vente_unitaire": 4000.0,
+    "valeur_vente_totale": 200000.0
+  },
+  {
+    "designation": "Rouleaux de flex",
+    "quantite": 14,
+    "prix_achat_unitaire": 25000.0,
+    "valeur_stock_achat": 350000.0,
+    "prix_vente_unitaire": 140000.0,
+    "valeur_vente_totale": 1960000.0
+  },
+  {
+    "designation": "Cover avec colle",
+    "quantite": 6,
+    "prix_achat_unitaire": 5000.0,
+    "valeur_stock_achat": 30000.0,
+    "prix_vente_unitaire": 6000.0,
+    "valeur_vente_totale": 36000.0
+  },
+  {
+    "designation": "Tasse simple",
+    "quantite": 40,
+    "prix_achat_unitaire": 800.0,
+    "valeur_stock_achat": 32000.0,
+    "prix_vente_unitaire": 4000.0,
+    "valeur_vente_totale": 160000.0
+  },
+  {
+    "designation": "Tasse magique",
+    "quantite": 36,
+    "prix_achat_unitaire": 1000.0,
+    "valeur_stock_achat": 36000.0,
+    "prix_vente_unitaire": 6000.0,
+    "valeur_vente_totale": 216000.0
+  },
+  {
+    "designation": "Papier RAM",
+    "quantite": 11,
+    "prix_achat_unitaire": 5000.0,
+    "valeur_stock_achat": 55000.0,
+    "prix_vente_unitaire": 5000.0,
+    "valeur_vente_totale": 55000.0
+  },
+  {
+    "designation": "Casquettes",
+    "quantite": 33,
+    "prix_achat_unitaire": 1000.0,
+    "valeur_stock_achat": 33000.0,
+    "prix_vente_unitaire": 2000.0,
+    "valeur_vente_totale": 66000.0
+  },
+  {
+    "designation": "Polo orange asiatique",
+    "quantite": 68,
+    "prix_achat_unitaire": 2000.0,
+    "valeur_stock_achat": 136000.0,
+    "prix_vente_unitaire": 6000.0,
+    "valeur_vente_totale": 408000.0
+  },
+  {
+    "designation": "Polo bleu asiatique",
+    "quantite": 76,
+    "prix_achat_unitaire": 2000.0,
+    "valeur_stock_achat": 152000.0,
+    "prix_vente_unitaire": 6000.0,
+    "valeur_vente_totale": 456000.0
+  },
+  {
+    "designation": "Polo Rose asiatique",
+    "quantite": 19,
+    "prix_achat_unitaire": 2000.0,
+    "valeur_stock_achat": 38000.0,
+    "prix_vente_unitaire": 6000.0,
+    "valeur_vente_totale": 114000.0
+  },
+  {
+    "designation": "Polo noir asiatique",
+    "quantite": 23,
+    "prix_achat_unitaire": 2000.0,
+    "valeur_stock_achat": 46000.0,
+    "prix_vente_unitaire": 6000.0,
+    "valeur_vente_totale": 138000.0
+  },
+  {
+    "designation": "Polo vert asiatique",
+    "quantite": 7,
+    "prix_achat_unitaire": 2000.0,
+    "valeur_stock_achat": 14000.0,
+    "prix_vente_unitaire": 6000.0,
+    "valeur_vente_totale": 42000.0
+  },
+  {
+    "designation": "Polo blanc asiatique",
+    "quantite": 10,
+    "prix_achat_unitaire": 2000.0,
+    "valeur_stock_achat": 20000.0,
+    "prix_vente_unitaire": 6000.0,
+    "valeur_vente_totale": 60000.0
+  },
+  {
+    "designation": "Tee-shirt vert",
+    "quantite": 73,
+    "prix_achat_unitaire": 1200.0,
+    "valeur_stock_achat": 87600.0,
+    "prix_vente_unitaire": 4000.0,
+    "valeur_vente_totale": 292000.0
+  },
+  {
+    "designation": "Tee-shirt Rose",
+    "quantite": 83,
+    "prix_achat_unitaire": 1200.0,
+    "valeur_stock_achat": 99600.0,
+    "prix_vente_unitaire": 4000.0,
+    "valeur_vente_totale": 332000.0
+  },
+  {
+    "designation": "Tee-shirt Noir",
+    "quantite": 70,
+    "prix_achat_unitaire": 1200.0,
+    "valeur_stock_achat": 84000.0,
+    "prix_vente_unitaire": 4000.0,
+    "valeur_vente_totale": 280000.0
+  },
+  {
+    "designation": "Tee-shirt Bleu",
+    "quantite": 76,
+    "prix_achat_unitaire": 1200.0,
+    "valeur_stock_achat": 91200.0,
+    "prix_vente_unitaire": 4000.0,
+    "valeur_vente_totale": 304000.0
+  },
+  {
+    "designation": "Tee-shirt violet",
+    "quantite": 100,
+    "prix_achat_unitaire": 1200.0,
+    "valeur_stock_achat": 120000.0,
+    "prix_vente_unitaire": 4000.0,
+    "valeur_vente_totale": 400000.0
+  },
+  {
+    "designation": "Tee-shirt blanc adulte",
+    "quantite": 103,
+    "prix_achat_unitaire": 1200.0,
+    "valeur_stock_achat": 123600.0,
+    "prix_vente_unitaire": 3000.0,
+    "valeur_vente_totale": 309000.0
+  },
+  {
+    "designation": "Tee-shirt blanc Enfant",
+    "quantite": 115,
+    "prix_achat_unitaire": 1200.0,
+    "valeur_stock_achat": 138000.0,
+    "prix_vente_unitaire": 3000.0,
+    "valeur_vente_totale": 345000.0
+  },
+  {
+    "designation": "MACHINE ET OUTILS",
+    "quantite": 0,
+    "prix_achat_unitaire": 0,
+    "valeur_stock_achat": 0,
+    "prix_vente_unitaire": 0,
+    "valeur_vente_totale": 0
+  },
+  {
+    "designation": "Imprimante Canon G3430 Series",
+    "quantite": 1,
+    "prix_achat_unitaire": 0,
+    "valeur_stock_achat": 120000.0,
+    "prix_vente_unitaire": 0,
+    "valeur_vente_totale": 120000.0
+  },
+  {
+    "designation": "Imprimante Canon MF3414",
+    "quantite": 1,
+    "prix_achat_unitaire": 0,
+    "valeur_stock_achat": 300000.0,
+    "prix_vente_unitaire": 0,
+    "valeur_vente_totale": 300000.0
+  },
+  {
+    "designation": "Imprimante EPSON L8050",
+    "quantite": 1,
+    "prix_achat_unitaire": 0,
+    "valeur_stock_achat": 210000.0,
+    "prix_vente_unitaire": 0,
+    "valeur_vente_totale": 210000.0
+  },
+  {
+    "designation": "Ordinateur LENOVO 1000GB",
+    "quantite": 1,
+    "prix_achat_unitaire": 0,
+    "valeur_stock_achat": 170000.0,
+    "prix_vente_unitaire": 0,
+    "valeur_vente_totale": 170000.0
+  },
+  {
+    "designation": "Ordinateur de bureau HP",
+    "quantite": 2,
+    "prix_achat_unitaire": 0,
+    "valeur_stock_achat": 200000.0,
+    "prix_vente_unitaire": 0,
+    "valeur_vente_totale": 160000.0
+  },
+  {
+    "designation": "TOTAL STOCK",
+    "quantite": 0,
+    "prix_achat_unitaire": 0,
+    "valeur_stock_achat": 6643800.0,
+    "prix_vente_unitaire": 0,
+    "valeur_vente_totale": 16880500.0
+  },
+  {
+    "designation": "CASH EN COMPTE",
+    "quantite": 0,
+    "prix_achat_unitaire": 0,
+    "valeur_stock_achat": 2800000.0,
+    "prix_vente_unitaire": 0,
+    "valeur_vente_totale": 2800000.0
+  },
+  {
+    "designation": "CASH EN CAISSE",
+    "quantite": 0,
+    "prix_achat_unitaire": 0,
+    "valeur_stock_achat": 300000.0,
+    "prix_vente_unitaire": 0,
+    "valeur_vente_totale": 300000.0
+  },
+  {
+    "designation": "DETTE",
+    "quantite": 0,
+    "prix_achat_unitaire": 0,
+    "valeur_stock_achat": 3560000.0,
+    "prix_vente_unitaire": 0,
+    "valeur_vente_totale": 3560000.0
+  },
+  {
+    "designation": "VALEUR TOTAL DE L'IMPRIMERIE",
+    "quantite": 0,
+    "prix_achat_unitaire": 0,
+    "valeur_stock_achat": 6183800.0,
+    "prix_vente_unitaire": 0,
+    "valeur_vente_totale": 16420500.0
+  },
+  {
+    "designation": "INVESTISSEMENTS",
+    "quantite": 0,
+    "prix_achat_unitaire": 0,
+    "valeur_stock_achat": 0,
+    "prix_vente_unitaire": 0,
+    "valeur_vente_totale": 0
+  },
+  {
+    "designation": "INVESTISSEMENTS INITIALE",
+    "quantite": 3000000,
+    "prix_achat_unitaire": 0,
+    "valeur_stock_achat": 2500000.0,
+    "prix_vente_unitaire": 0,
+    "valeur_vente_totale": 0
+  },
+  {
+    "designation": "FRAIS DE VOYAGE CHINE",
+    "quantite": 1965000,
+    "prix_achat_unitaire": 0,
+    "valeur_stock_achat": 0,
+    "prix_vente_unitaire": 0,
+    "valeur_vente_totale": 0
+  },
+  {
+    "designation": "TOTAL INVESTISSEMENT",
+    "quantite": 7465000,
+    "prix_achat_unitaire": 0,
+    "valeur_stock_achat": 0,
+    "prix_vente_unitaire": 0,
+    "valeur_vente_totale": 0
+  },
+  {
+    "designation": "POURCENTAGE SUR INVESTISSEMENT",
+    "quantite": 66,
+    "prix_achat_unitaire": 0,
+    "valeur_stock_achat": 33.48961822,
+    "prix_vente_unitaire": 0,
+    "valeur_vente_totale": 0
+  },
+  {
+    "designation": "GESTION",
+    "quantite": 5,
+    "prix_achat_unitaire": 0,
+    "valeur_stock_achat": 0.0,
+    "prix_vente_unitaire": 0,
+    "valeur_vente_totale": 0
+  },
+  {
+    "designation": "POURCENTAGE + GESTION ARRONDI",
+    "quantite": 70,
+    "prix_achat_unitaire": 0,
+    "valeur_stock_achat": 30.0,
+    "prix_vente_unitaire": 0,
+    "valeur_vente_totale": 0
+  },
+  {
+    "designation": "ABAKAR SENOUSSI",
+    "quantite": 0,
+    "prix_achat_unitaire": 0,
+    "valeur_stock_achat": 4328660.0,
+    "prix_vente_unitaire": 0,
+    "valeur_vente_totale": 11494350.0
+  },
+  {
+    "designation": "SENOUSSI SALEH",
+    "quantite": 0,
+    "prix_achat_unitaire": 0,
+    "valeur_stock_achat": 1855140.0,
+    "prix_vente_unitaire": 0,
+    "valeur_vente_totale": 4926150.0
+  }
+]
