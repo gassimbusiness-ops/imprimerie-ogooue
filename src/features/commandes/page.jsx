@@ -120,8 +120,10 @@ const NOTIF_CLIENT_MESSAGES = {
 };
 
 export default function Commandes() {
-  const { hasPermission, user: currentUser } = useAuth();
-  const canWrite = hasPermission('commandes', 'write');
+  const { hasPermission, user: currentUser, isAdmin, isManager } = useAuth();
+  const isEmploye = currentUser?.role === 'employe';
+  const canWrite = hasPermission('commandes', 'write') && !isEmploye;
+  const canChangeStatut = isAdmin || isManager || isEmploye;
   const [commandes, setCommandes] = useState([]);
   const [clients, setClients] = useState([]);
   const [search, setSearch] = useState('');
@@ -787,27 +789,36 @@ export default function Commandes() {
                   </div>
                 )}
 
-                {/* Action buttons */}
-                {canWrite && !isTerminal && (
+                {/* Action buttons — Admin/Manager: tout, Employé: seulement en_production → prete */}
+                {canChangeStatut && !isTerminal && (
                   <div className="flex gap-2 pt-2 border-t">
-                    {/* Bouton Valider (pour en_attente_validation) */}
-                    {normalized === 'en_attente_validation' && (
+                    {/* Admin/Manager : Valider */}
+                    {!isEmploye && normalized === 'en_attente_validation' && (
                       <Button className="flex-1 gap-2 bg-emerald-600 hover:bg-emerald-700" onClick={() => handleValider(showDetail)}>
                         <ShieldCheck className="h-4 w-4" />
                         Valider la commande
                       </Button>
                     )}
-                    {/* Bouton progression (pour les autres statuts) */}
-                    {normalized !== 'en_attente_validation' && NEXT_STATUT[normalized] && (
+                    {/* Admin/Manager : toutes transitions sauf validation */}
+                    {!isEmploye && normalized !== 'en_attente_validation' && NEXT_STATUT[normalized] && (
                       <Button className="flex-1 gap-2" onClick={() => handleStatutChange(showDetail, NEXT_STATUT[normalized])}>
                         <ArrowRight className="h-4 w-4" />
                         Passer à "{getStatut(NEXT_STATUT[normalized]).label}"
                       </Button>
                     )}
-                    <Button variant="destructive" className="gap-1.5" onClick={() => handleAnnuler(showDetail)}>
-                      <XCircle className="h-4 w-4" />
-                      Annuler
-                    </Button>
+                    {/* Employé : seulement en_production → prete */}
+                    {isEmploye && normalized === 'en_production' && (
+                      <Button className="flex-1 gap-2" onClick={() => handleStatutChange(showDetail, 'prete')}>
+                        <ArrowRight className="h-4 w-4" />
+                        Marquer "Prête à récupérer"
+                      </Button>
+                    )}
+                    {!isEmploye && (
+                      <Button variant="destructive" className="gap-1.5" onClick={() => handleAnnuler(showDetail)}>
+                        <XCircle className="h-4 w-4" />
+                        Annuler
+                      </Button>
+                    )}
                   </div>
                 )}
               </div>
