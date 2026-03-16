@@ -17,6 +17,7 @@ import {
   PackageMinus, Eye, Filter,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { askAI } from '@/services/ai';
 
 function fmt(n) { return new Intl.NumberFormat('fr-FR').format(Math.round(n || 0)); }
 
@@ -28,6 +29,7 @@ const TABS = [
   { id: 'clients', label: 'Clients', icon: Users },
   { id: 'finance', label: 'Finance', icon: DollarSign },
   { id: 'exports', label: 'Exports', icon: Download },
+  { id: 'ia', label: 'Analyse IA', icon: BarChart3 },
 ];
 
 const PERIODES = [
@@ -79,6 +81,9 @@ export default function RapportsAnalyses() {
   const [catalogue, setCatalogue] = useState([]);
   const [comptes, setComptes] = useState([]);
   const [mouvements, setMouvements] = useState([]);
+  // IA
+  const [iaLoading, setIaLoading] = useState(false);
+  const [iaResult, setIaResult] = useState(null);
 
   useEffect(() => {
     (async () => {
@@ -926,6 +931,142 @@ export default function RapportsAnalyses() {
               <p className="text-sm text-muted-foreground mt-1">État complet du stock</p>
             </CardContent>
           </Card>
+        </div>
+      )}
+
+      {/* ═══ ANALYSE IA ═══ */}
+      {tab === 'ia' && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <p className="text-sm text-muted-foreground">Obtenez des insights IA sur vos donnees de ventes</p>
+            <Button
+              className="gap-2 bg-violet-600 hover:bg-violet-700 text-white"
+              onClick={async () => {
+                setIaLoading(true);
+                setIaResult(null);
+                try {
+                  const byService = {};
+                  const catKeys = ['copies', 'marchandises', 'scan', 'tirage_saisies', 'badges_plastification', 'demi_photos', 'maintenance', 'imprimerie'];
+                  periodRapports.forEach((r) => {
+                    const cats = r.categories || {};
+                    catKeys.forEach((k) => { byService[k] = (byService[k] || 0) + (cats[k] || 0); });
+                  });
+                  const ca = Object.values(byService).reduce((s, v) => s + v, 0);
+                  const prevCA = prevRapports.reduce((s, r) => {
+                    const cats = r.categories || {};
+                    return s + catKeys.reduce((ss, k) => ss + (cats[k] || 0), 0);
+                  }, 0);
+                  const evolution = prevCA > 0 ? ((ca - prevCA) / prevCA * 100).toFixed(1) : 0;
+                  const topProduits = catalogue.slice(0, 5).map((p) => ({ nom: p.nom, categorie: p.categorie }));
+
+                  const system = `Tu es analyste commercial senior pour Imprimerie Ogooue, Moanda, Gabon.`;
+                  const prompt = `Analyse complete sur la periode selectionnee :\n\nCA total : ${ca} FCFA\nCA par service : ${JSON.stringify(byService)}\nEvolution vs periode precedente : ${evolution}%\nNombre de commandes : ${periodCommandes.length}\nPanier moyen : ${periodCommandes.length > 0 ? Math.round(periodCommandes.reduce((s, c) => s + (c.montant_total || c.total || 0), 0) / periodCommandes.length) : 0} FCFA\nTop 5 produits catalogue : ${JSON.stringify(topProduits)}\n\nRetourne un JSON strictement valide :\n{"score_performance": 0-100, "resume_performance": "texte 2 phrases", "top_services": ["service1 : explication", "service2 : explication"], "opportunites": ["opportunite 1", "opportunite 2"], "alertes": ["alerte 1", "alerte 2"], "recommandations": [{"action": "titre court", "detail": "explication 2 phrases", "impact": "eleve/moyen/faible"}, {"action": "...", "detail": "...", "impact": "..."}, {"action": "...", "detail": "...", "impact": "..."}]}`;
+
+                  const raw = await askAI(system, prompt, 800);
+                  try {
+                    const jsonMatch = raw.match(/\{[\s\S]*\}/);
+                    if (jsonMatch) setIaResult(JSON.parse(jsonMatch[0]));
+                    else setIaResult({ resume_performance: raw, score_performance: 0, top_services: [], opportunites: [], alertes: [], recommandations: [] });
+                  } catch {
+                    setIaResult({ resume_performance: raw, score_performance: 0, top_services: [], opportunites: [], alertes: [], recommandations: [] });
+                  }
+                  toast.success('Analyse IA terminee');
+                } catch {
+                  toast.error('Erreur lors de l\'analyse IA');
+                } finally {
+                  setIaLoading(false);
+                }
+              }}
+              disabled={iaLoading}
+            >
+              {iaLoading ? (
+                <><div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" /> Analyse en cours...</>
+              ) : (
+                <><BarChart3 className="h-4 w-4" /> Lancer l'analyse complete</>
+              )}
+            </Button>
+          </div>
+
+          {!iaResult && !iaLoading && (
+            <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
+              <BarChart3 className="h-16 w-16 mb-4 opacity-20" />
+              <p className="text-sm">Lancez l'analyse pour obtenir des insights sur vos ventes</p>
+            </div>
+          )}
+
+          {iaResult && (
+            <div className="grid gap-4 sm:grid-cols-2">
+              {/* Score Performance */}
+              <Card className="border-violet-200 bg-violet-50/50">
+                <CardContent className="p-4 text-center">
+                  <p className="text-xs text-muted-foreground mb-2">Score de performance</p>
+                  <div className="relative inline-flex items-center justify-center">
+                    <svg className="h-24 w-24" viewBox="0 0 100 100">
+                      <circle cx="50" cy="50" r="40" fill="none" stroke="#e5e7eb" strokeWidth="8" />
+                      <circle cx="50" cy="50" r="40" fill="none"
+                        stroke={iaResult.score_performance >= 70 ? '#10b981' : iaResult.score_performance >= 40 ? '#f59e0b' : '#ef4444'}
+                        strokeWidth="8" strokeLinecap="round"
+                        strokeDasharray={`${iaResult.score_performance * 2.51} 251`}
+                        transform="rotate(-90 50 50)" />
+                    </svg>
+                    <span className="absolute text-2xl font-black">{iaResult.score_performance}</span>
+                  </div>
+                  <p className="text-sm mt-2">{iaResult.resume_performance}</p>
+                </CardContent>
+              </Card>
+
+              {/* Top services */}
+              <Card>
+                <CardContent className="p-4">
+                  <h3 className="font-semibold text-sm flex items-center gap-2 mb-3">
+                    <TrendingUp className="h-4 w-4 text-emerald-600" /> Top services & opportunites
+                  </h3>
+                  <div className="space-y-2">
+                    {(iaResult.top_services || []).map((s, i) => (
+                      <div key={i} className="text-xs rounded-lg bg-emerald-50 p-2">{s}</div>
+                    ))}
+                    {(iaResult.opportunites || []).map((o, i) => (
+                      <div key={i} className="text-xs rounded-lg bg-blue-50 p-2">{o}</div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Alertes */}
+              <Card className="border-amber-200">
+                <CardContent className="p-4">
+                  <h3 className="font-semibold text-sm flex items-center gap-2 mb-3">
+                    <AlertTriangle className="h-4 w-4 text-amber-600" /> Alertes et risques
+                  </h3>
+                  <div className="space-y-2">
+                    {(iaResult.alertes || []).map((a, i) => (
+                      <div key={i} className="text-xs rounded-lg bg-amber-50 p-2">{a}</div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* Recommandations */}
+              <Card className="border-violet-200">
+                <CardContent className="p-4">
+                  <h3 className="font-semibold text-sm flex items-center gap-2 mb-3">
+                    <Package className="h-4 w-4 text-violet-600" /> Recommandations prioritaires
+                  </h3>
+                  <div className="space-y-2">
+                    {(iaResult.recommandations || []).map((r, i) => (
+                      <div key={i} className="rounded-lg border p-2.5">
+                        <div className="flex items-center justify-between">
+                          <p className="text-xs font-semibold">{r.action || r}</p>
+                          {r.impact && <Badge variant="outline" className="text-[9px]">{r.impact}</Badge>}
+                        </div>
+                        {r.detail && <p className="text-[11px] text-muted-foreground mt-1">{r.detail}</p>}
+                      </div>
+                    ))}
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
+          )}
         </div>
       )}
     </div>
