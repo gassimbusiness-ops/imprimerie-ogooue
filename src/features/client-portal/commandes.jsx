@@ -3,8 +3,12 @@ import { db } from '@/services/db';
 import { useAuth } from '@/services/auth';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Package, Clock, CheckCircle, Truck, Printer, XCircle, ShoppingBag } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Package, Clock, CheckCircle, Truck, Printer, XCircle, ShoppingBag, CreditCard, Download, FileText } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { notifyNouvelleCommande } from '@/services/notifications';
+import { exportDocument } from '@/services/export-pdf';
+import { toast } from 'sonner';
 
 function fmt(n) { return new Intl.NumberFormat('fr-FR').format(Math.round(n || 0)); }
 
@@ -26,7 +30,7 @@ const STATUTS_COMMANDE = {
 
 const STEPS = [
   { label: 'Envoyée', icon: '✅' },
-  { label: 'Validée', icon: '✅' },
+  { label: 'À payer', icon: '💳' },
   { label: 'En production', icon: '🖨️' },
   { label: 'Prête', icon: '📦' },
   { label: 'Livrée', icon: '🎉' },
@@ -89,6 +93,72 @@ export default function ClientCommandes() {
 
   useEffect(() => { loadData(); const interval = setInterval(loadData, 30000); return () => clearInterval(interval); }, [user]);
 
+  // ── Bouton Payer : client confirme le paiement → passe en production ──
+  const handlePayer = async (cmd) => {
+    if (!confirm(`Confirmer le paiement de ${fmt(cmd.montant_total || cmd.total)} F pour la commande ${cmd.numero} ?`)) return;
+    try {
+      const auteur = `${user?.prenom || ''} ${user?.nom || ''}`.trim();
+      const historique = [...(cmd.historique_statuts || []), {
+        statut: 'en_production',
+        date: new Date().toISOString(),
+        auteur: auteur || 'Client',
+      }];
+      await db.commandes.update(cmd.id, {
+        statut: 'en_production',
+        historique_statuts: historique,
+        date_paiement: new Date().toISOString(),
+      });
+      // Notifier le staff
+      notifyNouvelleCommande(`${cmd.client_nom} — Paiement confirmé pour ${cmd.numero}`);
+      toast.success('Paiement confirmé ! Votre commande est en production.');
+      loadData();
+    } catch (err) {
+      console.error('Erreur paiement:', err);
+      toast.error('Erreur lors du paiement');
+    }
+  };
+
+  // ── Télécharger la facture PDF liée à la commande ──
+  const handleDownloadFacture = async (cmd) => {
+    try {
+      const allFactures = await db.factures.list();
+      const facture = allFactures.find((f) =>
+        f.commande_id === cmd.id || f.commande_numero === cmd.numero
+      );
+      if (facture) {
+        const lignes = (facture.lignes || []).map((l) => ({
+          description: l.description || l.designation || 'Article',
+          quantite: l.quantite || 1,
+          prix_unitaire: l.prix_unitaire || l.prix || 0,
+        }));
+        if (lignes.length === 0) {
+          lignes.push({ description: facture.objet || 'Commande', quantite: 1, prix_unitaire: facture.total_ttc || facture.montant_total || 0 });
+        }
+        exportDocument(facture, lignes, 'facture');
+      } else {
+        // Pas de facture trouvée, générer un PDF à partir de la commande
+        const lignes = (cmd.lignes || []).map((l) => ({
+          description: l.nom || l.description || 'Article',
+          quantite: l.qte || l.quantite || 1,
+          prix_unitaire: l.prix || l.prix_unitaire || 0,
+        }));
+        if (lignes.length === 0) {
+          lignes.push({ description: cmd.description || 'Commande', quantite: 1, prix_unitaire: cmd.montant_total || cmd.total || 0 });
+        }
+        exportDocument({
+          numero: cmd.numero,
+          client_nom: cmd.client_nom,
+          date: cmd.created_at?.slice(0, 10),
+          statut: 'livree',
+          objet: cmd.description,
+        }, lignes, 'facture');
+      }
+    } catch (err) {
+      console.error('Erreur téléchargement facture:', err);
+      toast.error('Erreur lors du téléchargement');
+    }
+  };
+
   if (loading) return <div className="flex justify-center py-12"><div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" /></div>;
 
   return (
@@ -150,6 +220,34 @@ export default function ClientCommandes() {
                   <div className="mt-3 rounded-lg bg-muted/50 px-3 py-2">
                     <p className="text-sm font-medium">{cfg.label}</p>
                   </div>
+
+                  {/* ── Bouton PAYER — uniquement quand validee_attente_paiement ── */}
+                  {cmd.statut === 'validee_attente_paiement' && (
+                    <div className="mt-3">
+                      <Button
+                        className="w-full gap-2 bg-emerald-600 hover:bg-emerald-700 text-base py-6"
+                        onClick={() => handlePayer(cmd)}
+                      >
+                        <CreditCard className="h-5 w-5" />
+                        💳 Payer ma commande — {fmt(cmd.montant_total || cmd.total)} F
+                      </Button>
+                      <p className="text-[10px] text-muted-foreground text-center mt-1.5">
+                        Paiement en espèces, Mobile Money ou virement
+                      </p>
+                    </div>
+                  )}
+
+                  {/* ── Bouton Télécharger facture — uniquement quand livrée ── */}
+                  {cmd.statut === 'livree' && (
+                    <Button
+                      variant="outline"
+                      className="w-full gap-2 mt-3"
+                      onClick={() => handleDownloadFacture(cmd)}
+                    >
+                      <Download className="h-4 w-4" />
+                      Télécharger ma facture PDF
+                    </Button>
+                  )}
 
                   {/* Progress gauge */}
                   <ProgressGauge currentStep={cfg.step} />
