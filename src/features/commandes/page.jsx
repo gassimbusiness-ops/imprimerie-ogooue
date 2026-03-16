@@ -52,6 +52,7 @@ import {
 } from '@/services/notifications';
 import { syncClientFromCommande } from '@/services/sync-clients';
 import { syncCommandeToRapport } from '@/services/sync-commande-rapport';
+import { syncStockFromCommande } from '@/services/sync-stock-commande';
 
 // ── Statuts enrichis BLOC 5 ──
 const STATUTS = [
@@ -301,10 +302,11 @@ export default function Commandes() {
       else if (newStatut === 'livree') notifyCommandeLivree(cmd.client_id);
     }
 
-    // À la livraison : sync rapport + créditer points fidélité
+    // À la livraison : sync rapport + créditer points fidélité + déduction stock
     if (newStatut === 'livree') {
       syncCommandeToRapport(cmd).catch((err) => console.error('Sync rapport error:', err));
       crediterPointsFidelite(cmd).catch((err) => console.error('Fidelite error:', err));
+      syncStockFromCommande(cmd).catch((err) => console.error('Sync stock error:', err));
     }
 
     // Auto-generation facture a la livraison
