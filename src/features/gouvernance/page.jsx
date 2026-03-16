@@ -96,6 +96,7 @@ async function seedInvestisseurs() {
 
 export default function Gouvernance() {
   const { user, isAdmin, hasPermission } = useAuth();
+  const isAssocie = user?.role === 'associe';
   const [tab, setTab] = useState('capital');
   const [apports, setApports] = useState([]);
   const [dettes, setDettes] = useState([]);
@@ -476,7 +477,14 @@ export default function Gouvernance() {
             </CardHeader>
             <CardContent>
               <div className="grid sm:grid-cols-2 gap-3">
-                {investisseurs.map((inv) => {
+                {(isAssocie
+                  ? investisseurs.filter((inv) => {
+                      const invNom = (inv.nom || '').toLowerCase();
+                      const userNom = `${user?.prenom || ''} ${user?.nom || ''}`.trim().toLowerCase();
+                      return inv.user_id === user?.id || invNom.includes((user?.nom || '').toLowerCase()) || invNom === userNom;
+                    })
+                  : investisseurs
+                ).map((inv) => {
                   const isOumar = inv.id === 'inv-oumar' || inv.nom?.includes('Oumar');
                   const capPct = isOumar ? capTable.oumar : capTable.senouss;
                   const valeurPart = isOumar ? oumarValue : senoussValue;

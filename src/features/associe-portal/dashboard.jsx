@@ -24,7 +24,7 @@ export default function AssocieDashboard() {
       const [emp, stk, inv, cmd, prod, act, invest, ap, s] = await Promise.all([
         db.employes.list(),
         db.produits_catalogue.list(),
-        db.produits.list(), // Inventaire réel (stocks matières/textiles/machines)
+        db.produits.list(),
         db.commandes.list(),
         db.produits_catalogue.list(),
         db.actionnaires.list(),
@@ -48,6 +48,15 @@ export default function AssocieDashboard() {
     loadData();
   }, []);
 
+  // Find the current associé's own record
+  const myApport = useMemo(() => {
+    const nom = `${user?.prenom || ''} ${user?.nom || ''}`.trim().toLowerCase();
+    return data.actionnaires.find((a) => {
+      const aNom = `${a.prenom || ''} ${a.nom || ''}`.trim().toLowerCase();
+      return a.user_id === user?.id || aNom === nom || (a.nom || '').toLowerCase() === (user?.nom || '').toLowerCase();
+    });
+  }, [data.actionnaires, user]);
+
   const stats = useMemo(() => {
     const totalEmployes = data.employes.length;
     const totalProduits = data.produits.length;
@@ -55,29 +64,12 @@ export default function AssocieDashboard() {
       const d = c.created_at || '';
       return d.startsWith(new Date().toISOString().slice(0, 7));
     });
-    const totalCapital = data.actionnaires.reduce((s, a) => s + (a.montant_apport || 0), 0);
-    const totalInvest = data.investissements.reduce((s, i) => s + (i.montant || 0), 0);
-    const totalApports = data.apports.reduce((s, a) => s + (a.montant || 0), 0);
-    // Valeur inventaire (prix d'achat × quantité)
-    const valeurInventaireAchat = data.inventaire.reduce((s, p) => {
-      if (p.valeur_stock_achat) return s + p.valeur_stock_achat;
-      return s + ((p.prix_unitaire || 0) * (p.quantite || 0));
-    }, 0);
-    const valeurInventaireVente = data.inventaire.reduce((s, p) => {
-      if (p.valeur_vente_totale) return s + p.valeur_vente_totale;
-      return s + ((p.prix_vente || 0) * (p.quantite || 0));
-    }, 0);
     const totalArticlesInventaire = data.inventaire.length;
 
     return {
       totalEmployes,
       totalProduits,
       commandesMois: commandesMois.length,
-      totalCapital,
-      totalInvest,
-      totalApports,
-      valeurInventaireAchat,
-      valeurInventaireVente,
       totalArticlesInventaire,
     };
   }, [data]);
@@ -104,14 +96,13 @@ export default function AssocieDashboard() {
         </div>
       </div>
 
-      {/* KPIs principaux */}
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      {/* KPIs principaux (sans capital) */}
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
         {[
           { label: 'Employés', value: stats.totalEmployes, icon: Users, color: 'bg-blue-500/10 text-blue-600' },
           { label: 'Produits catalogue', value: stats.totalProduits, icon: BookOpen, color: 'bg-violet-500/10 text-violet-600' },
           { label: 'Commandes ce mois', value: stats.commandesMois, icon: Package, color: 'bg-amber-500/10 text-amber-600' },
-          { label: 'Capital total', value: `${fmt(stats.totalCapital)} F`, icon: TrendingUp, color: 'bg-emerald-500/10 text-emerald-600', isText: true },
-        ].map(({ label, value, icon: Icon, color, isText }) => (
+        ].map(({ label, value, icon: Icon, color }) => (
           <Card key={label}>
             <CardContent className="p-4">
               <div className="flex items-center gap-3">
@@ -120,7 +111,7 @@ export default function AssocieDashboard() {
                 </div>
                 <div>
                   <p className="text-xs text-muted-foreground">{label}</p>
-                  <p className={`${isText ? 'text-sm' : 'text-lg'} font-bold`}>{value}</p>
+                  <p className="text-lg font-bold">{value}</p>
                 </div>
               </div>
             </CardContent>
@@ -128,77 +119,107 @@ export default function AssocieDashboard() {
         ))}
       </div>
 
-      {/* Inventaire (valeur des actifs) */}
+      {/* Mon investissement personnel */}
+      {myApport && (
+        <Card className="border-indigo-200 bg-indigo-50/50">
+          <CardContent className="p-4">
+            <h2 className="font-semibold text-sm flex items-center gap-2 mb-3">
+              <DollarSign className="h-4 w-4 text-indigo-600" />
+              Mon investissement
+            </h2>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="rounded-lg border bg-white p-3 text-center">
+                <p className="text-xs text-muted-foreground">Mon apport</p>
+                <p className="text-lg font-bold text-indigo-600">{fmt(myApport.montantActuel || myApport.montant_apport || 0)} F</p>
+              </div>
+              <div className="rounded-lg border bg-white p-3 text-center">
+                <p className="text-xs text-muted-foreground">Ma part</p>
+                <p className="text-lg font-bold text-indigo-600">{(myApport.parts || 0).toFixed(1)}%</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Inventaire (quantités uniquement, sans valeurs financières) */}
       <Card>
         <CardContent className="p-4">
           <h2 className="font-semibold text-sm flex items-center gap-2 mb-4">
             <Boxes className="h-4 w-4 text-muted-foreground" />
-            Inventaire — Valeur des actifs ({stats.totalArticlesInventaire} articles)
+            Inventaire ({stats.totalArticlesInventaire} articles)
           </h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div className="rounded-lg border p-3 text-center">
-              <p className="text-xs text-muted-foreground">Valeur d&apos;achat (coût)</p>
-              <p className="text-lg font-bold text-blue-600">{fmt(stats.valeurInventaireAchat)} F</p>
-            </div>
-            <div className="rounded-lg border p-3 text-center">
-              <p className="text-xs text-muted-foreground">Valeur de vente (estimée)</p>
-              <p className="text-lg font-bold text-emerald-600">{fmt(stats.valeurInventaireVente)} F</p>
-            </div>
-          </div>
-          {data.inventaire.length > 0 && (
-            <div className="mt-3 max-h-60 overflow-y-auto">
+          {data.inventaire.length > 0 ? (
+            <div className="max-h-60 overflow-y-auto">
               <table className="w-full text-xs">
                 <thead>
                   <tr className="border-b bg-muted/30">
                     <th className="px-2 py-1.5 text-left font-medium">Article</th>
-                    <th className="px-2 py-1.5 text-center font-medium">Qté</th>
-                    <th className="px-2 py-1.5 text-right font-medium">Valeur achat</th>
-                    <th className="px-2 py-1.5 text-right font-medium">Valeur vente</th>
+                    <th className="px-2 py-1.5 text-center font-medium">Quantité</th>
                   </tr>
                 </thead>
                 <tbody>
                   {data.inventaire
                     .filter(p => (p.quantite || 0) > 0)
-                    .sort((a, b) => ((b.valeur_stock_achat || 0) - (a.valeur_stock_achat || 0)))
+                    .sort((a, b) => (b.quantite || 0) - (a.quantite || 0))
                     .map((p) => (
                     <tr key={p.id} className="border-b border-muted/20">
                       <td className="px-2 py-1">{p.nom}</td>
                       <td className="px-2 py-1 text-center">{p.quantite}</td>
-                      <td className="px-2 py-1 text-right">{fmt(p.valeur_stock_achat || (p.prix_unitaire || 0) * (p.quantite || 0))} F</td>
-                      <td className="px-2 py-1 text-right">{fmt(p.valeur_vente_totale || (p.prix_vente || 0) * (p.quantite || 0))} F</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
+          ) : (
+            <p className="text-sm text-muted-foreground text-center py-4">Aucun article en stock</p>
           )}
         </CardContent>
       </Card>
 
-      {/* Gouvernance */}
+      {/* Gouvernance — uniquement mes propres données */}
       <Card>
         <CardContent className="p-4">
           <h2 className="font-semibold text-sm flex items-center gap-2 mb-4">
             <PieChart className="h-4 w-4 text-muted-foreground" />
-            Gouvernance & Capital
+            Gouvernance
           </h2>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div className="rounded-lg border p-3 text-center">
-              <p className="text-xs text-muted-foreground">Investissements</p>
-              <p className="text-lg font-bold text-emerald-600">{fmt(stats.totalInvest)} F</p>
-              <p className="text-[10px] text-muted-foreground">{data.investissements.length} opération(s)</p>
+          {myApport ? (
+            <div className="rounded-lg border p-4">
+              <div className="flex items-center gap-3 mb-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-indigo-100 text-sm font-bold text-indigo-600">
+                  {myApport.prenom?.[0]}{myApport.nom?.[0]}
+                </div>
+                <div>
+                  <p className="font-semibold text-sm">{myApport.prenom} {myApport.nom}</p>
+                  <Badge variant="outline" className="text-[10px]">{myApport.role || 'Associé'}</Badge>
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-3 text-center">
+                <div className="rounded-lg bg-muted/50 p-2">
+                  <p className="text-[10px] text-muted-foreground">Apport initial</p>
+                  <p className="text-sm font-bold">{fmt(myApport.montantActuel || myApport.montant_apport || 0)} F</p>
+                </div>
+                <div className="rounded-lg bg-muted/50 p-2">
+                  <p className="text-[10px] text-muted-foreground">Parts</p>
+                  <p className="text-sm font-bold">{(myApport.parts || 0).toFixed(1)}%</p>
+                </div>
+                <div className="rounded-lg bg-muted/50 p-2">
+                  <p className="text-[10px] text-muted-foreground">Statut</p>
+                  <p className="text-sm font-bold capitalize">{myApport.statut || 'actif'}</p>
+                </div>
+              </div>
+              {myApport.compte_courant !== undefined && myApport.compte_courant !== 0 && (
+                <div className="mt-3 rounded-lg bg-muted/50 p-2 text-center">
+                  <p className="text-[10px] text-muted-foreground">Compte courant associé</p>
+                  <p className="text-sm font-bold">{fmt(myApport.compte_courant || 0)} F</p>
+                </div>
+              )}
             </div>
-            <div className="rounded-lg border p-3 text-center">
-              <p className="text-xs text-muted-foreground">Apports associés</p>
-              <p className="text-lg font-bold text-blue-600">{fmt(stats.totalApports)} F</p>
-              <p className="text-[10px] text-muted-foreground">{data.apports.length} apport(s)</p>
-            </div>
-            <div className="rounded-lg border p-3 text-center">
-              <p className="text-xs text-muted-foreground">Actionnaires</p>
-              <p className="text-lg font-bold text-indigo-600">{data.actionnaires.length}</p>
-              <p className="text-[10px] text-muted-foreground">partenaires enregistrés</p>
-            </div>
-          </div>
+          ) : (
+            <p className="text-sm text-muted-foreground text-center py-4">
+              Aucune fiche associé trouvée. Contactez l&apos;administrateur.
+            </p>
+          )}
         </CardContent>
       </Card>
 
@@ -233,9 +254,8 @@ export default function AssocieDashboard() {
             <div>
               <p className="text-sm font-semibold text-amber-800">Accès Associé</p>
               <p className="text-xs text-amber-700 mt-1">
-                En tant qu&apos;associé, vous avez un accès en lecture seule aux données stratégiques :
-                inventaire (quantités et valeurs des actifs), catalogue, gouvernance, et la liste des employés.
-                L&apos;inventaire vous permet de suivre la valeur réelle de l&apos;entreprise.
+                En tant qu&apos;associé, vous avez un accès en lecture seule aux données de l&apos;entreprise :
+                inventaire (quantités), catalogue, votre fiche gouvernance, et la liste des employés.
                 Pour toute question, contactez l&apos;administrateur.
               </p>
             </div>
