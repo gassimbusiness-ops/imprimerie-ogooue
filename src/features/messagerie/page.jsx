@@ -13,6 +13,8 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { notifyNouveauMessage } from '@/services/notifications';
+import { askAI } from '@/services/ai';
+import { Package, Bot, Loader2 } from 'lucide-react';
 
 const PLATFORMS = {
   whatsapp: { label: 'WhatsApp', color: 'bg-green-100 text-green-700', dot: 'bg-green-500' },
@@ -69,8 +71,12 @@ export default function Messagerie() {
   const [newConvPlatform, setNewConvPlatform] = useState('whatsapp');
 
   // Pièces jointes state
-  const [attachedFile, setAttachedFile] = useState(null); // { name, type, size, data (base64) }
+  const [attachedFile, setAttachedFile] = useState(null);
   const fileInputRef = useRef(null);
+  // Product sharing + AI
+  const [showProduits, setShowProduits] = useState(false);
+  const [produitsCatalogue, setProduitsCatalogue] = useState([]);
+  const [aiLoading, setAiLoading] = useState(false);
   const messagesEndRef = useRef(null);
 
   const load = async () => {
@@ -158,6 +164,62 @@ export default function Messagerie() {
   };
 
   const removeAttachment = () => setAttachedFile(null);
+
+  // ─── Product sharing ───
+  const openProduitPicker = async () => {
+    if (produitsCatalogue.length === 0) {
+      const prods = await db.produits_catalogue.list();
+      setProduitsCatalogue(prods.filter((p) => p.actif !== false));
+    }
+    setShowProduits(true);
+  };
+
+  const shareProduit = async (prod) => {
+    if (!activeConv) return;
+    const prix = prod.prix_unitaire || (prod.prix?.[0]?.prix) || 0;
+    await db.messages_conv.create({
+      conversation_id: activeConv.id,
+      contenu: `${prod.nom} — ${new Intl.NumberFormat('fr-FR').format(prix)} F${prod.delai_estime ? `\nDelai : ${prod.delai_estime}` : ''}`,
+      auteur: `${user?.prenom || ''} ${user?.nom || ''}`.trim(),
+      auteur_id: user?.id,
+      type: 'sortant',
+      produit_partage: {
+        id: prod.id,
+        nom: prod.nom,
+        prix: new Intl.NumberFormat('fr-FR').format(prix),
+        image: prod.images?.[0] || null,
+        delai: prod.delai_estime || null,
+      },
+    });
+    await db.conversations.update(activeConv.id, { dernier_message: `Produit : ${prod.nom}`, statut: 'en_cours' });
+    setShowProduits(false);
+    load();
+    toast.success('Produit partage');
+  };
+
+  // ─── AI Suggest ───
+  const suggestAI = async () => {
+    if (!activeConv) return;
+    setAiLoading(true);
+    try {
+      const convMsgs = messages
+        .filter((m) => m.conversation_id === activeConv.id)
+        .sort((a, b) => (a.created_at || '').localeCompare(b.created_at || ''))
+        .slice(-10);
+      const historique = convMsgs.map((m) => `${m.type === 'entrant' ? 'Client' : 'Equipe'}: ${m.contenu}`).join('\n');
+      const system = "Tu es l'assistant d'Imprimerie Ogooue, une imprimerie a Moanda (Gabon). Propose une reponse professionnelle, utile et en francais. Sois concis (2-3 phrases max).";
+      const prompt = `Voici la conversation avec le client :\n\n${historique}\n\nPropose une reponse professionnelle :`;
+      const response = await askAI(system, prompt, 200);
+      if (response) {
+        setNewMessage(response);
+        toast.success('Suggestion IA generee');
+      }
+    } catch {
+      toast.error('Erreur IA — reessayez');
+    } finally {
+      setAiLoading(false);
+    }
+  };
 
   // ─── Send message ───
   const sendMessage = async () => {
@@ -335,6 +397,18 @@ export default function Messagerie() {
                     )}
                   </div>
                 )}
+                {m.produit_partage && (
+                  <div className="rounded-lg border bg-white p-2.5 mb-1.5">
+                    <div className="flex items-center gap-2">
+                      {m.produit_partage.image && <img src={m.produit_partage.image} alt="" className="h-10 w-10 rounded object-cover" />}
+                      <div className="flex-1 min-w-0">
+                        <p className="font-semibold text-xs text-foreground truncate">{m.produit_partage.nom}</p>
+                        <p className="text-xs text-primary font-bold">{m.produit_partage.prix} F</p>
+                        {m.produit_partage.delai && <p className="text-[10px] text-muted-foreground">{m.produit_partage.delai}</p>}
+                      </div>
+                    </div>
+                  </div>
+                )}
                 {m.contenu && <p className="text-sm">{m.contenu}</p>}
                 <p
                   className={`text-[10px] mt-1 ${
@@ -397,14 +471,14 @@ export default function Messagerie() {
             className="hidden"
             onChange={handleFileSelect}
           />
-          <Button
-            variant="ghost"
-            size="icon"
-            className="shrink-0 text-muted-foreground"
-            onClick={() => fileInputRef.current?.click()}
-            title="Joindre un fichier"
-          >
+          <Button variant="ghost" size="icon" className="shrink-0 text-muted-foreground" onClick={() => fileInputRef.current?.click()} title="Joindre un fichier">
             <Paperclip className="h-5 w-5" />
+          </Button>
+          <Button variant="ghost" size="icon" className="shrink-0 text-muted-foreground" onClick={openProduitPicker} title="Partager un produit">
+            <Package className="h-5 w-5" />
+          </Button>
+          <Button variant="ghost" size="icon" className="shrink-0 text-muted-foreground" onClick={suggestAI} disabled={aiLoading} title="Suggestion IA">
+            {aiLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : <Bot className="h-5 w-5" />}
           </Button>
           <Input
             value={newMessage}
@@ -591,6 +665,44 @@ export default function Messagerie() {
           </DialogContent>
         </Dialog>
       )}
+      {/* Product picker dialog */}
+      <Dialog open={showProduits} onOpenChange={setShowProduits}>
+        <DialogContent className="max-w-md max-h-[70vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Package className="h-5 w-5" /> Partager un produit
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-2">
+            {produitsCatalogue.length === 0 ? (
+              <p className="text-sm text-muted-foreground text-center py-4">Aucun produit disponible</p>
+            ) : (
+              produitsCatalogue.map((p) => (
+                <button
+                  key={p.id}
+                  onClick={() => shareProduit(p)}
+                  className="w-full flex items-center gap-3 rounded-lg border p-3 hover:bg-muted/50 text-left transition-colors"
+                >
+                  {p.images?.[0] ? (
+                    <img src={p.images[0]} alt="" className="h-10 w-10 rounded object-cover" />
+                  ) : (
+                    <div className="h-10 w-10 rounded bg-muted flex items-center justify-center">
+                      <Package className="h-5 w-5 text-muted-foreground" />
+                    </div>
+                  )}
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium text-sm truncate">{p.nom}</p>
+                    <p className="text-xs text-muted-foreground">{p.categorie}</p>
+                  </div>
+                  <span className="text-sm font-bold text-primary shrink-0">
+                    {new Intl.NumberFormat('fr-FR').format(p.prix_unitaire || 0)} F
+                  </span>
+                </button>
+              ))
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
