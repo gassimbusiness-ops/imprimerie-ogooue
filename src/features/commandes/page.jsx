@@ -934,16 +934,16 @@ export default function Commandes() {
                   </div>
                 )}
 
-                {/* Commentaire pour le client */}
-                {canWriteAdmin && (
+                {/* Commentaire pour le client — Admin, Manager ET Employé */}
+                {canChangeStatut && (
                   <div>
                     <label className="mb-1.5 flex items-center gap-1.5 text-sm font-medium">
                       <MessageSquare className="h-3.5 w-3.5 text-blue-500" />
-                      Commentaire pour le client
+                      Message au client
                       <span className="text-[10px] text-muted-foreground">(visible par le client)</span>
                     </label>
                     <Textarea
-                      placeholder="Message visible par le client après validation..."
+                      placeholder="Message visible par le client..."
                       value={commentaireClient}
                       onChange={(e) => setCommentaireClient(e.target.value)}
                       className="text-sm"
@@ -952,7 +952,7 @@ export default function Commandes() {
                   </div>
                 )}
 
-                {/* Note interne */}
+                {/* Note interne — Admin/Manager seulement */}
                 {canWriteAdmin && (
                   <div>
                     <label className="mb-1.5 flex items-center gap-1.5 text-sm font-medium">
@@ -970,7 +970,7 @@ export default function Commandes() {
                   </div>
                 )}
 
-                {canWriteAdmin && (commentaireClient !== (showDetail.commentaire_client || '') || noteInterne !== (showDetail.note_interne || '')) && (
+                {canChangeStatut && (commentaireClient !== (showDetail.commentaire_client || '') || noteInterne !== (showDetail.note_interne || '')) && (
                   <Button variant="outline" className="w-full gap-1.5 text-sm" onClick={() => handleSaveComments(showDetail)}>
                     💾 Enregistrer les commentaires
                   </Button>
