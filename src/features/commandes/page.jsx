@@ -50,6 +50,7 @@ import {
   notifyCommandeLivree,
   notifyFactureDisponible,
 } from '@/services/notifications';
+import { syncClientFromCommande } from '@/services/sync-clients';
 
 // ── Statuts enrichis BLOC 5 ──
 const STATUTS = [
@@ -264,6 +265,13 @@ export default function Commandes() {
       notifyNouvelleCommande(data.client_nom || 'Client');
       toast.success('Commande créée');
     }
+    // Sync client auto
+    syncClientFromCommande({
+      client_id: data.client_id,
+      client_nom: data.client_nom,
+      client_tel: data.client_tel,
+      source: 'commande_admin',
+    }).catch(() => {});
     setShowForm(false);
     load();
   };

@@ -11,6 +11,7 @@ import {
 import { Calculator, Send, Plus, Trash2, Info, Package } from 'lucide-react';
 import { toast } from 'sonner';
 import { createNotification } from '@/services/notifications';
+import { syncClientFromCommande } from '@/services/sync-clients';
 
 function fmt(n) { return new Intl.NumberFormat('fr-FR').format(Math.round(n || 0)); }
 
@@ -129,6 +130,13 @@ export default function ClientDevis() {
         { type: 'devis' }
       );
 
+      // Sync client auto
+      syncClientFromCommande({
+        client_id: user?.id,
+        client_nom: clientNom,
+        client_email: user?.email || '',
+        source: 'devis_client',
+      }).catch(() => {});
       toast.success('Demande de devis envoyee ! Notre equipe vous repondra rapidement.');
       setLignes([]);
       setNotes('');

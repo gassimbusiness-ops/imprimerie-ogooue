@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { toast } from 'sonner';
+import { syncClientFromCommande } from '@/services/sync-clients';
 
 function fmt(n) { return new Intl.NumberFormat('fr-FR').format(Math.round(n || 0)); }
 
@@ -141,6 +142,14 @@ export default function ClientCatalogue() {
       destinataire: 'admin',
       lu: false,
     });
+    // Sync client auto
+    syncClientFromCommande({
+      client_id: user?.id,
+      client_nom: clientNom,
+      client_email: user?.email || '',
+      client_tel: user?.telephone || '',
+      source: 'portail_client',
+    }).catch(() => {});
     toast.success('✅ Commande envoyée ! Nous la traitons dans les plus brefs délais.');
     setPanier([]);
     setShowPanier(false);
