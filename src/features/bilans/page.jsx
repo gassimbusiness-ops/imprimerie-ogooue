@@ -27,15 +27,18 @@ export default function Bilans() {
   const [mois, setMois] = useState(() => new Date().toISOString().slice(0, 7));
 
   useEffect(() => {
-    Promise.all([db.rapports.list(), db.rapportLignes.list()]).then(([r, l]) => {
-      const enriched = r.map((rap) => ({
-        ...rap,
-        lignes: l.filter((li) => li.rapport_id === rap.id),
-      }));
-      setRapports(enriched);
+    db.rapports.list().then((r) => {
+      setRapports(r);
       setLoading(false);
     });
   }, []);
+
+  const CAT_LABELS = {
+    copies: 'Copies', marchandises: 'Marchandises', scan: 'Scan',
+    tirage_saisies: 'Tirage & Saisies', badges_plastification: 'Badges & Plastif.',
+    demi_photos: 'Demi-Photos', maintenance: 'Maintenance', imprimerie: 'Imprimerie',
+  };
+  const catKeys = Object.keys(CAT_LABELS);
 
   const data = useMemo(() => {
     let filtered = rapports;
@@ -43,25 +46,39 @@ export default function Bilans() {
       filtered = rapports.filter((r) => (r.date || '').startsWith(mois));
     } else if (periode === 'annee') {
       filtered = rapports.filter((r) => (r.date || '').startsWith(mois.slice(0, 4)));
+    } else if (periode === 'semaine') {
+      const now = new Date();
+      const weekStart = new Date(now);
+      weekStart.setDate(now.getDate() - now.getDay() + 1);
+      const ws = weekStart.toISOString().slice(0, 10);
+      filtered = rapports.filter((r) => (r.date || '') >= ws);
     }
 
-    // Totals
+    // Totals — même logique que statistiques
     let totalCA = 0; let totalDepenses = 0;
     const parService = {};
     const parJour = {};
 
     filtered.forEach((r) => {
-      const recettes = r.lignes.reduce((s, li) => s + (li.recettes || 0), 0);
-      const depenses = r.lignes.reduce((s, li) => s + (li.depenses || 0), 0);
+      const cats = r.categories || {};
+      const recettes = catKeys.reduce((s, k) => s + (cats[k] || 0), 0);
+      const depenses = (r.depenses || []).reduce((s, d) => s + (d.montant || 0), 0);
       totalCA += recettes;
       totalDepenses += depenses;
 
-      // By service
-      r.lignes.forEach((li) => {
-        const svc = li.service || 'Autre';
-        if (!parService[svc]) parService[svc] = { recettes: 0, depenses: 0 };
-        parService[svc].recettes += li.recettes || 0;
-        parService[svc].depenses += li.depenses || 0;
+      // By service (catégorie)
+      catKeys.forEach((k) => {
+        if (cats[k]) {
+          const label = CAT_LABELS[k] || k;
+          if (!parService[label]) parService[label] = { recettes: 0, depenses: 0 };
+          parService[label].recettes += cats[k] || 0;
+        }
+      });
+      // Répartir les dépenses proportionnellement
+      (r.depenses || []).forEach((d) => {
+        const label = d.categorie || d.libelle || 'Charges';
+        if (!parService[label]) parService[label] = { recettes: 0, depenses: 0 };
+        parService[label].depenses += d.montant || 0;
       });
 
       // By day
