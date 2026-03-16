@@ -106,7 +106,9 @@ export default function Gouvernance() {
   const [showApportForm, setShowApportForm] = useState(false);
   const [showRemboursementForm, setShowRemboursementForm] = useState(false);
   const [showModifModal, setShowModifModal] = useState(false);
+  const [showAddInvestisseur, setShowAddInvestisseur] = useState(false);
   const [selectedInvestisseur, setSelectedInvestisseur] = useState(null);
+  const [newInvForm, setNewInvForm] = useState({ nom: '', prenom: '', montant: '', role: 'associe', notes: '' });
   const [apportForm, setApportForm] = useState({ associe: 'oumar', type: 'apport_capital', montant: '', description: '', date: new Date().toISOString().slice(0, 10) });
   const [rembForm, setRembForm] = useState({ montant: '', date: new Date().toISOString().slice(0, 10), description: '' });
   const [modifForm, setModifForm] = useState({
@@ -295,6 +297,34 @@ export default function Gouvernance() {
     load();
   };
 
+  // ─── Ajouter un nouvel investisseur ───
+  const handleAddInvestisseur = async () => {
+    if (!newInvForm.nom.trim()) { toast.error('Nom requis'); return; }
+    if (!newInvForm.montant || Number(newInvForm.montant) <= 0) { toast.error('Montant requis'); return; }
+    const montant = Number(newInvForm.montant);
+    const inv = await db.investisseurs.create({
+      nom: newInvForm.nom.trim(),
+      prenom: newInvForm.prenom.trim(),
+      entreprise: 'Imprimerie Ogooué',
+      montantInitial: montant,
+      montantActuel: montant,
+      devise: 'FCFA',
+      dateEntree: new Date().toISOString().slice(0, 10),
+      statut: 'actif',
+      notes: newInvForm.notes,
+      role: newInvForm.role,
+    });
+    await logAction('create', 'gouvernance', {
+      entityId: inv.id,
+      entityLabel: newInvForm.nom,
+      details: `Nouvel investisseur: ${newInvForm.nom} — ${fmt(montant)} F (${newInvForm.role})`,
+    });
+    toast.success('Investisseur ajouté');
+    setShowAddInvestisseur(false);
+    setNewInvForm({ nom: '', prenom: '', montant: '', role: 'associe', notes: '' });
+    load();
+  };
+
   // ─── Filtrage historique ───
   const filteredModifications = useMemo(() => {
     let mods = [...modifications].sort((a, b) => (b.dateHeure || b.created_at || '').localeCompare(a.dateHeure || a.created_at || ''));
@@ -432,10 +462,17 @@ export default function Gouvernance() {
           {/* Investisseurs — Cartes avec bouton Modifier */}
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="flex items-center gap-2 text-base">
-                <Users className="h-4 w-4 text-primary" />
-                Investisseurs
-              </CardTitle>
+              <div className="flex items-center justify-between">
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Users className="h-4 w-4 text-primary" />
+                  Investisseurs
+                </CardTitle>
+                {isAdmin && (
+                  <Button size="sm" variant="outline" className="gap-1" onClick={() => setShowAddInvestisseur(true)}>
+                    <Plus className="h-3.5 w-3.5" /> Ajouter investisseur
+                  </Button>
+                )}
+              </div>
             </CardHeader>
             <CardContent>
               <div className="grid sm:grid-cols-2 gap-3">
@@ -1021,6 +1058,38 @@ export default function Gouvernance() {
               <Input value={rembForm.description} onChange={(e) => setRembForm({ ...rembForm, description: e.target.value })} placeholder="Ex: Versement espèces..." />
             </div>
             <Button className="w-full" onClick={handleAddRemboursement}>Valider le remboursement</Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+      {/* Ajouter Investisseur Dialog */}
+      <Dialog open={showAddInvestisseur} onOpenChange={setShowAddInvestisseur}>
+        <DialogContent className="max-w-md">
+          <DialogHeader><DialogTitle>Ajouter un Investisseur</DialogTitle></DialogHeader>
+          <div className="space-y-4 pt-2">
+            <div>
+              <label className="mb-1.5 block text-sm font-medium">Nom complet *</label>
+              <Input value={newInvForm.nom} onChange={(e) => setNewInvForm({ ...newInvForm, nom: e.target.value })} placeholder="Ex: Jean Dupont" />
+            </div>
+            <div>
+              <label className="mb-1.5 block text-sm font-medium">Prénom</label>
+              <Input value={newInvForm.prenom} onChange={(e) => setNewInvForm({ ...newInvForm, prenom: e.target.value })} placeholder="Prénom" />
+            </div>
+            <div>
+              <label className="mb-1.5 block text-sm font-medium">Montant d'investissement (FCFA) *</label>
+              <Input type="number" value={newInvForm.montant} onChange={(e) => setNewInvForm({ ...newInvForm, montant: e.target.value })} placeholder="0" min="0" />
+            </div>
+            <div>
+              <label className="mb-1.5 block text-sm font-medium">Rôle</label>
+              <select className="w-full rounded-md border px-3 py-2 text-sm" value={newInvForm.role} onChange={(e) => setNewInvForm({ ...newInvForm, role: e.target.value })}>
+                <option value="associe">Associé</option>
+                <option value="gerant">Gérant</option>
+              </select>
+            </div>
+            <div>
+              <label className="mb-1.5 block text-sm font-medium">Notes</label>
+              <Input value={newInvForm.notes} onChange={(e) => setNewInvForm({ ...newInvForm, notes: e.target.value })} placeholder="Informations complémentaires..." />
+            </div>
+            <Button className="w-full" onClick={handleAddInvestisseur}>Ajouter l'investisseur</Button>
           </div>
         </DialogContent>
       </Dialog>
