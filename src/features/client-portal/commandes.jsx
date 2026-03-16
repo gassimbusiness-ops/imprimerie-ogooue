@@ -4,10 +4,13 @@ import { useAuth } from '@/services/auth';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Package, Clock, CheckCircle, Truck, Printer, XCircle, ShoppingBag, CreditCard, Download, FileText } from 'lucide-react';
+import { Input } from '@/components/ui/input';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Package, Clock, CheckCircle, Truck, Printer, XCircle, CreditCard, Download, Smartphone } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { notifyNouvelleCommande } from '@/services/notifications';
 import { exportDocument } from '@/services/export-pdf';
+import { initierPaiement } from '@/services/mobile-money';
 import { toast } from 'sonner';
 
 function fmt(n) { return new Intl.NumberFormat('fr-FR').format(Math.round(n || 0)); }
@@ -16,7 +19,8 @@ const STATUTS_COMMANDE = {
   en_attente_validation: { label: '⏳ Commande envoyée — En attente de validation', shortLabel: 'Envoyée', color: 'bg-amber-100 text-amber-700', icon: Clock, step: 0 },
   en_attente: { label: '⏳ Commande envoyée — En attente', shortLabel: 'En attente', color: 'bg-amber-100 text-amber-700', icon: Clock, step: 0 },
   nouveau: { label: '⏳ Commande envoyée — En attente', shortLabel: 'En attente', color: 'bg-amber-100 text-amber-700', icon: Clock, step: 0 },
-  validee_attente_paiement: { label: '✅ Commande validée — En attente de paiement', shortLabel: 'Validée', color: 'bg-emerald-100 text-emerald-700', icon: CheckCircle, step: 1 },
+  validee_attente_paiement: { label: '✅ Commande validée — En attente de paiement', shortLabel: 'A payer', color: 'bg-emerald-100 text-emerald-700', icon: CheckCircle, step: 1 },
+  paiement_initie: { label: '💳 Paiement Mobile Money initié — En attente de confirmation', shortLabel: 'Paiement initié', color: 'bg-yellow-100 text-yellow-700', icon: Smartphone, step: 1 },
   en_production: { label: '🖨️ En cours de production', shortLabel: 'En production', color: 'bg-blue-100 text-blue-700', icon: Printer, step: 2 },
   en_cours: { label: '🖨️ En cours de production', shortLabel: 'En production', color: 'bg-blue-100 text-blue-700', icon: Printer, step: 2 },
   prete: { label: '📦 Prête à récupérer', shortLabel: 'Prête', color: 'bg-violet-100 text-violet-700', icon: Package, step: 3 },
@@ -75,6 +79,9 @@ export default function ClientCommandes() {
   const [commandes, setCommandes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [notifications, setNotifications] = useState([]);
+  const [showPaiement, setShowPaiement] = useState(null); // commande to pay
+  const [operateur, setOperateur] = useState('');
+  const [telephone, setTelephone] = useState('');
 
   const loadData = async () => {
     const [all, notifs] = await Promise.all([db.commandes.list(), db.notifications_app.list()]);
@@ -93,24 +100,39 @@ export default function ClientCommandes() {
 
   useEffect(() => { loadData(); const interval = setInterval(loadData, 30000); return () => clearInterval(interval); }, [user]);
 
-  // ── Bouton Payer : client confirme le paiement → passe en production ──
-  const handlePayer = async (cmd) => {
-    if (!confirm(`Confirmer le paiement de ${fmt(cmd.montant_total || cmd.total)} F pour la commande ${cmd.numero} ?`)) return;
+  // ── Ouvrir modal paiement Mobile Money ──
+  const openPaiement = (cmd) => {
+    setShowPaiement(cmd);
+    setOperateur('');
+    setTelephone('');
+  };
+
+  // ── Initier paiement Mobile Money → statut paiement_initie ──
+  const handleInitierPaiement = async () => {
+    if (!operateur || !telephone) return;
+    const cmd = showPaiement;
     try {
+      const montant = cmd.montant_total || cmd.total || 0;
+      const result = await initierPaiement({ operateur, montant, telephone, commandeId: cmd.id });
+
       const auteur = `${user?.prenom || ''} ${user?.nom || ''}`.trim();
       const historique = [...(cmd.historique_statuts || []), {
-        statut: 'en_production',
+        statut: 'paiement_initie',
         date: new Date().toISOString(),
         auteur: auteur || 'Client',
       }];
       await db.commandes.update(cmd.id, {
-        statut: 'en_production',
+        statut: 'paiement_initie',
         historique_statuts: historique,
-        date_paiement: new Date().toISOString(),
+        operateur_paiement: operateur === 'airtel' ? 'Airtel Money' : 'Moov Money',
+        telephone_paiement: telephone,
+        reference_paiement: result.reference,
+        date_paiement_initie: new Date().toISOString(),
       });
       // Notifier le staff
-      notifyNouvelleCommande(`${cmd.client_nom} — Paiement confirmé pour ${cmd.numero}`);
-      toast.success('Paiement confirmé ! Votre commande est en production.');
+      notifyNouvelleCommande(`Paiement ${operateur === 'airtel' ? 'Airtel Money' : 'Moov Money'} initie — ${cmd.client_nom} — ${fmt(montant)} F — ${cmd.numero}`);
+      toast.success('Paiement initie ! Notre equipe va confirmer la reception.');
+      setShowPaiement(null);
       loadData();
     } catch (err) {
       console.error('Erreur paiement:', err);
@@ -226,13 +248,24 @@ export default function ClientCommandes() {
                     <div className="mt-3">
                       <Button
                         className="w-full gap-2 bg-emerald-600 hover:bg-emerald-700 text-base py-6"
-                        onClick={() => handlePayer(cmd)}
+                        onClick={() => openPaiement(cmd)}
                       >
-                        <CreditCard className="h-5 w-5" />
-                        💳 Payer ma commande — {fmt(cmd.montant_total || cmd.total)} F
+                        <Smartphone className="h-5 w-5" />
+                        Payer par Mobile Money — {fmt(cmd.montant_total || cmd.total)} F
                       </Button>
                       <p className="text-[10px] text-muted-foreground text-center mt-1.5">
-                        Paiement en espèces, Mobile Money ou virement
+                        Airtel Money ou Moov Money
+                      </p>
+                    </div>
+                  )}
+
+                  {/* ── Statut paiement initie ── */}
+                  {cmd.statut === 'paiement_initie' && (
+                    <div className="mt-3 rounded-lg bg-yellow-50 border border-yellow-300 p-3">
+                      <p className="text-sm font-semibold text-yellow-800">Paiement {cmd.operateur_paiement} initie</p>
+                      <p className="text-xs text-yellow-700 mt-1">
+                        Notre equipe va confirmer la reception de votre paiement.
+                        Votre commande passera automatiquement en production.
                       </p>
                     </div>
                   )}
@@ -257,6 +290,76 @@ export default function ClientCommandes() {
           })}
         </div>
       )}
+
+      {/* ═══ Modal Paiement Mobile Money ═══ */}
+      <Dialog open={!!showPaiement} onOpenChange={() => setShowPaiement(null)}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Smartphone className="h-5 w-5 text-primary" />
+              Paiement Mobile Money
+            </DialogTitle>
+          </DialogHeader>
+          {showPaiement && (
+            <div className="space-y-4 pt-2">
+              <div className="rounded-lg bg-muted/50 p-3 text-center">
+                <p className="text-xs text-muted-foreground">Montant a payer</p>
+                <p className="text-2xl font-bold text-primary">{fmt(showPaiement.montant_total || showPaiement.total)} F</p>
+                <p className="text-xs text-muted-foreground mt-1">Commande {showPaiement.numero}</p>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium mb-2">Choisir l&apos;operateur</label>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    onClick={() => setOperateur('airtel')}
+                    className={`flex flex-col items-center gap-2 rounded-xl border-2 p-4 transition-all ${
+                      operateur === 'airtel' ? 'border-red-500 bg-red-50 ring-2 ring-red-200' : 'border-muted hover:border-red-300'
+                    }`}
+                  >
+                    <span className="text-2xl">📱</span>
+                    <span className="text-sm font-semibold">Airtel Money</span>
+                  </button>
+                  <button
+                    onClick={() => setOperateur('moov')}
+                    className={`flex flex-col items-center gap-2 rounded-xl border-2 p-4 transition-all ${
+                      operateur === 'moov' ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-200' : 'border-muted hover:border-blue-300'
+                    }`}
+                  >
+                    <span className="text-2xl">📱</span>
+                    <span className="text-sm font-semibold">Moov Money</span>
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium mb-1.5">Votre numero de telephone</label>
+                <Input
+                  type="tel"
+                  placeholder="Ex: 060 XX XX XX"
+                  value={telephone}
+                  onChange={(e) => setTelephone(e.target.value)}
+                />
+              </div>
+
+              <div className="rounded-lg bg-amber-50 border border-amber-200 p-3">
+                <p className="text-xs text-amber-700">
+                  Votre commande passera en production apres confirmation de reception du paiement par notre equipe.
+                </p>
+              </div>
+
+              <Button
+                className="w-full gap-2"
+                onClick={handleInitierPaiement}
+                disabled={!operateur || !telephone || telephone.length < 8}
+              >
+                <CreditCard className="h-4 w-4" />
+                Confirmer le paiement
+              </Button>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

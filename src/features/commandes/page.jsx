@@ -58,6 +58,7 @@ import { syncStockFromCommande } from '@/services/sync-stock-commande';
 const STATUTS = [
   { value: 'en_attente_validation', label: 'En attente de validation', color: 'bg-amber-100 text-amber-700', icon: Clock },
   { value: 'validee_attente_paiement', label: 'Validée — Attente paiement', color: 'bg-emerald-100 text-emerald-700', icon: CreditCard },
+  { value: 'paiement_initie', label: 'Paiement Mobile Money initié', color: 'bg-yellow-100 text-yellow-700', icon: CreditCard },
   { value: 'en_production', label: 'En production', color: 'bg-blue-100 text-blue-700', icon: Printer },
   { value: 'prete', label: 'Prête', color: 'bg-violet-100 text-violet-700', icon: Package },
   { value: 'livree', label: 'Livrée', color: 'bg-green-100 text-green-800', icon: Truck },
@@ -87,10 +88,11 @@ function getStatut(val) {
   return STATUTS.find((s) => s.value === normalized) || STATUTS[0];
 }
 
-// Flow: en_attente_validation → validee_attente_paiement → en_production → prete → livree
+// Flow: en_attente_validation → validee_attente_paiement → [paiement_initie] → en_production → prete → livree
 const NEXT_STATUT = {
   en_attente_validation: 'validee_attente_paiement',
   validee_attente_paiement: 'en_production',
+  paiement_initie: 'en_production',
   en_production: 'prete',
   prete: 'livree',
   // Legacy support
@@ -908,8 +910,38 @@ export default function Commandes() {
                   </div>
                 )}
 
-                {/* Action buttons — Admin/Manager: tout, Employé: en_attente→production + production→prête */}
-                {canChangeStatut && !isTerminal && (
+                {/* ── Paiement Mobile Money initié — confirmation admin/employé ── */}
+                {normalized === 'paiement_initie' && canChangeStatut && (
+                  <div className="rounded-lg bg-yellow-50 border border-yellow-300 p-3 space-y-2">
+                    <p className="text-sm font-semibold text-yellow-800">
+                      Paiement {showDetail.operateur_paiement || 'Mobile Money'} initie
+                    </p>
+                    <p className="text-xs text-yellow-700">
+                      Numero : {showDetail.telephone_paiement || '—'} | Montant : {fmt(showDetail.montant_total || showDetail.total)} F
+                      {showDetail.reference_paiement && <> | Ref : {showDetail.reference_paiement}</>}
+                    </p>
+                    <div className="flex gap-2 pt-1">
+                      <Button
+                        className="flex-1 gap-1.5 bg-emerald-600 hover:bg-emerald-700"
+                        onClick={() => handleStatutChange(showDetail, 'en_production')}
+                      >
+                        <CheckCircle2 className="h-4 w-4" />
+                        Paiement recu — En production
+                      </Button>
+                      <Button
+                        variant="destructive"
+                        className="gap-1.5"
+                        onClick={() => handleStatutChange(showDetail, 'validee_attente_paiement')}
+                      >
+                        <XCircle className="h-4 w-4" />
+                        Non recu
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Action buttons — Admin/Manager: tout, Employe: transitions specifiques */}
+                {canChangeStatut && !isTerminal && normalized !== 'paiement_initie' && (
                   <div className="flex gap-2 pt-2 border-t">
                     {/* Admin/Manager : Valider */}
                     {!isEmploye && normalized === 'en_attente_validation' && (
@@ -918,25 +950,25 @@ export default function Commandes() {
                         Valider la commande
                       </Button>
                     )}
-                    {/* Admin/Manager : toutes transitions sauf validation */}
+                    {/* Admin/Manager : toutes transitions sauf validation et paiement_initie */}
                     {!isEmploye && normalized !== 'en_attente_validation' && NEXT_STATUT[normalized] && (
                       <Button className="flex-1 gap-2" onClick={() => handleStatutChange(showDetail, NEXT_STATUT[normalized])}>
                         <ArrowRight className="h-4 w-4" />
-                        Passer à "{getStatut(NEXT_STATUT[normalized]).label}"
+                        Passer a &quot;{getStatut(NEXT_STATUT[normalized]).label}&quot;
                       </Button>
                     )}
-                    {/* Employé : validee_attente_paiement → en_production */}
+                    {/* Employe : validee_attente_paiement → en_production */}
                     {isEmploye && normalized === 'validee_attente_paiement' && (
                       <Button className="flex-1 gap-2 bg-blue-600 hover:bg-blue-700" onClick={() => handleStatutChange(showDetail, 'en_production')}>
                         <Printer className="h-4 w-4" />
                         Mettre en production
                       </Button>
                     )}
-                    {/* Employé : en_production → prete */}
+                    {/* Employe : en_production → prete */}
                     {isEmploye && normalized === 'en_production' && (
                       <Button className="flex-1 gap-2" onClick={() => handleStatutChange(showDetail, 'prete')}>
                         <ArrowRight className="h-4 w-4" />
-                        Marquer "Prête à récupérer"
+                        Marquer &quot;Prete a recuperer&quot;
                       </Button>
                     )}
                     {!isEmploye && (
