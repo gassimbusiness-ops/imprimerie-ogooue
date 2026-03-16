@@ -67,7 +67,12 @@ export default function Employes() {
 
   const load = async () => {
     const data = await db.employes.list();
-    setEmployes(data);
+    // Filtrer uniquement les vrais employes (jamais client ou associe)
+    const staff = data.filter((e) => {
+      const role = e.role || 'employe';
+      return ['admin', 'manager', 'employe'].includes(role);
+    });
+    setEmployes(staff);
     setLoading(false);
   };
 
