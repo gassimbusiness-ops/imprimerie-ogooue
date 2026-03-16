@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { db } from '@/services/db';
 import { useAuth } from '@/services/auth';
 import { logAction } from '@/services/audit';
+import { notifyRapportSoumis, notifyDemandeModification } from '@/services/notifications';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent } from '@/components/ui/card';
@@ -130,6 +131,9 @@ export default function Rapports() {
         entityId: created.id, entityLabel: `Rapport ${data.date}`,
         details: `Nouveau rapport: ${data.date} par ${data.operateur_nom}`,
       });
+      if (data.statut === 'soumis') {
+        notifyRapportSoumis(data.operateur_nom, data.date);
+      }
       toast.success('Rapport créé');
     }
     setShowForm(false); setEditing(null); load();
@@ -180,7 +184,8 @@ export default function Rapports() {
       details: `Demande de modification: ${modifMotif}`,
       metadata: { motif: modifMotif, demandeur: `${user.prenom} ${user.nom}` },
     });
-    toast.success('Demande de modification envoyée à l\'administrateur');
+    notifyDemandeModification(`${user.prenom} ${user.nom}`);
+    toast.success('Demande de modification envoyee a l\'administrateur');
     setShowModifRequest(null); setModifMotif('');
   };
 

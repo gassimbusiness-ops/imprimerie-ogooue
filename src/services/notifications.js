@@ -40,6 +40,21 @@ const NOTIF_TYPES = {
     label: 'Demande de modification',
     link: '/rapports',
   },
+  stock_alerte: {
+    icon: '⚠️',
+    label: 'Alerte stock',
+    link: '/stocks',
+  },
+  rapport_soumis: {
+    icon: '📊',
+    label: 'Rapport soumis',
+    link: '/rapports',
+  },
+  facture_disponible: {
+    icon: '🧾',
+    label: 'Facture disponible',
+    link: '/client/factures',
+  },
 };
 
 /**
@@ -180,6 +195,36 @@ export function notifyDemandeModification(operateurNom) {
     `✏️ Demande de modification de rapport par ${operateurNom}`,
     'admin',
     { type: 'rapport' }
+  );
+}
+
+/** 8. Stock sous seuil minimum → Admin */
+export function notifyStockAlerte(articleNom, quantite, seuil) {
+  return createNotification(
+    'stock_alerte',
+    `⚠️ Stock bas : ${articleNom} (${quantite} restant, seuil: ${seuil})`,
+    'admin',
+    { type: 'stock' }
+  );
+}
+
+/** 9. Nouveau rapport journalier soumis → Admin */
+export function notifyRapportSoumis(operateurNom, date) {
+  return createNotification(
+    'rapport_soumis',
+    `📊 Rapport du ${date} soumis par ${operateurNom}`,
+    'admin',
+    { type: 'rapport' }
+  );
+}
+
+/** 10. Facture disponible → Client */
+export function notifyFactureDisponible(clientId, numero) {
+  return createNotification(
+    'facture_disponible',
+    `🧾 Votre facture ${numero} est disponible`,
+    clientId,
+    { type: 'facture' }
   );
 }
 

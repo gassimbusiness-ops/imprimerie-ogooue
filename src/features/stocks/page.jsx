@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { db } from '@/services/db';
 import { useAuth } from '@/services/auth';
 import { logAction } from '@/services/audit';
+import { notifyStockAlerte } from '@/services/notifications';
 import { exportInventairePDF, exportCSV } from '@/services/export-pdf';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -386,6 +387,12 @@ export default function Stocks() {
       entityId: mouvementItem.id,
       entityLabel: `${mouvementItem.nom} (${mvtForm.type === 'entree' ? '+' : '-'}${qty})`,
     });
+
+    // Alerte stock bas
+    const minStock = mouvementItem.quantite_minimum ?? mouvementItem.stock_min ?? 0;
+    if (newStock <= minStock && newStock >= 0) {
+      notifyStockAlerte(mouvementItem.nom, newStock, minStock);
+    }
 
     toast.success(`${mvtForm.type === 'entree' ? 'Entrée' : 'Sortie'} de ${qty} ${mouvementItem.nom}`);
     setShowMouvement(false);

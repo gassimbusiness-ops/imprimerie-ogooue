@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { db, getSettings } from '@/services/db';
 import { useAuth } from '@/services/auth';
+import { notifyFactureDisponible } from '@/services/notifications';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -183,6 +184,9 @@ export default function DevisFactures() {
 
     const collection = form.type === 'devis' ? db.devis : db.factures;
     await collection.create(data);
+    if (form.type === 'facture' && form.client_id) {
+      notifyFactureDisponible(form.client_id, form.numero);
+    }
     toast.success(`${TYPES[form.type].label} créé`);
     setShowForm(false);
     load();
@@ -214,6 +218,9 @@ export default function DevisFactures() {
       devis_ref: devis.numero,
     });
     await db.devis.update(devis.id, { statut: 'accepte' });
+    if (devis.client_id) {
+      notifyFactureDisponible(devis.client_id, num);
+    }
     toast.success(`Facture ${num} créée à partir du devis`);
     setShowDetail(null);
     load();
