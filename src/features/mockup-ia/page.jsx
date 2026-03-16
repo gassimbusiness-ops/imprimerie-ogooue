@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback } from 'react';
 import { useAuth } from '@/services/auth';
-import { askAI } from '@/services/ai';
+import { supabase } from '@/services/supabase';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -8,45 +8,18 @@ import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
   Paintbrush, Upload, Sparkles, Loader2, Download, Send,
-  Image, ChevronDown, FileText, Eye, Palette, CheckCircle2,
+  Image, FileText, Eye, Palette, CheckCircle2,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import jsPDF from 'jspdf';
 
 // ─── Product types by category ───
 const PRODUCT_TYPES = [
-  {
-    category: 'Textile',
-    items: ['T-Shirt', 'Polo', 'Casquette', 'Tote Bag', 'Tablier', 'Sac en tissu'],
-  },
-  {
-    category: 'Bureau & Papeterie',
-    items: ['Carnet', 'Stylo', 'Bloc-notes', 'Calendrier', 'Chemise a rabats', 'Enveloppe', 'Cachet'],
-  },
-  {
-    category: 'Communication',
-    items: ['Flyer', 'Carte de visite', 'Badge', "Billet d'invitation"],
-  },
-  {
-    category: 'Signalisation',
-    items: ['Banderole', 'Panneau publicitaire', 'Kakemono', 'Enseigne'],
-  },
-  {
-    category: 'Objets publicitaires',
-    items: ['Mug', 'Bouteille de table', 'Porte-cle', 'Etui smartphone'],
-  },
-  {
-    category: 'Restauration',
-    items: ['Menu de restaurant'],
-  },
-  {
-    category: 'Tenues de travail & EPI',
-    items: ['Combinaison', 'Gilet', 'Casque de securite'],
-  },
-  {
-    category: 'Pack PME complet',
-    items: ['Pack PME (Gilet, Carnet, Stylo, Polo, Chemise, T-shirt, Cachet, Carnet)'],
-  },
+  { category: 'Textile', items: ['T-Shirt', 'Polo', 'Casquette', 'Tote Bag', 'Tablier', 'Sac en tissu'] },
+  { category: 'Bureau & Papeterie', items: ['Carnet', 'Stylo', 'Calendrier', 'Enveloppe', 'Cachet'] },
+  { category: 'Communication', items: ['Flyer', 'Carte de visite', 'Badge', "Billet d'invitation"] },
+  { category: 'Signalisation', items: ['Banderole', 'Panneau publicitaire', 'Kakemono', 'Enseigne'] },
+  { category: 'Objets publicitaires', items: ['Mug', 'Bouteille de table', 'Porte-cle'] },
+  { category: 'Tenues de travail', items: ['Combinaison', 'Gilet'] },
 ];
 
 // ─── Colors ───
@@ -70,21 +43,17 @@ export default function MockupIA() {
   const { user } = useAuth();
 
   // Form state
-  const [designFile, setDesignFile] = useState(null);
-  const [designPreview, setDesignPreview] = useState(null);
+  const [logoFile, setLogoFile] = useState(null);
+  const [logoPreview, setLogoPreview] = useState(null);
   const [productType, setProductType] = useState('');
   const [selectedColor, setSelectedColor] = useState('white');
-  const [designDescription, setDesignDescription] = useState('');
   const [clientName, setClientName] = useState('');
 
   // Generation state
   const [generating, setGenerating] = useState(false);
   const [generated, setGenerated] = useState(false);
-  const [mockupViews, setMockupViews] = useState([]); // [{url, view}, ...]
-  const [genErrors, setGenErrors] = useState([]);
-
-  // AI assistant
-  const [aiLoading, setAiLoading] = useState(false);
+  const [mockupViews, setMockupViews] = useState([]);
+  const [genError, setGenError] = useState(null);
 
   // Send to client modal
   const [showSendModal, setShowSendModal] = useState(false);
@@ -103,9 +72,9 @@ export default function MockupIA() {
       toast.error('Fichier trop volumineux (max 10 Mo)');
       return;
     }
-    setDesignFile(file);
+    setLogoFile(file);
     const reader = new FileReader();
-    reader.onload = (ev) => setDesignPreview(ev.target.result);
+    reader.onload = (ev) => setLogoPreview(ev.target.result);
     reader.readAsDataURL(file);
   };
 
@@ -118,40 +87,42 @@ export default function MockupIA() {
     }
   }, []);
 
-  // ─── AI suggestions ───
-  const handleAISuggestion = async () => {
-    if (!productType) { toast.error('Choisissez d\'abord un type de produit'); return; }
-    setAiLoading(true);
-    try {
-      const colorLabel = COLORS.find((c) => c.value === selectedColor)?.label || selectedColor;
-      const suggestion = await askAI(
-        `Tu es expert en creation de mockups pour une imprimerie au Gabon. Reponds uniquement avec la description, sans introduction.`,
-        `Le client veut creer un mockup de type : ${productType} en ${colorLabel}. Genere une description creative et detaillee (2-3 phrases) pour optimiser le rendu DALL-E. Exemple : "Logo centre en position poitrine gauche, style corporate avec degrade subtil, rendu professionnel adapte aux entreprises gabonaises"`,
-        200,
-      );
-      setDesignDescription(suggestion);
-      toast.success('Suggestion IA appliquee');
-    } catch (err) {
-      toast.error('Erreur IA: ' + (err.message || 'Service indisponible'));
-    } finally {
-      setAiLoading(false);
-    }
-  };
-
   // ─── Generate mockups (3 views in parallel) ───
   const generateMockups = async () => {
     if (!productType) { toast.error('Choisissez un type de produit'); return; }
+    if (!logoFile) { toast.error('Uploadez un logo/maquette'); return; }
 
     setGenerating(true);
     setGenerated(false);
     setMockupViews([]);
-    setGenErrors([]);
+    setGenError(null);
 
-    const views = ['face', 'side', 'perspective'];
     const colorLabel = COLORS.find((c) => c.value === selectedColor)?.label || selectedColor;
-    const designDesc = designDescription || `${productType} with professional logo design`;
 
     try {
+      // 1. Upload logo to Supabase Storage
+      let publicUrl = null;
+      if (supabase) {
+        const fileName = `mockup-logos/${Date.now()}-${logoFile.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`;
+        const { error: uploadError } = await supabase.storage
+          .from('mockup-designs')
+          .upload(fileName, logoFile, { upsert: true });
+
+        if (uploadError) {
+          console.warn('Supabase upload failed, using base64 fallback:', uploadError.message);
+        } else {
+          const { data } = supabase.storage.from('mockup-designs').getPublicUrl(fileName);
+          publicUrl = data?.publicUrl;
+        }
+      }
+
+      // Fallback: convert to base64 data URL if storage unavailable
+      if (!publicUrl) {
+        publicUrl = logoPreview; // data:image/... base64
+      }
+
+      // 2. Generate 3 views in parallel
+      const views = ['face', 'side', 'perspective'];
       const results = await Promise.allSettled(
         views.map((view) =>
           fetch('/api/generate-mockup', {
@@ -160,12 +131,12 @@ export default function MockupIA() {
             body: JSON.stringify({
               productType,
               color: colorLabel,
-              designDescription: designDesc,
               view,
+              logoUrl: publicUrl,
             }),
           }).then((r) => r.json()).then((data) => {
             if (data.error) throw new Error(data.error);
-            return data;
+            return { ...data, view };
           })
         )
       );
@@ -181,7 +152,6 @@ export default function MockupIA() {
       });
 
       setMockupViews(successViews);
-      setGenErrors(errors);
       setGenerated(successViews.length > 0);
 
       if (successViews.length === 3) {
@@ -189,102 +159,103 @@ export default function MockupIA() {
       } else if (successViews.length > 0) {
         toast.warning(`${successViews.length}/3 mockups generes`);
       } else {
+        setGenError(errors[0]?.error || 'Echec de la generation');
         toast.error('Echec de la generation. Verifiez la cle API OpenAI.');
       }
     } catch (err) {
+      setGenError(err.message);
       toast.error('Erreur: ' + err.message);
     } finally {
       setGenerating(false);
     }
   };
 
-  // ─── Export PDF (3 pages: face, side, perspective) ───
+  // ─── Get image src (supports both base64 and URL) ───
+  const getImageSrc = (mv) => mv.imageBase64 || mv.url;
+
+  // ─── Export PDF ───
   const exportPDF = async () => {
     if (mockupViews.length === 0) return;
     toast.info('Generation du PDF en cours...');
 
     try {
+      const { default: jsPDF } = await import('jspdf');
       const doc = new jsPDF('p', 'mm', 'a4');
       const pageW = 210;
-      const pageH = 297;
       const colorLabel = COLORS.find((c) => c.value === selectedColor)?.label || selectedColor;
 
-      // Load images as base64
-      const imagePromises = mockupViews.map(async (mv) => {
-        try {
-          const resp = await fetch(mv.url);
-          const blob = await resp.blob();
-          return new Promise((resolve) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve({ view: mv.view, data: reader.result });
-            reader.readAsDataURL(blob);
-          });
-        } catch {
-          return { view: mv.view, data: null };
-        }
-      });
-
-      const images = await Promise.all(imagePromises);
-
-      // Sort by view order
+      // Sort views
       const viewOrder = ['face', 'side', 'perspective'];
-      images.sort((a, b) => viewOrder.indexOf(a.view) - viewOrder.indexOf(b.view));
+      const sorted = [...mockupViews].sort((a, b) => viewOrder.indexOf(a.view) - viewOrder.indexOf(b.view));
 
-      images.forEach((img, idx) => {
+      // Helper: load image as base64
+      const loadImg = async (mv) => {
+        if (mv.imageBase64) return mv.imageBase64;
+        if (mv.url) {
+          try {
+            const resp = await fetch(mv.url);
+            const blob = await resp.blob();
+            return new Promise((resolve) => {
+              const reader = new FileReader();
+              reader.onload = () => resolve(reader.result);
+              reader.readAsDataURL(blob);
+            });
+          } catch { return null; }
+        }
+        return null;
+      };
+
+      for (let idx = 0; idx < sorted.length; idx++) {
+        const mv = sorted[idx];
         if (idx > 0) doc.addPage();
 
-        // Header blue bar
-        doc.setFillColor(21, 101, 192);
-        doc.rect(0, 0, pageW, 22, 'F');
-        doc.setTextColor(255, 255, 255);
-        doc.setFontSize(14);
-        doc.setFont('helvetica', 'bold');
-        doc.text('Imprimerie OGOOUE', 15, 10);
-        doc.setFontSize(9);
-        doc.setFont('helvetica', 'normal');
-        doc.text('Proposition de Mockup', 15, 17);
+        if (idx === 0) {
+          // Page 1: Header bleu + infos + vue face
+          doc.setFillColor(25, 118, 210);
+          doc.rect(0, 0, pageW, 35, 'F');
+          doc.setTextColor(255, 255, 255);
+          doc.setFontSize(20);
+          doc.setFont('helvetica', 'bold');
+          doc.text('Imprimerie OGOOUE', 55, 18);
+          doc.setFontSize(11);
+          doc.setFont('helvetica', 'normal');
+          doc.text('Proposition de Mockup', 55, 27);
 
-        // Info line
-        doc.setTextColor(100, 100, 100);
-        doc.setFontSize(9);
-        const infoY = 30;
-        doc.text(`Client: ${clientName || 'Non specifie'}`, 15, infoY);
-        doc.text(`Type: ${productType}`, 80, infoY);
-        doc.text(`Couleur: ${colorLabel}`, 140, infoY);
+          doc.setTextColor(0, 0, 0);
+          doc.setFontSize(11);
+          doc.text(`Client: ${clientName || 'Non specifie'}`, 15, 50);
+          doc.text(`Type: ${productType}`, 15, 58);
+          doc.text(`Couleur: ${colorLabel}`, 15, 66);
 
-        // View title
-        doc.setTextColor(0, 0, 0);
-        doc.setFontSize(16);
-        doc.setFont('helvetica', 'bold');
-        const viewLabel = VIEW_LABELS[img.view] || img.view;
-        doc.text(viewLabel, pageW / 2, 42, { align: 'center' });
+          doc.setFontSize(14);
+          doc.setFont('helvetica', 'bold');
+          doc.text(VIEW_LABELS[mv.view] || mv.view, 15, 80);
 
-        // Image
-        if (img.data) {
-          const imgSize = 150;
-          const imgX = (pageW - imgSize) / 2;
-          doc.addImage(img.data, 'JPEG', imgX, 48, imgSize, imgSize);
+          const imgData = await loadImg(mv);
+          if (imgData) doc.addImage(imgData, 'PNG', 15, 88, 180, 150);
         } else {
-          doc.setFontSize(12);
-          doc.setTextColor(150, 150, 150);
-          doc.text('Image non disponible', pageW / 2, 120, { align: 'center' });
+          // Pages 2-3
+          doc.setFontSize(14);
+          doc.setFont('helvetica', 'bold');
+          doc.setTextColor(0, 0, 0);
+          doc.text(VIEW_LABELS[mv.view] || mv.view, 15, 20);
+
+          const imgData = await loadImg(mv);
+          if (imgData) doc.addImage(imgData, 'PNG', 15, 28, 180, 150);
         }
 
         // Footer on last page
-        if (idx === images.length - 1) {
-          const footerY = pageH - 20;
-          doc.setDrawColor(200, 200, 200);
-          doc.line(15, footerY - 5, pageW - 15, footerY - 5);
-          doc.setFontSize(7);
-          doc.setTextColor(120, 120, 120);
-          doc.text('RCCM : RG/FCV 2023A0407 | NIF : 256598U', pageW / 2, footerY, { align: 'center' });
-          doc.text('Siege social : Carrefour Fina en face de Finam Moanda - Gabon', pageW / 2, footerY + 4, { align: 'center' });
-          doc.text('Tel : 060 44 46 34 / 074 42 41 42 | Email : imprimerieogooue@gmail.com', pageW / 2, footerY + 8, { align: 'center' });
+        if (idx === sorted.length - 1) {
+          doc.setFontSize(8);
+          doc.setTextColor(100, 100, 100);
+          doc.setFont('helvetica', 'normal');
+          doc.text('RCCM : RG/FCV 2023A0407 | NIF : 256598U', 105, 260, { align: 'center' });
+          doc.text('Siege social : Carrefour Fina en face de Finam Moanda - Gabon', 105, 266, { align: 'center' });
+          doc.text('Tel : 060 44 46 34 / 074 42 41 42 | Email : imprimerieogooue@gmail.com', 105, 272, { align: 'center' });
         }
-      });
+      }
 
-      const filename = `mockup_${productType.replace(/\s+/g, '_')}_${Date.now()}.pdf`;
-      doc.save(filename);
+      doc.save(`mockup_${productType.replace(/\s+/g, '_')}_${Date.now()}.pdf`);
       toast.success('PDF telecharge');
     } catch (err) {
       console.error('PDF export error:', err);
@@ -315,7 +286,7 @@ export default function MockupIA() {
           <Paintbrush className="h-6 w-6" />
           <div>
             <h2 className="text-2xl font-bold">Mockups IA</h2>
-            <p className="text-white/70 text-sm">Generez des mockups professionnels avec DALL-E 3 HD</p>
+            <p className="text-white/70 text-sm">Generez des mockups avec votre logo via gpt-image-1</p>
           </div>
         </div>
       </div>
@@ -329,26 +300,26 @@ export default function MockupIA() {
             Configuration
           </h2>
 
-          {/* Step 1: Upload */}
-          <Step number="1" title="Importer la maquette" done={!!designFile}>
+          {/* Step 1: Upload logo */}
+          <Step number="1" title="Importer le logo / maquette" done={!!logoFile}>
             <div
               onDragOver={(e) => e.preventDefault()}
               onDrop={handleDrop}
               onClick={() => fileInputRef.current?.click()}
               className={`relative flex flex-col items-center justify-center rounded-xl border-2 border-dashed p-6 cursor-pointer transition-colors ${
-                designPreview ? 'border-emerald-300 bg-emerald-50/50' : 'border-muted-foreground/30 hover:border-primary hover:bg-primary/5'
+                logoPreview ? 'border-emerald-300 bg-emerald-50/50' : 'border-muted-foreground/30 hover:border-primary hover:bg-primary/5'
               }`}
             >
-              {designPreview ? (
+              {logoPreview ? (
                 <div className="text-center">
-                  <img src={designPreview} alt="Design" className="mx-auto h-24 w-24 object-contain rounded-lg mb-2" />
-                  <p className="text-xs text-emerald-700 font-medium">{designFile?.name}</p>
+                  <img src={logoPreview} alt="Logo" className="mx-auto h-24 w-24 object-contain rounded-lg mb-2" />
+                  <p className="text-xs text-emerald-700 font-medium">{logoFile?.name}</p>
                   <p className="text-[10px] text-muted-foreground mt-1">Cliquez pour changer</p>
                 </div>
               ) : (
                 <>
                   <Upload className="h-8 w-8 text-muted-foreground/50 mb-2" />
-                  <p className="text-sm text-muted-foreground">Glissez votre maquette ici</p>
+                  <p className="text-sm text-muted-foreground">Glissez votre logo ici</p>
                   <p className="text-[10px] text-muted-foreground">PNG, JPG ou SVG (max 10 Mo)</p>
                 </>
               )}
@@ -363,7 +334,7 @@ export default function MockupIA() {
           </Step>
 
           {/* Step 2: Product type */}
-          <Step number="2" title="Choisir le type de mockup" done={!!productType}>
+          <Step number="2" title="Type de produit" done={!!productType}>
             <select
               className="w-full rounded-lg border px-3 py-2.5 text-sm bg-background"
               value={productType}
@@ -381,7 +352,7 @@ export default function MockupIA() {
           </Step>
 
           {/* Step 3: Color */}
-          <Step number="3" title="Choisir la couleur" done={!!selectedColor}>
+          <Step number="3" title="Couleur du produit" done={!!selectedColor}>
             <div className="flex flex-wrap gap-2">
               {COLORS.map((c) => (
                 <button
@@ -413,35 +384,11 @@ export default function MockupIA() {
             />
           </div>
 
-          {/* AI Assistant */}
-          <div className="rounded-xl border p-4 bg-violet-50/50 space-y-3">
-            <label className="block text-sm font-semibold flex items-center gap-2">
-              <Sparkles className="h-4 w-4 text-violet-600" />
-              Assistant IA pour optimiser le rendu
-            </label>
-            <textarea
-              className="w-full rounded-lg border bg-background px-3 py-2 text-sm min-h-[80px] resize-none"
-              value={designDescription}
-              onChange={(e) => setDesignDescription(e.target.value)}
-              placeholder="Decrivez votre vision du mockup (style, ambiance, utilisation...)"
-            />
-            <Button
-              variant="outline"
-              size="sm"
-              className="gap-2 text-violet-700 border-violet-200 hover:bg-violet-100"
-              onClick={handleAISuggestion}
-              disabled={aiLoading || !productType}
-            >
-              {aiLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
-              Obtenir des suggestions IA
-            </Button>
-          </div>
-
           {/* Generate button */}
           <Button
             className="w-full h-12 text-base gap-2 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-700 hover:to-indigo-700"
             onClick={generateMockups}
-            disabled={generating || !productType}
+            disabled={generating || !productType || !logoFile}
           >
             {generating ? (
               <><Loader2 className="h-5 w-5 animate-spin" /> Generation en cours...</>
@@ -449,6 +396,10 @@ export default function MockupIA() {
               <><Sparkles className="h-5 w-5" /> Generer les Mockups</>
             )}
           </Button>
+
+          {!logoFile && productType && (
+            <p className="text-xs text-amber-600 text-center">Uploadez un logo pour activer la generation</p>
+          )}
         </div>
 
         {/* ══════ RIGHT COLUMN — Preview ══════ */}
@@ -479,7 +430,7 @@ export default function MockupIA() {
                 </div>
                 <p className="text-muted-foreground font-medium">Aucun mockup genere</p>
                 <p className="text-sm text-muted-foreground/70 mt-1 max-w-xs">
-                  Uploadez une maquette, choisissez le type de produit et cliquez sur "Generer les Mockups"
+                  Uploadez un logo, choisissez le type de produit et cliquez sur Generer
                 </p>
               </CardContent>
             </Card>
@@ -505,18 +456,32 @@ export default function MockupIA() {
             </Card>
           )}
 
+          {/* Error state */}
+          {genError && !generating && (
+            <Card className="border-red-200">
+              <CardContent className="p-4 text-center">
+                <p className="text-sm text-red-600 font-medium">Erreur: {genError}</p>
+                <Button size="sm" variant="outline" className="mt-2" onClick={generateMockups}>
+                  Reessayer
+                </Button>
+              </CardContent>
+            </Card>
+          )}
+
           {/* Generated views */}
           {generated && mockupViews.length > 0 && (
             <div className="space-y-4">
               {['face', 'side', 'perspective'].map((viewKey) => {
                 const mv = mockupViews.find((m) => m.view === viewKey);
                 if (!mv) return null;
+                const src = getImageSrc(mv);
                 return (
                   <Card key={viewKey} className="overflow-hidden">
                     <div className="bg-muted/50 px-4 py-2 border-b flex items-center justify-between">
                       <h3 className="text-sm font-semibold">{VIEW_LABELS[viewKey]}</h3>
                       <a
-                        href={mv.url}
+                        href={src}
+                        download={`mockup_${productType}_${viewKey}.png`}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="text-xs text-primary hover:underline flex items-center gap-1"
@@ -526,7 +491,7 @@ export default function MockupIA() {
                     </div>
                     <CardContent className="p-0">
                       <img
-                        src={mv.url}
+                        src={src}
                         alt={`Mockup ${VIEW_LABELS[viewKey]}`}
                         className="w-full h-auto"
                         loading="lazy"
@@ -536,20 +501,6 @@ export default function MockupIA() {
                 );
               })}
             </div>
-          )}
-
-          {/* Errors */}
-          {genErrors.length > 0 && (
-            <Card className="border-red-200">
-              <CardContent className="p-4 space-y-2">
-                <p className="text-sm font-semibold text-red-600">Erreurs de generation:</p>
-                {genErrors.map((e, i) => (
-                  <p key={i} className="text-xs text-red-500">
-                    {VIEW_LABELS[e.view]}: {e.error}
-                  </p>
-                ))}
-              </CardContent>
-            </Card>
           )}
         </div>
       </div>
