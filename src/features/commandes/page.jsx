@@ -454,8 +454,8 @@ export default function Commandes() {
                 });
                 await db.notifications_app.create({
                   type: 'parrainage_bonus',
-                  titre: '🎁 +200 points parrainage !',
-                  message: `${cmd.client_nom} a passé sa première commande. Vous gagnez 200 points de fidélité !`,
+                  titre: `🎁 +${BONUS_PARRAINAGE} points parrainage !`,
+                  message: `${cmd.client_nom} a passé sa première commande. Vous gagnez ${BONUS_PARRAINAGE} points de fidélité !`,
                   destinataire: 'client',
                   destinataire_id: parrain.id,
                   lu: false,
