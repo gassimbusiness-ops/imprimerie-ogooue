@@ -1,6 +1,6 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { db } from '@/services/db';
-import { askAI } from '@/services/ai';
+import { askAI, chatAI } from '@/services/ai';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -43,6 +43,8 @@ import {
   Lightbulb,
   FileDown,
   Activity,
+  MessageSquare,
+  Send,
 } from 'lucide-react';
 
 function fmt(n) {
@@ -106,6 +108,11 @@ export default function Statistiques() {
   const [showIA, setShowIA] = useState(false);
   const [iaLoading, setIaLoading] = useState(false);
   const [iaResult, setIaResult] = useState(null);
+  // CFO Chat
+  const [cfoMessages, setCfoMessages] = useState([]);
+  const [cfoInput, setCfoInput] = useState('');
+  const [cfoLoading, setCfoLoading] = useState(false);
+  const cfoEndRef = useRef(null);
 
   useEffect(() => {
     Promise.all([
@@ -227,6 +234,64 @@ export default function Statistiques() {
       });
     } finally {
       setIaLoading(false);
+    }
+  };
+
+  // Build historique 6 mois for CFO context
+  const historique6mois = useMemo(() => {
+    const sixMonthsAgo = new Date();
+    sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+    const start = sixMonthsAgo.toISOString().split('T')[0];
+    const recent = rapports.filter((r) => r.date >= start);
+    const byMonth = {};
+    for (const r of recent) {
+      const m = r.date.slice(0, 7);
+      if (!byMonth[m]) byMonth[m] = { recettes: 0, depenses: 0 };
+      byMonth[m].recettes += Object.values(r.categories || {}).reduce((a, v) => a + (v || 0), 0);
+      byMonth[m].depenses += (r.depenses || []).reduce((a, d) => a + (d.montant || 0), 0);
+    }
+    return Object.entries(byMonth).sort(([a], [b]) => a.localeCompare(b)).map(([mois, v]) => ({
+      mois, recettes: v.recettes, depenses: v.depenses, benefice: v.recettes - v.depenses,
+      marge: v.recettes > 0 ? ((v.recettes - v.depenses) / v.recettes * 100).toFixed(1) + '%' : '0%',
+    }));
+  }, [rapports]);
+
+  const handleCfoChat = async () => {
+    if (!cfoInput.trim() || !stats) return;
+    const question = cfoInput.trim();
+    setCfoInput('');
+    const newMessages = [...cfoMessages, { role: 'user', content: question }];
+    setCfoMessages(newMessages);
+    setCfoLoading(true);
+    setTimeout(() => cfoEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
+
+    const system = `Tu es le CFO IA (directeur financier virtuel) d'Imprimerie Ogooué, Moanda, Gabon.
+Tu as accès à toutes les données financières de l'imprimerie.
+
+DONNÉES ACTUELLES (période : ${PERIODS.find((p) => p.value === period)?.label || period}) :
+CA : ${fmt(stats.totalRec)} FCFA
+Dépenses : ${fmt(stats.totalDep)} FCFA
+Bénéfice net : ${fmt(stats.benefice)} FCFA
+Marge : ${stats.margePercent.toFixed(1)}%
+Moyenne / jour : ${fmt(stats.avgDaily)} FCFA
+
+DONNÉES HISTORIQUES (derniers 6 mois) :
+${JSON.stringify(historique6mois)}
+
+TOP SERVICES : ${stats.top5.map((s) => `${s.name}: ${fmt(s.value)} FCFA`).join(', ')}
+
+Réponds de façon précise, chiffrée quand possible, et donne toujours un conseil actionnable.
+Parle en français, sans markdown, de manière directe et professionnelle. Max 150 mots.`;
+
+    try {
+      const apiMessages = newMessages.map((m) => ({ role: m.role, content: m.content }));
+      const reply = await chatAI(system, apiMessages, 400);
+      setCfoMessages([...newMessages, { role: 'assistant', content: reply }]);
+    } catch {
+      setCfoMessages([...newMessages, { role: 'assistant', content: 'Erreur de connexion au service IA. Veuillez réessayer.' }]);
+    } finally {
+      setCfoLoading(false);
+      setTimeout(() => cfoEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
     }
   };
 
@@ -389,6 +454,79 @@ export default function Statistiques() {
                 </div>
               </div>
             )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* CFO IA Chat */}
+      {showIA && stats && (
+        <Card className="border-emerald-200">
+          <CardHeader className="pb-2">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <MessageSquare className="h-5 w-5 text-emerald-600" />
+              CFO IA — Posez vos questions financières
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {/* Messages */}
+            <div className="max-h-[300px] min-h-[100px] overflow-y-auto space-y-2 rounded-lg border bg-muted/20 p-3">
+              {cfoMessages.length === 0 && (
+                <div className="text-center py-6 text-sm text-muted-foreground">
+                  <MessageSquare className="mx-auto mb-2 h-8 w-8 text-emerald-300" />
+                  Posez une question au CFO IA, par exemple :
+                  <div className="mt-2 flex flex-wrap justify-center gap-1.5">
+                    {['Quel est mon meilleur mois ?', 'Ma marge est-elle saine ?', 'Puis-je investir 2M FCFA ?'].map((q) => (
+                      <button
+                        key={q}
+                        onClick={() => { setCfoInput(q); }}
+                        className="rounded-full border bg-white px-3 py-1 text-xs hover:bg-emerald-50 hover:border-emerald-300 transition-colors"
+                      >
+                        {q}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {cfoMessages.map((msg, i) => (
+                <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  <div className={`max-w-[80%] rounded-lg px-3 py-2 text-sm ${
+                    msg.role === 'user'
+                      ? 'bg-emerald-600 text-white'
+                      : 'bg-white border text-foreground'
+                  }`}>
+                    {msg.content}
+                  </div>
+                </div>
+              ))}
+              {cfoLoading && (
+                <div className="flex justify-start">
+                  <div className="flex items-center gap-2 rounded-lg bg-white border px-3 py-2 text-sm text-muted-foreground">
+                    <Loader2 className="h-3 w-3 animate-spin" /> Analyse en cours…
+                  </div>
+                </div>
+              )}
+              <div ref={cfoEndRef} />
+            </div>
+            {/* Input */}
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={cfoInput}
+                onChange={(e) => setCfoInput(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleCfoChat()}
+                placeholder="Ex: Quel est mon meilleur mois depuis l'ouverture ?"
+                className="flex-1 rounded-md border border-input bg-background px-3 py-2 text-sm focus:ring-2 focus:ring-emerald-300"
+                disabled={cfoLoading}
+              />
+              <Button
+                onClick={handleCfoChat}
+                disabled={cfoLoading || !cfoInput.trim()}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white"
+                size="icon"
+              >
+                <Send className="h-4 w-4" />
+              </Button>
+            </div>
           </CardContent>
         </Card>
       )}
