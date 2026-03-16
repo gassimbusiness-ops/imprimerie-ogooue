@@ -166,6 +166,7 @@ export const db = {
   notifications_app: new Collection('notifications_app'),
   fidelite_clients: new Collection('fidelite_clients'),
   mockups: new Collection('mockups'),
+  gouvernance_parametres: new Collection('gouvernance_parametres'),
 };
 
 // ── Settings helpers (shared across the app) ──

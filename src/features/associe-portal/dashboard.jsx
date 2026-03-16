@@ -31,44 +31,49 @@ export default function AssocieDashboard() {
 
   useEffect(() => {
     const loadData = async () => {
-      const [emp, stk, inv, cmd, prod, investisseurs, ap, dettes, remb, projets, params, s] = await Promise.all([
-        db.employes.list(),
-        db.produits_catalogue.list(),
-        db.produits.list(),
-        db.commandes.list(),
-        db.produits_catalogue.list(),
-        db.investisseurs.list(),
-        db.apports_associes.list(),
-        db.dettes_associes.list(),
-        db.remboursements_associes.list(),
-        db.projets_travaux.list(),
-        db.gouvernance_parametres.list(),
-        getSettings(),
-      ]);
-      setData({
-        employes: emp.filter((e) => e.role !== 'client'),
-        stocks: stk,
-        inventaire: inv,
-        commandes: cmd,
-        produits: prod,
-        investisseurs,
-        apports: ap,
-        dettes,
-        remboursements: remb,
-        projets,
-      });
-      // Load saved valuation params
-      const savedParams = params.find((p) => p.type === 'valuation');
-      if (savedParams) {
-        setValuationParams({
-          inventaire: savedParams.inventaire ?? DEFAULT_VALUATION.inventaire,
-          machines: savedParams.machines ?? DEFAULT_VALUATION.machines,
-          tresorerie_compte: savedParams.tresorerie_compte ?? DEFAULT_VALUATION.tresorerie_compte,
-          tresorerie_caisse: savedParams.tresorerie_caisse ?? DEFAULT_VALUATION.tresorerie_caisse,
+      try {
+        const [emp, stk, inv, cmd, prod, investisseurs, ap, dettes, remb, projets, params, s] = await Promise.all([
+          db.employes.list(),
+          db.produits_catalogue.list(),
+          db.produits.list(),
+          db.commandes.list(),
+          db.produits_catalogue.list(),
+          db.investisseurs.list(),
+          db.apports_associes.list(),
+          db.dettes_associes.list(),
+          db.remboursements_associes.list(),
+          db.projets_travaux.list(),
+          db.gouvernance_parametres?.list() ?? Promise.resolve([]),
+          getSettings(),
+        ]);
+        setData({
+          employes: (emp || []).filter((e) => e.role !== 'client'),
+          stocks: stk || [],
+          inventaire: inv || [],
+          commandes: cmd || [],
+          produits: prod || [],
+          investisseurs: investisseurs || [],
+          apports: ap || [],
+          dettes: dettes || [],
+          remboursements: remb || [],
+          projets: projets || [],
         });
+        // Load saved valuation params
+        const savedParams = (params || []).find((p) => p.type === 'valuation');
+        if (savedParams) {
+          setValuationParams({
+            inventaire: savedParams.inventaire ?? DEFAULT_VALUATION.inventaire,
+            machines: savedParams.machines ?? DEFAULT_VALUATION.machines,
+            tresorerie_compte: savedParams.tresorerie_compte ?? DEFAULT_VALUATION.tresorerie_compte,
+            tresorerie_caisse: savedParams.tresorerie_caisse ?? DEFAULT_VALUATION.tresorerie_caisse,
+          });
+        }
+        setSettings(s);
+      } catch (err) {
+        console.error('Associe dashboard load error:', err);
+      } finally {
+        setLoading(false);
       }
-      setSettings(s);
-      setLoading(false);
     };
     loadData();
   }, []);
