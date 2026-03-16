@@ -16,10 +16,11 @@ import {
 import {
   Plus, FileSpreadsheet, Calendar, Eye, Edit, Lock, Trash2,
   CheckCircle2, Send, Save, Table2, List, LockOpen, MessageSquare,
-  Download, Filter, ChevronLeft, ChevronRight, Shield, Clock,
+  Download, Filter, ChevronLeft, ChevronRight, Shield, Clock, Bot, Loader2, X,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { exportRapportsMensuels } from '@/services/export-pdf';
+import { askAI } from '@/services/ai';
 import RapportForm from './components/rapport-form';
 import RapportDetail from './components/rapport-detail';
 
@@ -238,6 +239,35 @@ export default function Rapports() {
     if (e.key === 'Tab') { e.preventDefault(); handleCellSave(); }
   }, [handleCellSave]);
 
+  // ── IA Analysis ──
+  const [iaLoading, setIaLoading] = useState(false);
+  const [iaResult, setIaResult] = useState(null);
+
+  const handleAnalyseIA = async () => {
+    const monthRapports = rapports.filter((r) => r.date?.startsWith(currentMonth));
+    if (monthRapports.length === 0) { toast.error('Aucun rapport pour ce mois'); return; }
+    setIaLoading(true);
+    setIaResult(null);
+    try {
+      const rapportsData = monthRapports.map((r) => ({
+        date: r.date,
+        recettes: totalRecettes(r),
+        depenses: totalDepenses(r),
+        solde: totalRecettes(r) - totalDepenses(r),
+        services: r.categories || {},
+      }));
+      const system = `Tu es analyste financier expert pour une PME gabonaise.`;
+      const prompt = `Analyse ces rapports journaliers de l'imprimerie Ogooue (Moanda, Gabon) pour la periode ${monthLabel}.\nDonnees : ${JSON.stringify(rapportsData)}\n\nDonne une analyse en 4 parties :\n1. Resume global (2 phrases)\n2. Points forts de la periode (liste de 3 elements)\n3. Points d'attention ou alertes (liste de 2-3 elements)\n4. Recommandations actionnables (liste de 2-3 elements)\n\nReponds en francais naturel, sans markdown avec des # ou **. Utilise des tirets (-) pour les listes.`;
+      const result = await askAI(system, prompt, 600);
+      setIaResult(result);
+      toast.success('Analyse IA terminee');
+    } catch {
+      toast.error('Erreur lors de l\'analyse IA');
+    } finally {
+      setIaLoading(false);
+    }
+  };
+
   if (loading) {
     return <div className="flex items-center justify-center py-20"><div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" /></div>;
   }
@@ -288,6 +318,10 @@ export default function Rapports() {
               }}>
                 <Download className="h-4 w-4" /> PDF
               </Button>
+              <Button size="sm" className="gap-2 bg-violet-600 hover:bg-violet-700 text-white" onClick={handleAnalyseIA} disabled={iaLoading}>
+                {iaLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Bot className="h-4 w-4" />}
+                Analyser avec IA
+              </Button>
             </div>
           </div>
 
@@ -318,6 +352,29 @@ export default function Rapports() {
             </CardContent></Card>
           </div>
         </>
+      )}
+
+      {/* IA Analysis Result */}
+      {iaResult && (
+        <Card className="border-violet-200 bg-violet-50/50">
+          <CardContent className="p-4">
+            <div className="flex items-start justify-between gap-3 mb-3">
+              <div className="flex items-center gap-2">
+                <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-violet-100">
+                  <Bot className="h-4 w-4 text-violet-600" />
+                </div>
+                <div>
+                  <h3 className="font-semibold text-sm text-violet-900">Analyse IA — {monthLabel}</h3>
+                  <p className="text-[10px] text-violet-600">Basee sur {stats.count} rapport(s)</p>
+                </div>
+              </div>
+              <button onClick={() => setIaResult(null)} className="text-violet-400 hover:text-violet-600">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="text-sm text-violet-900/80 whitespace-pre-wrap leading-relaxed">{iaResult}</div>
+          </CardContent>
+        </Card>
       )}
 
       {/* TABLEUR VIEW — édition inline */}
