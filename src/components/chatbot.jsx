@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { MessageCircle, X, Send, Loader2, Bot } from 'lucide-react';
+import ReactMarkdown from 'react-markdown';
 import { chatAI, AI_PROMPTS } from '@/services/ai';
 import { useAuth } from '@/services/auth';
 import { db } from '@/services/db';
@@ -126,12 +127,28 @@ export default function Chatbot() {
           <div className="flex-1 overflow-y-auto p-3 space-y-3">
             {messages.map((msg, idx) => (
               <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                <div className={`max-w-[85%] rounded-2xl px-3.5 py-2.5 text-sm whitespace-pre-wrap ${
+                <div className={`max-w-[85%] rounded-2xl px-3.5 py-2.5 text-sm ${
                   msg.role === 'user'
-                    ? 'bg-primary text-white rounded-br-md'
-                    : 'bg-muted text-foreground rounded-bl-md'
+                    ? 'bg-primary text-white rounded-br-md whitespace-pre-wrap'
+                    : 'bg-muted text-foreground rounded-bl-md chatbot-md'
                 }`}>
-                  {msg.content}
+                  {msg.role === 'assistant' ? (
+                    <ReactMarkdown
+                      components={{
+                        p: ({ children }) => <p className="mb-1.5 last:mb-0">{children}</p>,
+                        ul: ({ children }) => <ul className="list-disc pl-4 mb-1.5 space-y-0.5">{children}</ul>,
+                        ol: ({ children }) => <ol className="list-decimal pl-4 mb-1.5 space-y-0.5">{children}</ol>,
+                        li: ({ children }) => <li className="text-sm">{children}</li>,
+                        strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
+                        h1: ({ children }) => <p className="font-bold text-base mb-1">{children}</p>,
+                        h2: ({ children }) => <p className="font-bold text-sm mb-1">{children}</p>,
+                        h3: ({ children }) => <p className="font-semibold text-sm mb-1">{children}</p>,
+                        a: ({ href, children }) => <a href={href} className="underline text-primary" target="_blank" rel="noopener noreferrer">{children}</a>,
+                      }}
+                    >
+                      {msg.content}
+                    </ReactMarkdown>
+                  ) : msg.content}
                 </div>
               </div>
             ))}
