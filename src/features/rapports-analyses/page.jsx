@@ -190,12 +190,14 @@ export default function RapportsAnalyses() {
   const stocksData = useMemo(() => {
     const articles = produits.filter((p) => !p.masque);
     const valeurTotale = articles.reduce((s, a) => s + ((a.prix_unitaire || 0) * (a.quantite ?? a.stock ?? 0)), 0);
-    const enAlerte = articles.filter((a) => {
+    // Alertes uniquement sur les consommables (pas machines, mobilier, fournitures)
+    const consommables = articles.filter((a) => (a.type_article || 'consommable') === 'consommable');
+    const enAlerte = consommables.filter((a) => {
       const q = a.quantite ?? a.stock ?? 0;
       const min = a.quantite_minimum ?? a.stock_min ?? 0;
       return q > 0 && q <= min;
     });
-    const enRupture = articles.filter((a) => (a.quantite ?? a.stock ?? 0) <= 0);
+    const enRupture = consommables.filter((a) => (a.quantite ?? a.stock ?? 0) <= 0);
     const masques = produits.filter((p) => p.masque).length;
 
     return { articles, valeurTotale, enAlerte, enRupture, masques, total: articles.length };

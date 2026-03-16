@@ -245,13 +245,29 @@ export default function Stocks() {
       db.produits.list(),
       db.mouvements_stock.list(),
     ]);
-    // Auto-fix: seuil minimum 10 pour consommables qui ont un seuil < 10
+    // Auto-fix: type_article pour machines connues + seuil minimum 10 pour consommables
+    const machinePatterns = /imprimante|ordinateur|scanner|plastifieuse|presse|laptop|pc\b|ecran|moniteur/i;
+    const machineCategories = ['Machines & Outils', 'Machines', 'Informatique'];
     for (const item of p) {
-      const type = item.type_article || 'consommable';
+      let type = item.type_article || 'consommable';
+      let needsUpdate = false;
+      const updates = {};
+      // Auto-detect machines by name or category
+      if (type === 'consommable' && (machinePatterns.test(item.nom || '') || machineCategories.includes(item.categorie))) {
+        type = 'machine';
+        item.type_article = 'machine';
+        updates.type_article = 'machine';
+        needsUpdate = true;
+      }
+      // Seuil minimum 10 pour consommables
       const seuil = item.quantite_minimum ?? item.stock_min ?? 0;
       if (type === 'consommable' && seuil < 10) {
         item.quantite_minimum = 10;
-        db.produits.update(item.id, { quantite_minimum: 10 }).catch(() => {});
+        updates.quantite_minimum = 10;
+        needsUpdate = true;
+      }
+      if (needsUpdate) {
+        db.produits.update(item.id, updates).catch(() => {});
       }
     }
     setProduits(p);
