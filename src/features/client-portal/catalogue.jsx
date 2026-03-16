@@ -11,7 +11,7 @@ import {
 import {
   Search, ShoppingCart, Plus, Minus, Trash2, ShoppingBag, Send,
   Shirt, BookOpen, Printer, Camera, FileText, Scissors, Package, Tag,
-  Clock, DollarSign, LayoutGrid, Coffee, ChevronLeft, ChevronRight, X, ZoomIn,
+  Clock, DollarSign, LayoutGrid, Coffee, ChevronLeft, ChevronRight, X, ZoomIn, Truck, Star,
 } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { toast } from 'sonner';
@@ -82,7 +82,7 @@ export default function ClientCatalogue() {
     const matchSearch = !search || `${p.nom} ${p.description || ''} ${(p.tags || []).join(' ')}`.toLowerCase().includes(q);
     const matchCat = categorie === 'all' || p.categorie === categorie;
     return matchSearch && matchCat;
-  });
+  }).sort((a, b) => (b.vedette ? 1 : 0) - (a.vedette ? 1 : 0));
 
   const addToPanier = (produit) => {
     setPanier((prev) => {
@@ -225,17 +225,22 @@ export default function ClientCatalogue() {
                 {hasImages && p.images.length > 1 && (
                   <Badge className="absolute top-2 right-2 bg-black/40 text-white text-[9px]">{p.images.length} photos</Badge>
                 )}
+                {p.vedette && (
+                  <Badge className="absolute top-2 left-2 bg-amber-500 text-white text-[9px] gap-0.5">
+                    <Star className="h-2.5 w-2.5 fill-current" /> Vedette
+                  </Badge>
+                )}
               </div>
               <CardContent className="p-3">
                 <p className="font-semibold text-sm leading-tight line-clamp-2 min-h-[2.5rem]">{p.nom}</p>
                 <div className="flex items-center gap-1 mt-1.5">
                   <Badge variant="outline" className="text-[10px]">{p.categorie}</Badge>
-                  {p.delai_jours > 0 && (
-                    <span className="text-[10px] text-muted-foreground flex items-center gap-0.5">
-                      <Clock className="h-2.5 w-2.5" />{p.delai_jours}j
-                    </span>
-                  )}
                 </div>
+                {p.delai_jours > 0 && (
+                  <p className="text-[10px] text-muted-foreground flex items-center gap-0.5 mt-1">
+                    <Truck className="h-2.5 w-2.5" /> {p.delai_jours} jour{p.delai_jours > 1 ? 's' : ''} ouvre{p.delai_jours > 1 ? 's' : ''}
+                  </p>
+                )}
                 <div className="flex items-center justify-between mt-2.5">
                   <p className="text-base font-black text-primary">{prixRange(p)}</p>
                   <Button size="sm" className="h-8 w-8 p-0" onClick={() => addToPanier(p)}>
@@ -277,12 +282,31 @@ export default function ClientCatalogue() {
 
                 <div className="flex items-center gap-2">
                   <Badge variant="outline">{detailProduct.categorie}</Badge>
+                  {detailProduct.vedette && <Badge className="bg-amber-500 text-white text-[10px] gap-0.5"><Star className="h-2.5 w-2.5 fill-current" /> Vedette</Badge>}
                   {detailProduct.delai_jours > 0 && (
                     <span className="text-xs text-muted-foreground flex items-center gap-1">
-                      <Clock className="h-3 w-3" /> {detailProduct.delai_jours} jour{detailProduct.delai_jours > 1 ? 's' : ''}
+                      <Truck className="h-3 w-3" /> {detailProduct.delai_jours} jour{detailProduct.delai_jours > 1 ? 's' : ''} ouvré{detailProduct.delai_jours > 1 ? 's' : ''}
                     </span>
                   )}
                 </div>
+
+                {detailProduct.details_techniques && (
+                  <div className="rounded-lg bg-muted/50 p-3">
+                    <p className="text-xs font-medium mb-1">Détails techniques</p>
+                    <p className="text-sm text-muted-foreground whitespace-pre-wrap">{detailProduct.details_techniques}</p>
+                  </div>
+                )}
+
+                {detailProduct.options_personnalisables?.length > 0 && (
+                  <div>
+                    <p className="text-xs font-medium mb-1.5">Options personnalisables</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {detailProduct.options_personnalisables.map((opt, i) => (
+                        <Badge key={i} variant="secondary" className="text-[10px]">{opt}</Badge>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 {detailProduct.description && (
                   <p className="text-sm text-muted-foreground">{detailProduct.description}</p>

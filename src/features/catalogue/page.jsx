@@ -68,10 +68,11 @@ const UNITES = ['pièce', 'lot', 'page', 'mètre', 'unité'];
 
 const emptyForm = {
   nom: '', sku: '', categorie: 'Textile', description: '',
+  details_techniques: '', options_personnalisables: [],
   images: [], image_principale: 0,
   prix: [{ qte_min: 1, qte_max: null, prix: 0 }],
   unite: 'pièce', delai_jours: '', tags: [],
-  actif: true, stock_lie: null,
+  actif: true, vedette: false, stock_lie: null,
 };
 
 /* ─── Image compression ─── */
@@ -320,7 +321,7 @@ function ImageUploader({ images, onChange, maxImages = 5 }) {
 /* ══════════════════════════════════════════════
    Tags Input (form)
    ══════════════════════════════════════════════ */
-function TagsInput({ value, onChange }) {
+function TagsInput({ value, onChange, label = 'Tags', placeholder = 'Ajouter un tag...' }) {
   const [input, setInput] = useState('');
   const tags = value || [];
 
@@ -332,7 +333,7 @@ function TagsInput({ value, onChange }) {
 
   return (
     <div className="space-y-1.5">
-      <label className="block text-sm font-medium">Tags</label>
+      <label className="block text-sm font-medium">{label}</label>
       <div className="flex flex-wrap gap-1.5">
         {tags.map((t) => (
           <Badge key={t} variant="secondary" className="gap-1 text-xs cursor-pointer" onClick={() => onChange(tags.filter((x) => x !== t))}>
@@ -342,7 +343,7 @@ function TagsInput({ value, onChange }) {
       </div>
       <div className="flex gap-2">
         <Input
-          placeholder="Ajouter un tag..." value={input}
+          placeholder={placeholder} value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); add(); } }}
           className="flex-1 h-8 text-sm"
@@ -484,8 +485,11 @@ function ProductForm({ open, onClose, editItem, onSave }) {
           : [{ qte_min: 1, qte_max: null, prix: 0 }],
         unite: editItem.unite || 'pièce',
         delai_jours: editItem.delai_jours || '',
+        details_techniques: editItem.details_techniques || '',
+        options_personnalisables: editItem.options_personnalisables || [],
         tags: editItem.tags || [],
         actif: editItem.actif !== false,
+        vedette: editItem.vedette || false,
         stock_lie: editItem.stock_lie || null,
       });
     } else {
@@ -517,6 +521,8 @@ function ProductForm({ open, onClose, editItem, onSave }) {
       sku: form.sku.trim() || null,
       categorie: form.categorie,
       description: form.description.trim(),
+      details_techniques: form.details_techniques?.trim() || '',
+      options_personnalisables: form.options_personnalisables || [],
       images: form.images || [],
       image_principale: form.image_principale || 0,
       prix: cleanPrix,
@@ -524,6 +530,7 @@ function ProductForm({ open, onClose, editItem, onSave }) {
       delai_jours: Number(form.delai_jours) || 0,
       tags: form.tags || [],
       actif: form.actif,
+      vedette: form.vedette || false,
       stock_lie: form.stock_lie || null,
     };
 
@@ -605,6 +612,20 @@ function ProductForm({ open, onClose, editItem, onSave }) {
             />
           </div>
 
+          {/* Details techniques */}
+          <div>
+            <label className="mb-1.5 block text-sm font-medium">Details techniques</label>
+            <textarea
+              className="flex min-h-[60px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              value={form.details_techniques}
+              onChange={(e) => upd('details_techniques', e.target.value)}
+              placeholder="Formats, matieres, options, couleurs disponibles..."
+            />
+          </div>
+
+          {/* Options personnalisables */}
+          <TagsInput value={form.options_personnalisables} onChange={(t) => upd('options_personnalisables', t)} label="Options personnalisables" placeholder="Logo, Texte, Couleur, Format..." />
+
           {/* Images */}
           <ImageUploader images={form.images} onChange={(imgs) => upd('images', imgs)} />
 
@@ -629,17 +650,22 @@ function ProductForm({ open, onClose, editItem, onSave }) {
           {/* Tags */}
           <TagsInput value={form.tags} onChange={(t) => upd('tags', t)} />
 
-          {/* Actif toggle */}
-          <div className="flex items-center gap-3">
-            <label className="relative inline-flex items-center cursor-pointer">
-              <input
-                type="checkbox" checked={form.actif}
-                onChange={(e) => upd('actif', e.target.checked)}
-                className="sr-only peer"
-              />
-              <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:bg-primary after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all" />
-            </label>
-            <span className="text-sm">Produit actif</span>
+          {/* Toggles */}
+          <div className="flex flex-wrap items-center gap-6">
+            <div className="flex items-center gap-3">
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input type="checkbox" checked={form.actif} onChange={(e) => upd('actif', e.target.checked)} className="sr-only peer" />
+                <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:bg-primary after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all" />
+              </label>
+              <span className="text-sm">Produit actif</span>
+            </div>
+            <div className="flex items-center gap-3">
+              <label className="relative inline-flex items-center cursor-pointer">
+                <input type="checkbox" checked={form.vedette} onChange={(e) => upd('vedette', e.target.checked)} className="sr-only peer" />
+                <div className="w-9 h-5 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:bg-amber-500 after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-all" />
+              </label>
+              <span className="text-sm">Produit en vedette</span>
+            </div>
           </div>
 
           {/* Actions */}
