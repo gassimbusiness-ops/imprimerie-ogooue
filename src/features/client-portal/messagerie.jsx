@@ -17,17 +17,29 @@ export default function ClientMessagerie() {
   const [replyTo, setReplyTo] = useState(null);
   const bottomRef = useRef(null);
 
+  const loadMessages = async () => {
+    if (!user) return;
+    const convs = await db.conversations.list();
+    const fullName = `${user?.prenom || ''} ${user?.nom || ''}`.trim().toLowerCase();
+    // Recherche par client_id (prioritaire), puis email, puis nom
+    const myConv = convs.find((c) => c.client_id === user?.id)
+      || convs.find((c) => c.client_email === user?.email)
+      || convs.find((c) => c.client_nom?.toLowerCase() === fullName);
+    if (myConv) {
+      setConvId(myConv.id);
+      const msgs = await db.messages_conv.list();
+      setMessages(msgs.filter((m) => m.conversation_id === myConv.id).sort((a, b) => (a.created_at || '').localeCompare(b.created_at || '')));
+    }
+  };
+
+  useEffect(() => { loadMessages(); }, [user]);
+
+  // Polling pour recevoir les nouveaux messages en quasi temps réel
   useEffect(() => {
-    (async () => {
-      const convs = await db.conversations.list();
-      const myConv = convs.find((c) => c.client_email === user?.email || c.client_nom?.toLowerCase() === `${user?.prenom} ${user?.nom}`.toLowerCase());
-      if (myConv) {
-        setConvId(myConv.id);
-        const msgs = await db.messages_conv.list();
-        setMessages(msgs.filter((m) => m.conversation_id === myConv.id).sort((a, b) => (a.created_at || '').localeCompare(b.created_at || '')));
-      }
-    })();
-  }, [user]);
+    if (!convId) return;
+    const interval = setInterval(loadMessages, 5000);
+    return () => clearInterval(interval);
+  }, [convId]);
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
 
@@ -36,10 +48,12 @@ export default function ClientMessagerie() {
     let cid = convId;
     if (!cid) {
       const conv = await db.conversations.create({
+        client_id: user?.id,
         client_nom: `${user?.prenom} ${user?.nom}`,
         client_email: user?.email,
         plateforme: 'interne',
         statut: 'nouveau',
+        sujet: `Conversation avec ${user?.prenom} ${user?.nom}`,
       });
       cid = conv.id;
       setConvId(cid);
@@ -49,6 +63,12 @@ export default function ClientMessagerie() {
       type: 'entrant',
       contenu: text.trim(),
       auteur: `${user?.prenom} ${user?.nom}`,
+      auteur_id: user?.id,
+    });
+    // Mettre à jour le dernier message sur la conversation
+    await db.conversations.update(cid, {
+      dernier_message: text.trim(),
+      statut: 'nouveau',
     });
     setMessages((prev) => [...prev, msg]);
     setText('');

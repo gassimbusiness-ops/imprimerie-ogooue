@@ -98,6 +98,9 @@ export default function Messagerie() {
 
   useEffect(() => {
     load();
+    // Polling toutes les 5s pour recevoir les nouveaux messages en quasi temps réel
+    const interval = setInterval(load, 5000);
+    return () => clearInterval(interval);
   }, []);
 
   // Auto-scroll messages
