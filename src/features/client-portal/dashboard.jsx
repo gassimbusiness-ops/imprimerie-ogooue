@@ -30,8 +30,8 @@ const STATUTS_COMMANDE = {
 
 const NIVEAUX = {
   bronze: { label: 'Bronze', icon: '🥉', color: 'from-amber-600 to-amber-800', nextLabel: 'Argent', nextMin: 500 },
-  argent: { label: 'Argent', icon: '🥈', color: 'from-gray-400 to-gray-600', nextLabel: 'Or', nextMin: 2000 },
-  or: { label: 'Or', icon: '🥇', color: 'from-yellow-400 to-yellow-600', nextLabel: 'Platine', nextMin: 5000 },
+  argent: { label: 'Argent', icon: '🥈', color: 'from-gray-400 to-gray-600', nextLabel: 'Or', nextMin: 1500 },
+  or: { label: 'Or', icon: '🥇', color: 'from-yellow-400 to-yellow-600', nextLabel: 'Platine', nextMin: 4000 },
   platine: { label: 'Platine', icon: '💎', color: 'from-blue-400 to-indigo-600', nextLabel: null, nextMin: null },
 };
 

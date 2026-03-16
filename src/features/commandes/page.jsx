@@ -41,6 +41,7 @@ import {
   CreditCard,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { calculerPoints, getBonusEvenement, determinerNiveau, BONUS_PARRAINAGE } from '@/services/fidelite';
 import {
   notifyNouvelleCommande,
   notifyCommandeValidee,
@@ -306,29 +307,31 @@ export default function Commandes() {
         const fidelite = allFidelite.find((f) => f.client_id === cmd.client_id);
         if (fidelite) {
           const montant = cmd.montant_total || cmd.total || 0;
-          const pointsCommande = Math.floor(montant / 1000) * 10; // 10 pts par 1000 FCFA
+          const pointsCommande = calculerPoints(montant);
+          // Bonus evenement
+          const bonusEvt = getBonusEvenement(new Date());
+          const pointsEvt = bonusEvt ? bonusEvt.points : 0;
           // Check if first order for bonus
           const allCmds = await db.commandes.list();
           const clientCmds = allCmds.filter((c) => c.client_id === cmd.client_id && c.id !== cmd.id && normalizeStatut(c.statut) !== 'annulee');
           const isFirstOrder = clientCmds.length === 0;
           const bonusPremiere = isFirstOrder ? 100 : 0;
-          const totalPoints = pointsCommande + bonusPremiere;
+          const totalPoints = pointsCommande + bonusPremiere + pointsEvt;
 
           if (totalPoints > 0) {
             const newTotal = (fidelite.points_actuels || 0) + totalPoints;
             const newTotalGagnes = (fidelite.total_points_gagnes || 0) + totalPoints;
-            // Determine level
-            let niveau = 'bronze';
-            if (newTotalGagnes >= 5000) niveau = 'platine';
-            else if (newTotalGagnes >= 2000) niveau = 'or';
-            else if (newTotalGagnes >= 500) niveau = 'argent';
+            const niveau = determinerNiveau(newTotalGagnes);
 
             const hist = [...(fidelite.historique || [])];
             if (bonusPremiere > 0) {
-              hist.push({ type: 'premiere_commande', points: 100, description: 'Bonus première commande', date: new Date().toISOString() });
+              hist.push({ type: 'premiere_commande', points: 100, description: 'Bonus premiere commande', date: new Date().toISOString() });
             }
             if (pointsCommande > 0) {
               hist.push({ type: 'commande', points: pointsCommande, description: `Commande ${cmd.numero || 'CMD'} — ${fmt(montant)} F`, date: new Date().toISOString() });
+            }
+            if (pointsEvt > 0 && bonusEvt) {
+              hist.push({ type: 'bonus_evenement', points: pointsEvt, description: bonusEvt.label, date: new Date().toISOString() });
             }
 
             await db.fidelite_clients.update(fidelite.id, {
@@ -348,11 +351,11 @@ export default function Commandes() {
                   const parrainFid = allFidelite.find((f) => f.client_id === parrain.id);
                   if (parrainFid) {
                     await db.fidelite_clients.update(parrainFid.id, {
-                      points_actuels: (parrainFid.points_actuels || 0) + 200,
-                      total_points_gagnes: (parrainFid.total_points_gagnes || 0) + 200,
+                      points_actuels: (parrainFid.points_actuels || 0) + BONUS_PARRAINAGE,
+                      total_points_gagnes: (parrainFid.total_points_gagnes || 0) + BONUS_PARRAINAGE,
                       historique: [...(parrainFid.historique || []), {
                         type: 'parrainage_valide',
-                        points: 200,
+                        points: BONUS_PARRAINAGE,
                         description: `Parrainage validé — ${cmd.client_nom}`,
                         date: new Date().toISOString(),
                       }],
