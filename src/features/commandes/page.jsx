@@ -1,5 +1,6 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { db } from '@/services/db';
+import { supabase, USE_SUPABASE } from '@/services/supabase';
 import { useAuth } from '@/services/auth';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -39,6 +40,8 @@ import {
   History,
   Bell,
   CreditCard,
+  Factory,
+  FileText,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { calculerPoints, getBonusEvenement, determinerNiveau, BONUS_PARRAINAGE } from '@/services/fidelite';
@@ -142,6 +145,7 @@ export default function Commandes() {
   const [editItem, setEditItem] = useState(null);
   const [commentaireClient, setCommentaireClient] = useState('');
   const [noteInterne, setNoteInterne] = useState('');
+  const showDetailRef = useRef(null);
   const [form, setForm] = useState({
     client_id: '',
     client_nom: '',
@@ -151,14 +155,43 @@ export default function Commandes() {
     lignes: [{ description: '', quantite: 1, prix_unitaire: 0 }],
   });
 
-  const load = async () => {
+  const load = useCallback(async () => {
     const [c, cl] = await Promise.all([db.commandes.list(), db.clients.list()]);
     setCommandes(c.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || '')));
     setClients(cl);
     setLoading(false);
-  };
+  }, []);
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); }, [load]);
+
+  // ── Supabase Realtime — sync en temps réel entre Admin et Employé ──
+  useEffect(() => {
+    if (!USE_SUPABASE || !supabase) return;
+    const channel = supabase
+      .channel('commandes-realtime')
+      .on('postgres_changes',
+        { event: '*', schema: 'public', table: 'app_data', filter: "collection=eq.commandes" },
+        (payload) => {
+          if (payload.eventType === 'UPDATE' && payload.new?.data) {
+            setCommandes((prev) => {
+              const updated = prev.map((c) => c.id === payload.new.id ? payload.new.data : c);
+              return updated;
+            });
+            // Refresh detail if open
+            if (showDetailRef.current && showDetailRef.current.id === payload.new.id) {
+              setShowDetail(payload.new.data);
+            }
+          } else if (payload.eventType === 'INSERT' && payload.new?.data) {
+            setCommandes((prev) => [payload.new.data, ...prev]);
+          } else if (payload.eventType === 'DELETE' && payload.old?.id) {
+            setCommandes((prev) => prev.filter((c) => c.id !== payload.old.id));
+          }
+        }
+      )
+      .subscribe();
+
+    return () => supabase.removeChannel(channel);
+  }, []);
 
   const filtered = useMemo(() => {
     return commandes
@@ -170,20 +203,18 @@ export default function Commandes() {
       .filter((c) => {
         if (filterStatut === 'all') return true;
         const norm = normalizeStatut(c.statut);
+        // Le tab "en_production" regroupe validee_attente_paiement + en_production
+        if (filterStatut === 'en_production') return norm === 'en_production' || norm === 'validee_attente_paiement';
         return norm === filterStatut;
       });
   }, [commandes, search, filterStatut]);
 
   const stats = useMemo(() => {
-    const enAttente = commandes.filter((c) => {
+    const counts = {};
+    commandes.forEach((c) => {
       const n = normalizeStatut(c.statut);
-      return n === 'en_attente_validation';
-    }).length;
-    const enProd = commandes.filter((c) => {
-      const n = normalizeStatut(c.statut);
-      return n === 'en_production' || n === 'validee_attente_paiement';
-    }).length;
-    const pretes = commandes.filter((c) => normalizeStatut(c.statut) === 'prete').length;
+      counts[n] = (counts[n] || 0) + 1;
+    });
     const thisMonth = commandes.filter((c) => {
       const d = c.created_at?.split('T')[0] || '';
       const monthStart = new Date().toISOString().slice(0, 7) + '-01';
@@ -191,8 +222,18 @@ export default function Commandes() {
       return d >= monthStart && norm !== 'annulee';
     });
     const ca = thisMonth.reduce((s, c) => s + (c.montant_total || c.total || 0), 0);
-    return { enAttente, enProd, pretes, ca };
+    return { counts, ca, total: commandes.length };
   }, [commandes]);
+
+  // ── Filtres rapides J2 ──
+  const FILTER_TABS = useMemo(() => [
+    { key: 'all', label: 'Toutes', count: stats.total },
+    { key: 'en_attente_validation', label: 'À valider', count: stats.counts.en_attente_validation || 0 },
+    { key: 'paiement_initie', label: 'Paiement en attente', count: stats.counts.paiement_initie || 0 },
+    { key: 'en_production', label: 'En production', count: (stats.counts.en_production || 0) + (stats.counts.validee_attente_paiement || 0) },
+    { key: 'prete', label: 'Prêtes', count: stats.counts.prete || 0 },
+    { key: 'livree', label: 'Livrées', count: stats.counts.livree || 0 },
+  ], [stats]);
 
   const openAdd = () => {
     setEditItem(null);
@@ -516,6 +557,7 @@ export default function Commandes() {
   // Open detail view
   const openDetail = (cmd) => {
     setShowDetail(cmd);
+    showDetailRef.current = cmd;
     setCommentaireClient(cmd.commentaire_client || '');
     setNoteInterne(cmd.note_interne || '');
   };
@@ -550,51 +592,40 @@ export default function Commandes() {
         </div>
       </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-        <Card>
-          <CardContent className="p-4 text-center">
-            <p className="text-xs text-muted-foreground">En attente</p>
-            <p className="text-2xl font-bold text-amber-600">{stats.enAttente}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4 text-center">
-            <p className="text-xs text-muted-foreground">En cours</p>
-            <p className="text-2xl font-bold text-blue-600">{stats.enProd}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4 text-center">
-            <p className="text-xs text-muted-foreground">Prêtes</p>
-            <p className="text-2xl font-bold text-emerald-600">{stats.pretes}</p>
-          </CardContent>
-        </Card>
-        <Card>
-          <CardContent className="p-4 text-center">
-            <p className="text-xs text-muted-foreground">CA du mois</p>
-            <p className="text-lg font-bold sm:text-2xl">{fmt(stats.ca)} F</p>
-          </CardContent>
-        </Card>
+      {/* CA du mois */}
+      <Card>
+        <CardContent className="p-3 flex items-center justify-between">
+          <span className="text-sm text-muted-foreground">CA du mois</span>
+          <span className="text-lg font-bold">{fmt(stats.ca)} F</span>
+        </CardContent>
+      </Card>
+
+      {/* Filtres rapides J2 */}
+      <div className="flex flex-wrap gap-1.5">
+        {FILTER_TABS.map((tab) => (
+          <button
+            key={tab.key}
+            onClick={() => setFilterStatut(tab.key)}
+            className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition-colors ${
+              filterStatut === tab.key
+                ? 'bg-primary text-primary-foreground shadow-sm'
+                : 'bg-muted text-muted-foreground hover:bg-muted/80'
+            }`}
+          >
+            {tab.label}
+            <span className={`inline-flex h-5 min-w-[20px] items-center justify-center rounded-full px-1.5 text-[10px] font-bold ${
+              filterStatut === tab.key ? 'bg-white/20 text-primary-foreground' : 'bg-background text-foreground'
+            }`}>
+              {tab.count}
+            </span>
+          </button>
+        ))}
       </div>
 
-      {/* Search + Filter */}
-      <div className="flex flex-col gap-3 sm:flex-row">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input placeholder="Rechercher une commande..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-10" />
-        </div>
-        <Select value={filterStatut} onValueChange={setFilterStatut}>
-          <SelectTrigger className="w-full sm:w-[220px]">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Tous les statuts</SelectItem>
-            {STATUTS.map((s) => (
-              <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+      {/* Search */}
+      <div className="relative">
+        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+        <Input placeholder="Rechercher une commande..." value={search} onChange={(e) => setSearch(e.target.value)} className="pl-10" />
       </div>
 
       {/* Commands list */}
@@ -612,14 +643,15 @@ export default function Commandes() {
             const StatutIcon = statut.icon;
             const normalized = normalizeStatut(cmd.statut);
             const isNew = normalized === 'en_attente_validation';
+            const isPaiement = normalized === 'paiement_initie';
             return (
-              <Card key={cmd.id} className={`transition-shadow hover:shadow-md ${isNew ? 'border-amber-300 border-2' : ''}`}>
+              <Card key={cmd.id} className={`transition-shadow hover:shadow-md ${isNew ? 'border-amber-300 border-2' : ''} ${isPaiement ? 'border-yellow-400 border-2' : ''}`}>
                 <CardContent className="p-4">
-                  <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="text-sm font-bold text-primary">{cmd.numero}</span>
-                        <Badge className={`${statut.color} gap-1`}>
+                        <Badge className={`${statut.color} gap-1 ${isPaiement ? 'animate-pulse' : ''}`}>
                           <StatutIcon className="h-3 w-3" />
                           {statut.label}
                         </Badge>
@@ -656,6 +688,63 @@ export default function Commandes() {
                         {cmd.date_echeance && <span>Échéance : {new Date(cmd.date_echeance + 'T00:00:00').toLocaleDateString('fr-FR')}</span>}
                         <span>Créée le {new Date(cmd.created_at).toLocaleDateString('fr-FR')}</span>
                       </div>
+
+                      {/* ── Actions rapides contextuelles J2 ── */}
+                      {canChangeStatut && (
+                        <div className="mt-2.5 flex flex-wrap gap-1.5">
+                          {/* À valider → Valider */}
+                          {isNew && (
+                            <Button size="sm" className="h-7 gap-1 text-xs bg-emerald-600 hover:bg-emerald-700" onClick={(e) => { e.stopPropagation(); handleValider(cmd); }}>
+                              <ShieldCheck className="h-3 w-3" /> Valider
+                            </Button>
+                          )}
+                          {/* Paiement initié → Confirmer / Non reçu */}
+                          {isPaiement && (
+                            <>
+                              <Button size="sm" className="h-7 gap-1 text-xs bg-emerald-600 hover:bg-emerald-700" onClick={(e) => { e.stopPropagation(); handleStatutChange(cmd, 'en_production'); }}>
+                                <CheckCircle2 className="h-3 w-3" /> Confirmer paiement
+                              </Button>
+                              <Button size="sm" variant="destructive" className="h-7 gap-1 text-xs" onClick={(e) => { e.stopPropagation(); handleStatutChange(cmd, 'validee_attente_paiement'); }}>
+                                <XCircle className="h-3 w-3" /> Non reçu
+                              </Button>
+                            </>
+                          )}
+                          {/* Validée → En production */}
+                          {normalized === 'validee_attente_paiement' && (
+                            <Button size="sm" className="h-7 gap-1 text-xs bg-blue-600 hover:bg-blue-700" onClick={(e) => { e.stopPropagation(); handleStatutChange(cmd, 'en_production'); }}>
+                              <Factory className="h-3 w-3" /> En production
+                            </Button>
+                          )}
+                          {/* En production → Prête */}
+                          {normalized === 'en_production' && (
+                            <Button size="sm" className="h-7 gap-1 text-xs" onClick={(e) => { e.stopPropagation(); handleStatutChange(cmd, 'prete'); }}>
+                              <Package className="h-3 w-3" /> Prête
+                            </Button>
+                          )}
+                          {/* Prête → Livrée (admin/manager seulement) */}
+                          {normalized === 'prete' && !isEmploye && (
+                            <Button size="sm" className="h-7 gap-1 text-xs bg-green-600 hover:bg-green-700" onClick={(e) => { e.stopPropagation(); handleStatutChange(cmd, 'livree'); }}>
+                              <Truck className="h-3 w-3" /> Livrée
+                            </Button>
+                          )}
+                          {/* Livrée → Voir facture */}
+                          {normalized === 'livree' && (
+                            <Button size="sm" variant="outline" className="h-7 gap-1 text-xs" onClick={(e) => { e.stopPropagation(); openDetail(cmd); }}>
+                              <FileText className="h-3 w-3" /> Voir facture
+                            </Button>
+                          )}
+                          {/* Message client — toujours visible */}
+                          <Button size="sm" variant="outline" className="h-7 gap-1 text-xs" onClick={(e) => { e.stopPropagation(); openDetail(cmd); }}>
+                            <MessageSquare className="h-3 w-3" /> Message
+                          </Button>
+                          {/* Annuler (admin/manager seulement, si pas terminal) */}
+                          {!isEmploye && normalized !== 'livree' && normalized !== 'annulee' && (
+                            <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs text-destructive hover:text-destructive" onClick={(e) => { e.stopPropagation(); handleAnnuler(cmd); }}>
+                              <XCircle className="h-3 w-3" /> Annuler
+                            </Button>
+                          )}
+                        </div>
+                      )}
                     </div>
                     <div className="text-right shrink-0">
                       <p className="text-lg font-bold">{fmt(cmd.montant_total || cmd.total)} F</p>
@@ -766,7 +855,7 @@ export default function Commandes() {
       </Dialog>
 
       {/* Detail Dialog — Enhanced BLOC 5 */}
-      <Dialog open={!!showDetail} onOpenChange={() => setShowDetail(null)}>
+      <Dialog open={!!showDetail} onOpenChange={() => { setShowDetail(null); showDetailRef.current = null; }}>
         <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -940,37 +1029,38 @@ export default function Commandes() {
                   </div>
                 )}
 
-                {/* Action buttons — Admin/Manager: tout, Employe: transitions specifiques */}
+                {/* Action buttons — Admin/Manager/Employe partagent validation + confirmation paiement */}
                 {canChangeStatut && !isTerminal && normalized !== 'paiement_initie' && (
-                  <div className="flex gap-2 pt-2 border-t">
-                    {/* Admin/Manager : Valider */}
-                    {!isEmploye && normalized === 'en_attente_validation' && (
+                  <div className="flex flex-wrap gap-2 pt-2 border-t">
+                    {/* Valider — Admin, Manager ET Employe */}
+                    {normalized === 'en_attente_validation' && (
                       <Button className="flex-1 gap-2 bg-emerald-600 hover:bg-emerald-700" onClick={() => handleValider(showDetail)}>
                         <ShieldCheck className="h-4 w-4" />
                         Valider la commande
                       </Button>
                     )}
-                    {/* Admin/Manager : toutes transitions sauf validation et paiement_initie */}
-                    {!isEmploye && normalized !== 'en_attente_validation' && NEXT_STATUT[normalized] && (
-                      <Button className="flex-1 gap-2" onClick={() => handleStatutChange(showDetail, NEXT_STATUT[normalized])}>
-                        <ArrowRight className="h-4 w-4" />
-                        Passer a &quot;{getStatut(NEXT_STATUT[normalized]).label}&quot;
-                      </Button>
-                    )}
-                    {/* Employe : validee_attente_paiement → en_production */}
-                    {isEmploye && normalized === 'validee_attente_paiement' && (
+                    {/* validee_attente_paiement → en_production — tous */}
+                    {normalized === 'validee_attente_paiement' && (
                       <Button className="flex-1 gap-2 bg-blue-600 hover:bg-blue-700" onClick={() => handleStatutChange(showDetail, 'en_production')}>
-                        <Printer className="h-4 w-4" />
+                        <Factory className="h-4 w-4" />
                         Mettre en production
                       </Button>
                     )}
-                    {/* Employe : en_production → prete */}
-                    {isEmploye && normalized === 'en_production' && (
+                    {/* en_production → prete — tous */}
+                    {normalized === 'en_production' && (
                       <Button className="flex-1 gap-2" onClick={() => handleStatutChange(showDetail, 'prete')}>
-                        <ArrowRight className="h-4 w-4" />
-                        Marquer &quot;Prete a recuperer&quot;
+                        <Package className="h-4 w-4" />
+                        Marquer &quot;Prête&quot;
                       </Button>
                     )}
+                    {/* prete → livree — admin/manager seulement */}
+                    {!isEmploye && normalized === 'prete' && (
+                      <Button className="flex-1 gap-2 bg-green-600 hover:bg-green-700" onClick={() => handleStatutChange(showDetail, 'livree')}>
+                        <Truck className="h-4 w-4" />
+                        Marquer &quot;Livrée&quot;
+                      </Button>
+                    )}
+                    {/* Annuler — admin/manager seulement */}
                     {!isEmploye && (
                       <Button variant="destructive" className="gap-1.5" onClick={() => handleAnnuler(showDetail)}>
                         <XCircle className="h-4 w-4" />
