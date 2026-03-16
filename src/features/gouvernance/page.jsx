@@ -17,9 +17,17 @@ import {
   Crown, TrendingUp, Landmark, DollarSign, Users, Plus, ArrowDownCircle,
   Building2, Wallet, CreditCard, PiggyBank, Shield, History,
   Edit3, AlertTriangle, FileText, Filter, Search, ChevronDown,
-  ChevronUp, Eye, Download,
+  ChevronUp, Eye, Download, Pencil,
 } from 'lucide-react';
 import { toast } from 'sonner';
+
+// ─── Defaults from seed-data (used as initial values if no DB overrides) ───
+const DEFAULT_VALUATION = {
+  inventaire: INVENTAIRE_STOCK.reduce((s, i) => s + (i.qte * i.prix_achat), 0),
+  machines: MACHINES.reduce((s, m) => s + m.valeur, 0),
+  tresorerie_compte: FINANCIAL_SUMMARY.cash_en_compte,
+  tresorerie_caisse: FINANCIAL_SUMMARY.cash_en_caisse,
+};
 
 function fmt(n) { return new Intl.NumberFormat('fr-FR').format(Math.round(n || 0)); }
 function pct(n) { return (n || 0).toFixed(1) + '%'; }
@@ -127,21 +135,37 @@ export default function Gouvernance() {
 
   const [loadError, setLoadError] = useState(null);
 
+  // Editable valuation parameters (stored in DB)
+  const [valuationParams, setValuationParams] = useState(DEFAULT_VALUATION);
+  const [editField, setEditField] = useState(null); // { key, label, value }
+  const [editValue, setEditValue] = useState('');
+
   const load = async () => {
     try {
       setLoadError(null);
-      const [a, d, r, inv, mods] = await Promise.all([
+      const [a, d, r, inv, mods, params] = await Promise.all([
         db.apports_associes.list(),
         db.dettes_associes.list(),
         db.remboursements_associes.list(),
         db.investisseurs.list(),
         db.modifications_investisseurs.list(),
+        db.gouvernance_parametres.list(),
       ]);
       setApports(a);
       setDettes(d);
       setRemboursements(r);
       setInvestisseurs(inv);
       setModifications(mods);
+      // Load saved valuation params or use defaults
+      const savedParams = params.find((p) => p.type === 'valuation');
+      if (savedParams) {
+        setValuationParams({
+          inventaire: savedParams.inventaire ?? DEFAULT_VALUATION.inventaire,
+          machines: savedParams.machines ?? DEFAULT_VALUATION.machines,
+          tresorerie_compte: savedParams.tresorerie_compte ?? DEFAULT_VALUATION.tresorerie_compte,
+          tresorerie_caisse: savedParams.tresorerie_caisse ?? DEFAULT_VALUATION.tresorerie_caisse,
+        });
+      }
     } catch (err) {
       console.error('Gouvernance load error:', err);
       setLoadError(err.message || 'Erreur de chargement des données');
@@ -185,13 +209,13 @@ export default function Gouvernance() {
   }, [dettes, remboursements]);
 
   const valuation = useMemo(() => {
-    const inventaire = INVENTAIRE_STOCK.reduce((s, i) => s + (i.qte * i.prix_achat), 0);
-    const machines = MACHINES.reduce((s, m) => s + m.valeur, 0);
-    const tresorerie = FINANCIAL_SUMMARY.cash_en_compte + FINANCIAL_SUMMARY.cash_en_caisse;
+    const inventaire = valuationParams.inventaire;
+    const machines = valuationParams.machines;
+    const tresorerie = valuationParams.tresorerie_compte + valuationParams.tresorerie_caisse;
     const actifs = inventaire + machines + tresorerie;
     const passifs = detteInfo.restant;
     return { inventaire, machines, tresorerie, actifs, passifs, valeur_nette: actifs - passifs };
-  }, [detteInfo]);
+  }, [detteInfo, valuationParams]);
 
   const pieData = [
     { name: 'Oumar Ibrahim', value: capTable.oumar, color: '#3b82f6' },
@@ -326,6 +350,63 @@ export default function Gouvernance() {
     load();
   };
 
+  // ─── Modifier un champ de valorisation (admin) ───
+  const openEditField = (key, label, currentValue) => {
+    setEditField({ key, label });
+    setEditValue(String(currentValue));
+  };
+
+  const handleSaveField = async () => {
+    if (!editField) return;
+    const newVal = Number(editValue);
+    if (isNaN(newVal) || newVal < 0) { toast.error('Valeur invalide'); return; }
+    const oldVal = valuationParams[editField.key];
+    if (newVal === oldVal) { setEditField(null); return; }
+
+    const newParams = { ...valuationParams, [editField.key]: newVal };
+    setValuationParams(newParams);
+
+    // Persist to DB
+    try {
+      const existing = await db.gouvernance_parametres.list();
+      const record = existing.find((p) => p.type === 'valuation');
+      if (record) {
+        await db.gouvernance_parametres.update(record.id, { ...newParams, type: 'valuation' });
+      } else {
+        await db.gouvernance_parametres.create({ ...newParams, type: 'valuation' });
+      }
+
+      // Audit trail
+      await db.modifications_investisseurs.create({
+        investisseurId: '__valuation__',
+        investisseurNom: 'Valorisation Entreprise',
+        typeOperation: 'ajustement',
+        ancienMontant: oldVal,
+        nouveauMontant: newVal,
+        difference: newVal - oldVal,
+        motif: `Modification ${editField.label}: ${fmt(oldVal)} -> ${fmt(newVal)} F`,
+        auteur: `${user.prenom} ${user.nom}`,
+        auteurEmail: user.email,
+        auteurId: user.id,
+        dateHeure: new Date().toISOString(),
+        commentaire: '',
+      });
+
+      await logAction('update', 'gouvernance', {
+        details: `Valorisation modifiee: ${editField.label} ${fmt(oldVal)} -> ${fmt(newVal)} F`,
+      });
+
+      toast.success(`${editField.label} mis a jour`);
+    } catch (err) {
+      console.error('Save valuation error:', err);
+      toast.error('Erreur lors de la sauvegarde');
+      setValuationParams((prev) => ({ ...prev, [editField.key]: oldVal }));
+    }
+
+    setEditField(null);
+    load();
+  };
+
   // ─── Filtrage historique ───
   const filteredModifications = useMemo(() => {
     let mods = [...modifications].sort((a, b) => (b.dateHeure || b.created_at || '').localeCompare(a.dateHeure || a.created_at || ''));
@@ -440,16 +521,24 @@ export default function Gouvernance() {
           {/* KPIs row */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             {[
-              { label: 'Valeur Entreprise', value: `${fmt(valuation.valeur_nette)} F`, icon: Building2, color: 'border-l-blue-500', sub: 'Actifs - Passifs' },
+              { label: 'Valeur Entreprise', value: `${fmt(valuation.valeur_nette)} F`, icon: Building2, color: 'border-l-blue-500', sub: 'Actifs - Passifs', computed: true },
               { label: 'Capital Total', value: `${fmt(capTable.totalCapital)} F`, icon: PiggyBank, color: 'border-l-emerald-500', sub: `${apports.length + 2} apports` },
               { label: 'Dette Restante', value: `${fmt(detteInfo.restant)} F`, icon: CreditCard, color: 'border-l-red-500', sub: `sur ${fmt(detteInfo.initial)} F` },
-              { label: 'Trésorerie', value: `${fmt(valuation.tresorerie)} F`, icon: Wallet, color: 'border-l-violet-500', sub: 'Compte + Caisse' },
-            ].map(({ label, value, icon: Icon, color, sub }) => (
+              { label: 'Trésorerie', value: `${fmt(valuation.tresorerie)} F`, icon: Wallet, color: 'border-l-violet-500', sub: 'Compte + Caisse', editKey: 'tresorerie_compte', editVal: valuationParams.tresorerie_compte },
+            ].map(({ label, value, icon: Icon, color, sub, editKey, editVal, computed }) => (
               <Card key={label} className={`border-l-4 ${color}`}>
                 <CardContent className="p-3 sm:p-4">
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0 flex-1">
-                      <p className="text-[10px] sm:text-[11px] text-muted-foreground uppercase tracking-wide truncate">{label}</p>
+                      <div className="flex items-center gap-1">
+                        <p className="text-[10px] sm:text-[11px] text-muted-foreground uppercase tracking-wide truncate">{label}</p>
+                        {isAdmin && editKey && (
+                          <button onClick={() => openEditField(editKey, label, editVal)} className="rounded p-0.5 text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors">
+                            <Pencil className="h-2.5 w-2.5" />
+                          </button>
+                        )}
+                        {computed && <span className="text-[8px] text-muted-foreground/50">(auto)</span>}
+                      </div>
                       <p className="text-sm sm:text-lg font-bold mt-1 truncate">{value}</p>
                       <p className="text-[10px] text-muted-foreground truncate">{sub}</p>
                     </div>
@@ -612,14 +701,26 @@ export default function Gouvernance() {
                 </div>
                 <div className="space-y-2">
                   {[
-                    { label: "Stock (prix d'achat)", val: valuation.inventaire, icon: '\u{1F4E6}' },
-                    { label: 'Machines & Outils', val: valuation.machines, icon: '\u{1F5A8}' },
-                    { label: 'Trésorerie (Compte + Caisse)', val: valuation.tresorerie, icon: '\u{1F4B0}' },
+                    { label: "Stock (prix d'achat)", val: valuation.inventaire, icon: '\u{1F4E6}', editKey: 'inventaire' },
+                    { label: 'Machines & Outils', val: valuation.machines, icon: '\u{1F5A8}', editKey: 'machines' },
+                    { label: 'Trésorerie (Compte)', val: valuationParams.tresorerie_compte, icon: '\u{1F4B0}', editKey: 'tresorerie_compte' },
+                    { label: 'Trésorerie (Caisse)', val: valuationParams.tresorerie_caisse, icon: '\u{1F4B0}', editKey: 'tresorerie_caisse' },
                     { label: 'Dettes associés', val: -detteInfo.restant, icon: '\u{1F4C9}', neg: true },
-                  ].map(({ label, val, icon, neg }) => (
+                  ].map(({ label, val, icon, neg, editKey }) => (
                     <div key={label} className="flex items-center justify-between py-1.5 border-b last:border-0">
                       <span className="text-sm flex items-center gap-2">{icon} {label}</span>
-                      <span className={`text-sm font-semibold ${neg ? 'text-red-600' : ''}`}>{neg ? '-' : ''}{fmt(Math.abs(val))} F</span>
+                      <div className="flex items-center gap-1.5">
+                        <span className={`text-sm font-semibold ${neg ? 'text-red-600' : ''}`}>{neg ? '-' : ''}{fmt(Math.abs(val))} F</span>
+                        {isAdmin && editKey && (
+                          <button
+                            onClick={() => openEditField(editKey, label, editKey === 'tresorerie_compte' ? valuationParams.tresorerie_compte : editKey === 'tresorerie_caisse' ? valuationParams.tresorerie_caisse : val)}
+                            className="rounded p-1 text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
+                            title={`Modifier ${label}`}
+                          >
+                            <Pencil className="h-3 w-3" />
+                          </button>
+                        )}
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -1069,6 +1170,51 @@ export default function Gouvernance() {
           </div>
         </DialogContent>
       </Dialog>
+      {/* Edit Valuation Field Dialog */}
+      <Dialog open={!!editField} onOpenChange={(open) => { if (!open) setEditField(null); }}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Pencil className="h-4 w-4 text-primary" />
+              Modifier: {editField?.label}
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Cette modification sera tracee dans le journal d'audit.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 pt-2">
+            <div className="rounded-lg bg-blue-50 p-3 text-sm">
+              <p className="text-muted-foreground">Valeur actuelle :</p>
+              <p className="font-bold text-lg">{fmt(valuationParams[editField?.key])} F</p>
+            </div>
+            <div>
+              <label className="mb-1.5 block text-sm font-medium">Nouvelle valeur (FCFA)</label>
+              <Input
+                type="number"
+                value={editValue}
+                onChange={(e) => setEditValue(e.target.value)}
+                placeholder="0"
+                min="0"
+                autoFocus
+              />
+            </div>
+            {editValue && Number(editValue) !== valuationParams[editField?.key] && (
+              <div className="rounded-lg bg-amber-50 border border-amber-200 p-2 text-xs">
+                <p>Variation : <span className={Number(editValue) - (valuationParams[editField?.key] || 0) >= 0 ? 'text-emerald-600 font-semibold' : 'text-red-600 font-semibold'}>
+                  {Number(editValue) - (valuationParams[editField?.key] || 0) >= 0 ? '+' : ''}{fmt(Number(editValue) - (valuationParams[editField?.key] || 0))} F
+                </span></p>
+              </div>
+            )}
+            <div className="flex gap-2">
+              <Button variant="outline" className="flex-1" onClick={() => setEditField(null)}>Annuler</Button>
+              <Button className="flex-1" onClick={handleSaveField} disabled={!editValue || Number(editValue) < 0}>
+                Enregistrer
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {/* Ajouter Investisseur Dialog */}
       <Dialog open={showAddInvestisseur} onOpenChange={setShowAddInvestisseur}>
         <DialogContent className="max-w-md">
