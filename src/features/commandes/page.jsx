@@ -51,6 +51,7 @@ import {
   notifyFactureDisponible,
 } from '@/services/notifications';
 import { syncClientFromCommande } from '@/services/sync-clients';
+import { syncCommandeToRapport } from '@/services/sync-commande-rapport';
 
 // ── Statuts enrichis BLOC 5 ──
 const STATUTS = [
@@ -296,6 +297,11 @@ export default function Commandes() {
       else if (newStatut === 'en_production') notifyCommandeProduction(cmd.client_id);
       else if (newStatut === 'prete') notifyCommandePrete(cmd.client_id);
       else if (newStatut === 'livree') notifyCommandeLivree(cmd.client_id);
+    }
+
+    // Sync commande → rapport journalier (montant dans imprimerie)
+    if (newStatut === 'livree') {
+      syncCommandeToRapport(cmd).catch((err) => console.error('Sync rapport error:', err));
     }
 
     // Auto-generation facture a la livraison
