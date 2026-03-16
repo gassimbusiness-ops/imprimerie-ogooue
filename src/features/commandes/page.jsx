@@ -464,9 +464,27 @@ export default function Commandes() {
   };
 
   const handleDelete = async (cmd) => {
-    if (!confirm(`Supprimer la commande ${cmd.numero} ?`)) return;
+    if (!confirm(`Supprimer définitivement la commande ${cmd.numero} ?\nClient : ${cmd.client_nom}\nMontant : ${fmt(cmd.montant_total || cmd.total)} F`)) return;
     await db.commandes.delete(cmd.id);
     toast.success('Commande supprimée');
+    load();
+  };
+
+  // ── Purger les commandes de test (montant 0 ou anciennes tests) ──
+  const handlePurgeTests = async () => {
+    const tests = commandes.filter((c) => {
+      const montant = c.montant_total || c.total || 0;
+      return montant === 0 || (c.description || '').toLowerCase().includes('test');
+    });
+    if (tests.length === 0) {
+      toast.info('Aucune commande de test à supprimer');
+      return;
+    }
+    if (!confirm(`Supprimer ${tests.length} commande(s) de test ?\n(montant = 0 ou description contenant "test")`)) return;
+    for (const cmd of tests) {
+      await db.commandes.delete(cmd.id);
+    }
+    toast.success(`${tests.length} commande(s) de test supprimée(s)`);
     load();
   };
 
@@ -493,11 +511,18 @@ export default function Commandes() {
           <h2 className="text-2xl font-bold tracking-tight">Commandes</h2>
           <p className="text-muted-foreground">Suivi des commandes clients</p>
         </div>
-        {canWrite && (
-          <Button className="gap-2" onClick={openAdd}>
-            <Plus className="h-4 w-4" /> Nouvelle commande
-          </Button>
-        )}
+        <div className="flex gap-2">
+          {isAdmin && (
+            <Button variant="outline" size="sm" className="gap-1.5 text-destructive border-destructive/30" onClick={handlePurgeTests}>
+              <Trash2 className="h-3.5 w-3.5" /> Purger tests
+            </Button>
+          )}
+          {canWrite && (
+            <Button className="gap-2" onClick={openAdd}>
+              <Plus className="h-4 w-4" /> Nouvelle commande
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* Stats */}
@@ -610,8 +635,8 @@ export default function Commandes() {
                         <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openDetail(cmd)}>
                           <Eye className="h-3.5 w-3.5" />
                         </Button>
-                        {canWrite && normalized !== 'livree' && normalized !== 'annulee' && (
-                          <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => handleDelete(cmd)}>
+                        {isAdmin && (
+                          <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => handleDelete(cmd)} title="Supprimer la commande">
                             <Trash2 className="h-3.5 w-3.5" />
                           </Button>
                         )}
