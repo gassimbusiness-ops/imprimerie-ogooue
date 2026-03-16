@@ -40,12 +40,20 @@ const CATEGORIES = [
   'Transfert thermique', 'DTF', 'Consommables machine', 'Autre',
 ];
 
+const TYPE_ARTICLE = [
+  { value: 'consommable', label: 'Consommable', icon: '📦' },
+  { value: 'machine', label: 'Machine', icon: '🖨️' },
+  { value: 'mobilier', label: 'Mobilier', icon: '🪑' },
+  { value: 'fourniture', label: 'Fourniture', icon: '📎' },
+];
+
 const emptyForm = {
   nom: '', reference: '', categorie: 'Papiers', description: '',
   fournisseur: '', fournisseur_contact: '',
   prix_unitaire: '', unite: 'unité',
   quantite: '', quantite_minimum: '',
   emplacement: '', masque: false, actif: true,
+  type_article: 'consommable',
 };
 
 const UNITES = ['unité', 'rame', 'paquet', 'rouleau', 'flacon', 'set', 'cartouche', 'pot', 'kg', 'mètre'];
@@ -213,6 +221,7 @@ export default function Stocks() {
   const [mouvements, setMouvements] = useState([]);
   const [search, setSearch] = useState('');
   const [filterCat, setFilterCat] = useState('all');
+  const [filterType, setFilterType] = useState('all');
   const [filterStatus, setFilterStatus] = useState('all');
   const [showHidden, setShowHidden] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -245,6 +254,7 @@ export default function Stocks() {
         // Hide masked items unless toggled
         if (!showHidden && p.masque) return false;
         if (filterCat !== 'all' && p.categorie !== filterCat) return false;
+        if (filterType !== 'all' && (p.type_article || 'consommable') !== filterType) return false;
         if (filterStatus !== 'all') {
           const st = statusBadge(p.quantite ?? p.stock ?? 0, p.quantite_minimum ?? p.stock_min ?? 0);
           if (filterStatus === 'alerte' && st.label !== 'Bas' && st.label !== 'Rupture') return false;
@@ -256,18 +266,20 @@ export default function Stocks() {
         }
         return true;
       });
-  }, [produits, search, filterCat, filterStatus, showHidden]);
+  }, [produits, search, filterCat, filterType, filterStatus, showHidden]);
 
   const stats = useMemo(() => {
     const total = produits.filter((p) => !p.masque).length;
     const alertes = produits.filter((p) => {
       const qty = p.quantite ?? p.stock ?? 0;
       const min = p.quantite_minimum ?? p.stock_min ?? 0;
-      return qty <= min && !p.masque;
+      const type = p.type_article || 'consommable';
+      return qty <= min && !p.masque && type === 'consommable';
     }).length;
     const rupture = produits.filter((p) => {
       const qty = p.quantite ?? p.stock ?? 0;
-      return qty <= 0 && !p.masque;
+      const type = p.type_article || 'consommable';
+      return qty <= 0 && !p.masque && type === 'consommable';
     }).length;
     const totalValue = produits.reduce((s, p) => {
       // Use pre-calculated valeur_stock_achat if available (imported data), else compute
@@ -297,6 +309,7 @@ export default function Stocks() {
       emplacement: p.emplacement || '',
       masque: p.masque || false,
       actif: p.actif !== false,
+      type_article: p.type_article || 'consommable',
     });
     setShowForm(true);
   };
@@ -323,6 +336,7 @@ export default function Stocks() {
       emplacement: form.emplacement.trim(),
       masque: form.masque,
       actif: form.actif,
+      type_article: form.type_article || 'consommable',
     };
     try {
       if (editItem) {
@@ -388,9 +402,10 @@ export default function Stocks() {
       entityLabel: `${mouvementItem.nom} (${mvtForm.type === 'entree' ? '+' : '-'}${qty})`,
     });
 
-    // Alerte stock bas
+    // Alerte stock bas — uniquement pour les consommables
     const minStock = mouvementItem.quantite_minimum ?? mouvementItem.stock_min ?? 0;
-    if (newStock <= minStock && newStock >= 0) {
+    const typeArt = mouvementItem.type_article || 'consommable';
+    if (newStock <= minStock && newStock >= 0 && typeArt === 'consommable') {
       notifyStockAlerte(mouvementItem.nom, newStock, minStock);
     }
 
@@ -476,6 +491,13 @@ export default function Stocks() {
             {CATEGORIES.map((c) => <SelectItem key={c} value={c}>{c}</SelectItem>)}
           </SelectContent>
         </Select>
+        <Select value={filterType} onValueChange={setFilterType}>
+          <SelectTrigger className="w-full sm:w-[160px]"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Tous types</SelectItem>
+            {TYPE_ARTICLE.map((t) => <SelectItem key={t.value} value={t.value}>{t.icon} {t.label}</SelectItem>)}
+          </SelectContent>
+        </Select>
         <Select value={filterStatus} onValueChange={setFilterStatus}>
           <SelectTrigger className="w-full sm:w-[150px]"><SelectValue /></SelectTrigger>
           <SelectContent>
@@ -530,6 +552,11 @@ export default function Stocks() {
                         <p className="font-semibold text-sm truncate">{p.nom}</p>
                         <div className="flex items-center gap-1.5 mt-1">
                           <Badge variant="outline" className="text-[10px]">{p.categorie}</Badge>
+                          {(p.type_article && p.type_article !== 'consommable') && (
+                            <Badge variant="outline" className="text-[10px] border-blue-200 text-blue-600">
+                              {TYPE_ARTICLE.find((t) => t.value === p.type_article)?.icon} {TYPE_ARTICLE.find((t) => t.value === p.type_article)?.label}
+                            </Badge>
+                          )}
                           {p.reference && <span className="text-[10px] text-muted-foreground">{p.reference}</span>}
                           {p.masque && <EyeOff className="h-3 w-3 text-muted-foreground" />}
                         </div>
@@ -691,9 +718,16 @@ export default function Stocks() {
                 </Select>
               </div>
               <div>
-                <label className="mb-1.5 block text-sm font-medium">Référence</label>
-                <Input value={form.reference} onChange={(e) => setForm({ ...form, reference: e.target.value })} placeholder="PAP-001" />
+                <label className="mb-1.5 block text-sm font-medium">Type d'article *</label>
+                <Select value={form.type_article || 'consommable'} onValueChange={(v) => setForm({ ...form, type_article: v })}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>{TYPE_ARTICLE.map((t) => <SelectItem key={t.value} value={t.value}>{t.icon} {t.label}</SelectItem>)}</SelectContent>
+                </Select>
               </div>
+            </div>
+            <div>
+              <label className="mb-1.5 block text-sm font-medium">Référence</label>
+              <Input value={form.reference} onChange={(e) => setForm({ ...form, reference: e.target.value })} placeholder="PAP-001" />
             </div>
             <div>
               <label className="mb-1.5 block text-sm font-medium">Description</label>
