@@ -126,7 +126,8 @@ const NOTIF_CLIENT_MESSAGES = {
 export default function Commandes() {
   const { hasPermission, user: currentUser, isAdmin, isManager } = useAuth();
   const isEmploye = currentUser?.role === 'employe';
-  const canWrite = hasPermission('commandes', 'write') && !isEmploye;
+  const canWrite = hasPermission('commandes', 'write'); // Employé peut aussi créer (commande comptoir)
+  const canWriteAdmin = isAdmin || isManager; // Seuls admin/manager modifient prix, suppriment, etc.
   const canChangeStatut = isAdmin || isManager || isEmploye;
   const [commandes, setCommandes] = useState([]);
   const [clients, setClients] = useState([]);
@@ -251,9 +252,10 @@ export default function Commandes() {
       lignes: form.lignes.filter((l) => l.description.trim()),
       total: getTotal(),
       montant_total: getTotal(),
-      statut: editItem ? editItem.statut : 'en_attente_validation',
+      statut: editItem ? editItem.statut : (isEmploye ? 'validee_attente_paiement' : 'en_attente_validation'),
+      source: isEmploye ? 'comptoir' : undefined,
       historique_statuts: editItem?.historique_statuts || [
-        { statut: 'en_attente_validation', date: new Date().toISOString(), auteur: `${currentUser?.prenom} ${currentUser?.nom}` },
+        { statut: isEmploye ? 'validee_attente_paiement' : 'en_attente_validation', date: new Date().toISOString(), auteur: `${currentUser?.prenom} ${currentUser?.nom}` },
       ],
     };
 
@@ -621,6 +623,9 @@ export default function Commandes() {
                         {cmd.source === 'portail_client' && (
                           <Badge variant="outline" className="text-[9px] border-blue-200 text-blue-600">Portail Client</Badge>
                         )}
+                        {cmd.source === 'comptoir' && (
+                          <Badge variant="outline" className="text-[9px] border-emerald-200 text-emerald-600">Comptoir</Badge>
+                        )}
                       </div>
                       <p className="mt-1 font-semibold">{cmd.client_nom}</p>
                       {cmd.client_tel && (
@@ -837,7 +842,7 @@ export default function Commandes() {
                 )}
 
                 {/* Commentaire pour le client */}
-                {canWrite && (
+                {canWriteAdmin && (
                   <div>
                     <label className="mb-1.5 flex items-center gap-1.5 text-sm font-medium">
                       <MessageSquare className="h-3.5 w-3.5 text-blue-500" />
@@ -855,7 +860,7 @@ export default function Commandes() {
                 )}
 
                 {/* Note interne */}
-                {canWrite && (
+                {canWriteAdmin && (
                   <div>
                     <label className="mb-1.5 flex items-center gap-1.5 text-sm font-medium">
                       <StickyNote className="h-3.5 w-3.5 text-amber-500" />
@@ -872,7 +877,7 @@ export default function Commandes() {
                   </div>
                 )}
 
-                {canWrite && (commentaireClient !== (showDetail.commentaire_client || '') || noteInterne !== (showDetail.note_interne || '')) && (
+                {canWriteAdmin && (commentaireClient !== (showDetail.commentaire_client || '') || noteInterne !== (showDetail.note_interne || '')) && (
                   <Button variant="outline" className="w-full gap-1.5 text-sm" onClick={() => handleSaveComments(showDetail)}>
                     💾 Enregistrer les commentaires
                   </Button>
@@ -901,7 +906,7 @@ export default function Commandes() {
                   </div>
                 )}
 
-                {/* Action buttons — Admin/Manager: tout, Employé: seulement en_production → prete */}
+                {/* Action buttons — Admin/Manager: tout, Employé: en_attente→production + production→prête */}
                 {canChangeStatut && !isTerminal && (
                   <div className="flex gap-2 pt-2 border-t">
                     {/* Admin/Manager : Valider */}
@@ -918,7 +923,14 @@ export default function Commandes() {
                         Passer à "{getStatut(NEXT_STATUT[normalized]).label}"
                       </Button>
                     )}
-                    {/* Employé : seulement en_production → prete */}
+                    {/* Employé : validee_attente_paiement → en_production */}
+                    {isEmploye && normalized === 'validee_attente_paiement' && (
+                      <Button className="flex-1 gap-2 bg-blue-600 hover:bg-blue-700" onClick={() => handleStatutChange(showDetail, 'en_production')}>
+                        <Printer className="h-4 w-4" />
+                        Mettre en production
+                      </Button>
+                    )}
+                    {/* Employé : en_production → prete */}
                     {isEmploye && normalized === 'en_production' && (
                       <Button className="flex-1 gap-2" onClick={() => handleStatutChange(showDetail, 'prete')}>
                         <ArrowRight className="h-4 w-4" />
