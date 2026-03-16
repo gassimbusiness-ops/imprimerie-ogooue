@@ -198,12 +198,12 @@ export function notifyDemandeModification(operateurNom) {
   );
 }
 
-/** 8. Stock sous seuil minimum → Admin */
+/** 8. Stock sous seuil minimum → Admin + Employés */
 export function notifyStockAlerte(articleNom, quantite, seuil) {
   return createNotification(
     'stock_alerte',
     `⚠️ Stock bas : ${articleNom} (${quantite} restant, seuil: ${seuil})`,
-    'admin',
+    'all_staff',
     { type: 'stock' }
   );
 }
@@ -225,6 +225,26 @@ export function notifyFactureDisponible(clientId, numero) {
     `🧾 Votre facture ${numero} est disponible`,
     clientId,
     { type: 'facture' }
+  );
+}
+
+/** 11. Devis disponible → Client */
+export function notifyDevisDisponible(clientId, numero) {
+  return createNotification(
+    'facture_disponible',
+    `📄 Votre devis ${numero} est disponible`,
+    clientId,
+    { type: 'devis' }
+  );
+}
+
+/** 12. Campagne marketing → Tous les clients (via destinataire spécial) */
+export function notifyPromotion(message) {
+  return createNotification(
+    'nouvelle_commande',
+    `🎉 ${message}`,
+    'client',
+    { type: 'promotion' }
   );
 }
 
