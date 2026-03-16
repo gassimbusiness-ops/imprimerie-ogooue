@@ -48,6 +48,7 @@ import {
   notifyCommandeProduction,
   notifyCommandePrete,
   notifyCommandeLivree,
+  notifyFactureDisponible,
 } from '@/services/notifications';
 
 // ── Statuts enrichis BLOC 5 ──
@@ -289,7 +290,57 @@ export default function Commandes() {
       else if (newStatut === 'livree') notifyCommandeLivree(cmd.client_id);
     }
 
-    toast.success(`Commande passée à "${getStatut(newStatut).label}"`);
+    // Auto-generation facture a la livraison
+    if (newStatut === 'livree') {
+      try {
+        const allFactures = await db.factures.list();
+        const num = `OG-${new Date().getFullYear()}-${String(allFactures.length + 1).padStart(4, '0')}`;
+        const lignes = (cmd.lignes || cmd.produits || []).map((l) => ({
+          description: l.description || l.nom || l.designation || 'Article',
+          quantite: l.quantite || 1,
+          prix_unitaire: l.prix_unitaire || l.prix || 0,
+        }));
+        if (lignes.length === 0 && (cmd.montant_total || cmd.total)) {
+          lignes.push({ description: cmd.description || cmd.service || 'Commande', quantite: 1, prix_unitaire: cmd.montant_total || cmd.total || 0 });
+        }
+        const facture = await db.factures.create({
+          numero: num,
+          commande_id: cmd.id,
+          commande_numero: cmd.numero,
+          client_id: cmd.client_id,
+          client_nom: cmd.client_nom,
+          client_adresse: cmd.client_adresse || '',
+          objet: cmd.description || cmd.service || `Commande ${cmd.numero || ''}`,
+          lignes,
+          sous_total: cmd.montant_total || cmd.total || 0,
+          remise: 0,
+          total_ttc: cmd.montant_total || cmd.total || 0,
+          statut: 'envoyee',
+          date_commande: cmd.created_at?.slice(0, 10) || '',
+          date_livraison: new Date().toISOString().split('T')[0],
+          date: new Date().toISOString().split('T')[0],
+        });
+        // Notifier le client
+        if (cmd.client_id) notifyFactureDisponible(cmd.client_id, num);
+        // Envoyer dans la messagerie
+        try {
+          const convs = await db.conversations.list();
+          const conv = convs.find((c) => c.client_id === cmd.client_id);
+          if (conv) {
+            await db.messages_conv.create({
+              conversation_id: conv.id,
+              type: 'sortant',
+              contenu: `Votre facture ${num} pour la commande ${cmd.numero || ''} est disponible.\nMontant : ${fmt(cmd.montant_total || cmd.total || 0)} F\nConsultez vos factures dans votre espace client.`,
+              auteur: 'Systeme Imprimerie Ogooue',
+            });
+          }
+        } catch {}
+      } catch (err) {
+        console.error('Erreur generation facture auto:', err);
+      }
+    }
+
+    toast.success(`Commande passee a "${getStatut(newStatut).label}"`);
     load();
     // Refresh detail
     const updated = await db.commandes.getById(cmd.id);
