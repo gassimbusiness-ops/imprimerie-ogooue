@@ -580,7 +580,8 @@ function MockupClientPrecis({ clients }) {
 function VisuelMarketingIA() {
   const { user } = useAuth();
   const [prompt, setPrompt] = useState('');
-  const [typeVisuel, setTypeVisuel] = useState('Affiche');
+  const [support, setSupport] = useState('tshirt');
+  const [couleur, setCouleur] = useState('blanc');
   const [style, setStyle] = useState('Moderne');
   const [format, setFormat] = useState('1024x1024');
   const [generating, setGenerating] = useState(false);
@@ -596,19 +597,29 @@ function VisuelMarketingIA() {
     })();
   }, []);
 
+  const selectedSupport = SUPPORTS.find((s) => s.id === support) || SUPPORTS[0];
+  const selectedCouleur = COULEURS.find((c) => c.id === couleur) || COULEURS[0];
+
   const handleGenerate = async () => {
-    if (!prompt.trim()) { toast.error('Décrivez votre visuel marketing'); return; }
+    if (!prompt.trim()) { toast.error('Décrivez votre design (logo, texte, motif…)'); return; }
 
     setGenerating(true);
     setResult(null);
 
-    const fullPrompt = `${prompt}. Type: ${typeVisuel}. Style: ${style}. Pour une imprimerie au Gabon, Afrique.`;
+    const fullPrompt = `Professional product mockup for a print shop in Gabon, Africa.
+Product: ${selectedSupport.label} in ${selectedCouleur.label} color.
+Design description: ${prompt}
+Style: ${style} (modern, vibrant, African-inspired)
+Requirements: photorealistic 3D render, studio lighting, clean background,
+professional commercial quality, show the product from a flattering angle,
+the design should be clearly visible and well-integrated on the product.
+High quality, 4K resolution style.`;
 
     try {
       const response = await fetch('/api/generate-image', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: fullPrompt, size: format, quality: 'standard' }),
+        body: JSON.stringify({ prompt: fullPrompt, size: format, quality: 'hd' }),
       });
 
       const data = await response.json();
@@ -620,7 +631,7 @@ function VisuelMarketingIA() {
       }
 
       setResult({ url: data.url, revised_prompt: data.revised_prompt, prompt: fullPrompt });
-      toast.success('Visuel généré avec succès !');
+      toast.success('Mockup 3D généré en HD !');
     } catch (err) {
       toast.error('Erreur de génération : ' + (err.message || 'Service indisponible'));
     }
@@ -632,8 +643,8 @@ function VisuelMarketingIA() {
     try {
       await db.mockups.create({
         type: 'marketing_ia',
-        nom: `Visuel IA — ${typeVisuel}`,
-        support: typeVisuel.toLowerCase(),
+        nom: `Mockup 3D — ${selectedSupport.label} ${selectedCouleur.label}`,
+        support: support,
         prompt_utilise: result.prompt,
         url_preview: result.url,
         image_base64: '',
@@ -641,9 +652,8 @@ function VisuelMarketingIA() {
         createur_id: user?.id,
         createur_nom: `${user?.prenom || ''} ${user?.nom || ''}`.trim(),
       });
-      await logAction('create', 'mockup', { entityLabel: `Visuel IA ${typeVisuel}` });
-      toast.success('Visuel sauvegardé dans la galerie !');
-      // Rafraîchir l'historique
+      await logAction('create', 'mockup', { entityLabel: `Mockup 3D ${selectedSupport.label}` });
+      toast.success('Mockup sauvegardé dans la galerie !');
       const all = await (db.mockups?.list?.() || Promise.resolve([]));
       setHistory(all.filter((m) => m.type === 'marketing_ia').sort((a, b) => (b.created_at || '').localeCompare(a.created_at || '')));
     } catch {
@@ -655,38 +665,83 @@ function VisuelMarketingIA() {
     if (!result?.url) return;
     const a = document.createElement('a');
     a.href = result.url;
-    a.download = `visuel_ia_${Date.now()}.png`;
+    a.download = `mockup_3d_${support}_${Date.now()}.png`;
     a.target = '_blank';
     a.click();
+  };
+
+  const handleSendClient = () => {
+    if (!result?.url) return;
+    const text = encodeURIComponent(`Bonjour ! Voici un aperçu de votre ${selectedSupport.label} personnalisé. Qu'en pensez-vous ?`);
+    window.open(`https://wa.me/?text=${text}`, '_blank');
+    toast.success('Redirection vers WhatsApp…');
   };
 
   return (
     <div className="space-y-6">
       {/* Formulaire de génération */}
       <Card>
-        <CardContent className="p-6 space-y-4">
+        <CardContent className="p-6 space-y-5">
+          {/* Sélection support avec icônes visuelles */}
           <div>
-            <label className="block text-sm font-medium mb-1.5">Décrivez votre visuel marketing</label>
+            <label className="block text-sm font-medium mb-2">Support produit</label>
+            <div className="grid grid-cols-4 sm:grid-cols-8 gap-2">
+              {SUPPORTS.map((s) => (
+                <button
+                  key={s.id}
+                  onClick={() => setSupport(s.id)}
+                  className={`flex flex-col items-center gap-1 rounded-lg border-2 p-2 text-center transition-all ${
+                    support === s.id
+                      ? 'border-violet-500 bg-violet-50 shadow-sm'
+                      : 'border-muted hover:border-violet-200'
+                  }`}
+                >
+                  <span className="text-2xl">{s.emoji}</span>
+                  <span className="text-[10px] font-medium leading-tight">{s.label}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Palette de couleurs */}
+          <div>
+            <label className="block text-sm font-medium mb-2">Couleur du support</label>
+            <div className="flex flex-wrap gap-2">
+              {COULEURS.map((c) => (
+                <button
+                  key={c.id}
+                  onClick={() => setCouleur(c.id)}
+                  title={c.label}
+                  className={`flex items-center gap-1.5 rounded-full border-2 px-3 py-1.5 text-xs font-medium transition-all ${
+                    couleur === c.id
+                      ? 'border-violet-500 shadow-sm'
+                      : 'border-muted hover:border-violet-200'
+                  }`}
+                >
+                  <span
+                    className="h-4 w-4 rounded-full border border-gray-300"
+                    style={{ backgroundColor: c.hex }}
+                  />
+                  {c.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Description du design */}
+          <div>
+            <label className="block text-sm font-medium mb-1.5">Décris ton design</label>
             <textarea
-              className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm resize-none focus:ring-2 focus:ring-primary/20"
-              placeholder="Ex: Affiche promotionnelle pour impression de t-shirts personnalisés, style africain moderne, couleurs chaudes, texte 'PROMO -30%'"
+              className="flex min-h-[80px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm resize-none focus:ring-2 focus:ring-violet-300"
+              placeholder="Ex: Logo entreprise bleu et blanc, style moderne, texte 'OGOOUÉ PRINT' en grand"
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
             />
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium mb-1.5">Type de visuel</label>
-              <Select value={typeVisuel} onValueChange={setTypeVisuel}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {TYPES_VISUEL.map((t) => <SelectItem key={t} value={t}>{t}</SelectItem>)}
-                </SelectContent>
-              </Select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-1.5">Style / Ambiance</label>
+              <label className="block text-sm font-medium mb-1.5">Style visuel</label>
               <Select value={style} onValueChange={setStyle}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
@@ -706,14 +761,14 @@ function VisuelMarketingIA() {
           </div>
 
           <Button
-            className="w-full gap-2 bg-violet-600 hover:bg-violet-700 text-white"
+            className="w-full gap-2 bg-violet-600 hover:bg-violet-700 text-white text-base py-6"
             onClick={handleGenerate}
             disabled={generating}
           >
             {generating ? (
-              <><Loader2 className="h-4 w-4 animate-spin" /> L'IA crée votre visuel...</>
+              <><Loader2 className="h-5 w-5 animate-spin" /> Génération 3D HD en cours…</>
             ) : (
-              <><Sparkles className="h-4 w-4" /> Générer le visuel IA</>
+              <><Sparkles className="h-5 w-5" /> Générer Mockup 3D IA</>
             )}
           </Button>
         </CardContent>
@@ -724,19 +779,25 @@ function VisuelMarketingIA() {
         <Card className="border-violet-200">
           <CardContent className="p-6 space-y-4">
             <div className="rounded-lg overflow-hidden border bg-muted/20">
-              <img src={result.url} alt="Visuel IA" className="w-full object-contain max-h-[500px]" />
+              <img src={result.url} alt="Mockup 3D IA" className="w-full object-contain max-h-[500px]" />
             </div>
+            <p className="text-[10px] text-center text-muted-foreground">
+              Créé par IA — pour validation client avant production finale
+            </p>
             {result.revised_prompt && (
               <p className="text-xs text-muted-foreground italic">
-                Ce que DALL-E a compris : {result.revised_prompt}
+                Prompt DALL-E : {result.revised_prompt}
               </p>
             )}
             <div className="flex flex-wrap gap-2">
               <Button variant="outline" className="gap-2" onClick={handleDownload}>
-                <Download className="h-4 w-4" /> Télécharger PNG
+                <Download className="h-4 w-4" /> Télécharger HD
               </Button>
               <Button variant="outline" className="gap-2" onClick={handleGenerate}>
                 <RotateCcw className="h-4 w-4" /> Régénérer
+              </Button>
+              <Button variant="outline" className="gap-2" onClick={handleSendClient}>
+                <Send className="h-4 w-4" /> Envoyer au client
               </Button>
               <Button variant="outline" className="gap-2" onClick={handleSaveVisuel}>
                 <Save className="h-4 w-4" /> Sauvegarder
@@ -750,7 +811,7 @@ function VisuelMarketingIA() {
       {history.length > 0 && (
         <div>
           <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
-            <Calendar className="h-4 w-4" /> Historique des visuels générés ({history.length})
+            <Calendar className="h-4 w-4" /> Historique des mockups 3D ({history.length})
           </h3>
           <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
             {history.map((m) => (
