@@ -44,6 +44,7 @@ import ClientFactures from '@/features/client-portal/factures';
 import ClientMessagerie from '@/features/client-portal/messagerie';
 import ClientProfil from '@/features/client-portal/profil';
 import ClientFidelite from '@/features/client-portal/fidelite';
+import ClientDevis from '@/features/client-portal/devis';
 // Associé portal
 import AssocieLayout from '@/components/layout/associe-layout';
 import AssocieDashboard from '@/features/associe-portal/dashboard';
@@ -114,6 +115,7 @@ export default function App() {
           <Route path="messagerie" element={<ClientMessagerie />} />
           <Route path="profil" element={<ClientProfil />} />
           <Route path="fidelite" element={<ClientFidelite />} />
+          <Route path="devis" element={<ClientDevis />} />
         </Route>
 
         {/* Associé portal — separate layout */}

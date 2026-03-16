@@ -4,7 +4,7 @@ import { useAuth } from '@/services/auth';
 import { cn } from '@/lib/utils';
 import {
   LayoutDashboard, Package, FileText, MessageCircle,
-  ShoppingBag, LogOut, Menu, X, User, Printer, Gift,
+  ShoppingBag, LogOut, Menu, X, User, Printer, Gift, Calculator,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import Chatbot from '@/components/chatbot';
@@ -12,6 +12,7 @@ import Chatbot from '@/components/chatbot';
 const CLIENT_NAV = [
   { name: 'Mon Tableau de bord', href: '/client', icon: LayoutDashboard },
   { name: 'Catalogue', href: '/client/catalogue', icon: ShoppingBag },
+  { name: 'Demander un devis', href: '/client/devis', icon: Calculator },
   { name: 'Mes Commandes', href: '/client/commandes', icon: Package },
   { name: 'Mes Factures', href: '/client/factures', icon: FileText },
   { name: 'Messagerie', href: '/client/messagerie', icon: MessageCircle },
