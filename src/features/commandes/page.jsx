@@ -299,9 +299,10 @@ export default function Commandes() {
       else if (newStatut === 'livree') notifyCommandeLivree(cmd.client_id);
     }
 
-    // Sync commande → rapport journalier (montant dans imprimerie)
+    // À la livraison : sync rapport + créditer points fidélité
     if (newStatut === 'livree') {
       syncCommandeToRapport(cmd).catch((err) => console.error('Sync rapport error:', err));
+      crediterPointsFidelite(cmd).catch((err) => console.error('Fidelite error:', err));
     }
 
     // Auto-generation facture a la livraison
@@ -361,87 +362,105 @@ export default function Commandes() {
     if (updated) setShowDetail(updated);
   };
 
-  // ── Valider la commande + créditer points fidélité ──
+  // ── Valider la commande (sans points — les points sont crédités à la livraison) ──
   const handleValider = async (cmd) => {
     await handleStatutChange(cmd, 'validee_attente_paiement');
+  };
 
-    // Credit fidelity points
-    if (cmd.client_id) {
-      try {
-        const allFidelite = await db.fidelite_clients.list();
-        const fidelite = allFidelite.find((f) => f.client_id === cmd.client_id);
-        if (fidelite) {
-          const montant = cmd.montant_total || cmd.total || 0;
-          const pointsCommande = calculerPoints(montant);
-          // Bonus evenement
-          const bonusEvt = getBonusEvenement(new Date());
-          const pointsEvt = bonusEvt ? bonusEvt.points : 0;
-          // Check if first order for bonus
-          const allCmds = await db.commandes.list();
-          const clientCmds = allCmds.filter((c) => c.client_id === cmd.client_id && c.id !== cmd.id && normalizeStatut(c.statut) !== 'annulee');
-          const isFirstOrder = clientCmds.length === 0;
-          const bonusPremiere = isFirstOrder ? 100 : 0;
-          const totalPoints = pointsCommande + bonusPremiere + pointsEvt;
+  // ── Créditer les points fidélité à la LIVRAISON ──
+  const crediterPointsFidelite = async (cmd) => {
+    if (!cmd.client_id) return;
+    try {
+      const allFidelite = await db.fidelite_clients.list();
+      let fidelite = allFidelite.find((f) => f.client_id === cmd.client_id);
 
-          if (totalPoints > 0) {
-            const newTotal = (fidelite.points_actuels || 0) + totalPoints;
-            const newTotalGagnes = (fidelite.total_points_gagnes || 0) + totalPoints;
-            const niveau = determinerNiveau(newTotalGagnes);
+      // Créer le record fidélité si inexistant (nouveau client)
+      if (!fidelite) {
+        const code = 'OG' + Math.random().toString(36).substring(2, 8).toUpperCase();
+        fidelite = await db.fidelite_clients.create({
+          client_id: cmd.client_id,
+          client_nom: cmd.client_nom,
+          points_actuels: 0,
+          total_points_gagnes: 0,
+          niveau: 'bronze',
+          historique: [],
+          code_parrainage: code,
+        });
+      }
 
-            const hist = [...(fidelite.historique || [])];
-            if (bonusPremiere > 0) {
-              hist.push({ type: 'premiere_commande', points: 100, description: 'Bonus premiere commande', date: new Date().toISOString() });
-            }
-            if (pointsCommande > 0) {
-              hist.push({ type: 'commande', points: pointsCommande, description: `Commande ${cmd.numero || 'CMD'} — ${fmt(montant)} F`, date: new Date().toISOString() });
-            }
-            if (pointsEvt > 0 && bonusEvt) {
-              hist.push({ type: 'bonus_evenement', points: pointsEvt, description: bonusEvt.label, date: new Date().toISOString() });
-            }
+      const montant = cmd.montant_total || cmd.total || 0;
+      const pointsCommande = calculerPoints(montant);
+      // Bonus evenement
+      const bonusEvt = getBonusEvenement(new Date());
+      const pointsEvt = bonusEvt ? bonusEvt.points : 0;
+      // Check if first delivered order for bonus
+      const allCmds = await db.commandes.list();
+      const clientDelivered = allCmds.filter((c) =>
+        c.client_id === cmd.client_id && c.id !== cmd.id && normalizeStatut(c.statut) === 'livree'
+      );
+      const isFirstOrder = clientDelivered.length === 0;
+      const bonusPremiere = isFirstOrder ? 100 : 0;
+      const totalPoints = pointsCommande + bonusPremiere + pointsEvt;
 
-            await db.fidelite_clients.update(fidelite.id, {
-              points_actuels: newTotal,
-              total_points_gagnes: newTotalGagnes,
-              niveau,
-              historique: hist,
-            });
+      if (totalPoints > 0) {
+        const newTotal = (fidelite.points_actuels || 0) + totalPoints;
+        const newTotalGagnes = (fidelite.total_points_gagnes || 0) + totalPoints;
+        const niveau = determinerNiveau(newTotalGagnes);
 
-            // Check parrainage bonus (if sponsored and first order)
-            if (isFirstOrder) {
-              const employes = await db.employes.list();
-              const client = employes.find((e) => e.id === cmd.client_id);
-              if (client?.parraine_par) {
-                const parrain = employes.find((e) => e.code_parrainage === client.parraine_par);
-                if (parrain) {
-                  const parrainFid = allFidelite.find((f) => f.client_id === parrain.id);
-                  if (parrainFid) {
-                    await db.fidelite_clients.update(parrainFid.id, {
-                      points_actuels: (parrainFid.points_actuels || 0) + BONUS_PARRAINAGE,
-                      total_points_gagnes: (parrainFid.total_points_gagnes || 0) + BONUS_PARRAINAGE,
-                      historique: [...(parrainFid.historique || []), {
-                        type: 'parrainage_valide',
-                        points: BONUS_PARRAINAGE,
-                        description: `Parrainage validé — ${cmd.client_nom}`,
-                        date: new Date().toISOString(),
-                      }],
-                    });
-                    await db.notifications_app.create({
-                      type: 'parrainage_bonus',
-                      titre: '🎁 +200 points parrainage !',
-                      message: `${cmd.client_nom} a passé sa première commande. Vous gagnez 200 points de fidélité !`,
-                      destinataire: 'client',
-                      destinataire_id: parrain.id,
-                      lu: false,
-                    });
-                  }
-                }
+        const hist = [...(fidelite.historique || [])];
+        if (bonusPremiere > 0) {
+          hist.push({ type: 'premiere_commande', points: 100, description: 'Bonus premiere commande', date: new Date().toISOString() });
+        }
+        if (pointsCommande > 0) {
+          hist.push({ type: 'commande', points: pointsCommande, description: `Commande ${cmd.numero || 'CMD'} livrée — ${fmt(montant)} F`, date: new Date().toISOString() });
+        }
+        if (pointsEvt > 0 && bonusEvt) {
+          hist.push({ type: 'bonus_evenement', points: pointsEvt, description: bonusEvt.label, date: new Date().toISOString() });
+        }
+
+        await db.fidelite_clients.update(fidelite.id, {
+          points_actuels: newTotal,
+          total_points_gagnes: newTotalGagnes,
+          niveau,
+          historique: hist,
+        });
+
+        toast.success(`+${totalPoints} points fidélité crédités à ${cmd.client_nom}`);
+
+        // Check parrainage bonus (if sponsored and first delivered order)
+        if (isFirstOrder) {
+          const allClients = await db.clients.list();
+          const client = allClients.find((e) => e.id === cmd.client_id);
+          if (client?.parraine_par) {
+            const parrain = allClients.find((e) => e.code_parrainage === client.parraine_par);
+            if (parrain) {
+              const parrainFid = allFidelite.find((f) => f.client_id === parrain.id);
+              if (parrainFid) {
+                await db.fidelite_clients.update(parrainFid.id, {
+                  points_actuels: (parrainFid.points_actuels || 0) + BONUS_PARRAINAGE,
+                  total_points_gagnes: (parrainFid.total_points_gagnes || 0) + BONUS_PARRAINAGE,
+                  historique: [...(parrainFid.historique || []), {
+                    type: 'parrainage_valide',
+                    points: BONUS_PARRAINAGE,
+                    description: `Parrainage validé — ${cmd.client_nom}`,
+                    date: new Date().toISOString(),
+                  }],
+                });
+                await db.notifications_app.create({
+                  type: 'parrainage_bonus',
+                  titre: '🎁 +200 points parrainage !',
+                  message: `${cmd.client_nom} a passé sa première commande. Vous gagnez 200 points de fidélité !`,
+                  destinataire: 'client',
+                  destinataire_id: parrain.id,
+                  lu: false,
+                });
               }
             }
           }
         }
-      } catch (err) {
-        console.error('Fidelity error:', err);
       }
+    } catch (err) {
+      console.error('Fidelity error:', err);
     }
   };
 
