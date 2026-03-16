@@ -123,6 +123,7 @@ export default function App() {
           <Route index element={<AssocieDashboard />} />
           <Route path="catalogue" element={<Catalogue />} />
           <Route path="stocks" element={<Stocks />} />
+          <Route path="travaux" element={<Travaux />} />
           <Route path="gouvernance" element={<Gouvernance />} />
         </Route>
 

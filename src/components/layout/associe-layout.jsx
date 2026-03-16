@@ -4,7 +4,7 @@ import { useAuth } from '@/services/auth';
 import { cn } from '@/lib/utils';
 import {
   LayoutDashboard, BookOpen, Boxes, Users,
-  TrendingUp, LogOut, Menu, X,
+  TrendingUp, LogOut, Menu, X, Hammer,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
@@ -12,6 +12,7 @@ const ASSOCIE_NAV = [
   { name: 'Tableau de bord', href: '/associe', icon: LayoutDashboard },
   { name: 'Catalogue', href: '/associe/catalogue', icon: BookOpen },
   { name: 'Stocks', href: '/associe/stocks', icon: Boxes },
+  { name: 'Travaux & Projets', href: '/associe/travaux', icon: Hammer },
   { name: 'Gouvernance', href: '/associe/gouvernance', icon: TrendingUp },
 ];
 
