@@ -29,8 +29,12 @@ function fmt(n) { return new Intl.NumberFormat('fr-FR').format(Math.round(n || 0
 function statusBadge(quantite, quantite_minimum) {
   if (quantite <= 0) return { label: 'Rupture', color: 'bg-red-100 text-red-700 border-red-200' };
   if (quantite <= quantite_minimum) return { label: 'Bas', color: 'bg-amber-100 text-amber-700 border-amber-200' };
-  if (quantite <= quantite_minimum * 2) return { label: 'Moyen', color: 'bg-blue-100 text-blue-700 border-blue-200' };
   return { label: 'OK', color: 'bg-emerald-100 text-emerald-700 border-emerald-200' };
+}
+
+// Seuil minimum par defaut selon le type d'article
+function getDefaultSeuil(typeArticle) {
+  return typeArticle === 'consommable' ? 10 : 1;
 }
 
 /* ─── Constants ─── */
@@ -51,7 +55,7 @@ const emptyForm = {
   nom: '', reference: '', categorie: 'Papiers', description: '',
   fournisseur: '', fournisseur_contact: '',
   prix_unitaire: '', unite: 'unité',
-  quantite: '', quantite_minimum: '',
+  quantite: '', quantite_minimum: 10,
   emplacement: '', masque: false, actif: true,
   type_article: 'consommable',
 };
@@ -241,6 +245,15 @@ export default function Stocks() {
       db.produits.list(),
       db.mouvements_stock.list(),
     ]);
+    // Auto-fix: seuil minimum 10 pour consommables qui ont un seuil < 10
+    for (const item of p) {
+      const type = item.type_article || 'consommable';
+      const seuil = item.quantite_minimum ?? item.stock_min ?? 0;
+      if (type === 'consommable' && seuil < 10) {
+        item.quantite_minimum = 10;
+        db.produits.update(item.id, { quantite_minimum: 10 }).catch(() => {});
+      }
+    }
     setProduits(p);
     setMouvements(m);
     setLoading(false);
@@ -719,7 +732,10 @@ export default function Stocks() {
               </div>
               <div>
                 <label className="mb-1.5 block text-sm font-medium">Type d'article *</label>
-                <Select value={form.type_article || 'consommable'} onValueChange={(v) => setForm({ ...form, type_article: v })}>
+                <Select value={form.type_article || 'consommable'} onValueChange={(v) => {
+                  const newSeuil = v === 'consommable' && (Number(form.quantite_minimum) || 0) < 10 ? 10 : form.quantite_minimum;
+                  setForm({ ...form, type_article: v, quantite_minimum: newSeuil });
+                }}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>{TYPE_ARTICLE.map((t) => <SelectItem key={t.value} value={t.value}>{t.icon} {t.label}</SelectItem>)}</SelectContent>
                 </Select>
