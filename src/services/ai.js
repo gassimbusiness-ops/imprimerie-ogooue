@@ -70,12 +70,20 @@ export async function chatAI(system, messages, maxTokens = 300) {
 export const AI_PROMPTS = {
   catalogue: {
     description: (nom, categorie, prix) => ({
-      system: `Tu es un expert en rédaction de fiches produits pour une imprimerie au Gabon. Réponds UNIQUEMENT avec la description, rien d'autre.`,
-      prompt: `Génère une description commerciale courte (2-3 phrases) pour ce produit d'imprimerie :\n- Nom : ${nom}\n- Catégorie : ${categorie}\n- Prix : ${prix} FCFA\nTon professionnel et accessible, adapté au marché gabonais.`,
+      system: `Tu es expert en communication pour une imprimerie au Gabon, Afrique centrale. Réponds UNIQUEMENT avec la description, rien d'autre. Pas de markdown.`,
+      prompt: `Génère une description commerciale courte (2-3 phrases, accrocheur, adapté au marché gabonais) pour ce produit d'imprimerie :\n- Nom : ${nom}\n- Catégorie : ${categorie}\n- Prix : ${prix} FCFA\nTon professionnel et accessible.`,
+    }),
+    descriptionJSON: (nom, categorie, prix, descriptionActuelle) => ({
+      system: `Tu es expert en communication pour une imprimerie au Gabon, Afrique centrale.`,
+      prompt: `Génère pour ce produit :\n- Une description commerciale courte (2-3 phrases, accrocheur, adapté au marché gabonais)\n- 5 tags de recherche pertinents\n- Une suggestion de sous-catégorie si vide\n\nProduit : ${nom}\nCatégorie : ${categorie}\nPrix : ${prix} FCFA\nDescription actuelle : ${descriptionActuelle || 'vide'}\n\nRéponds UNIQUEMENT en JSON valide : {"description": "...", "tags": ["...", "..."], "subcategory": "..."}`,
     }),
     tags: (nom, categorie) => ({
       system: `Tu es un expert en e-commerce pour une imprimerie au Gabon.`,
       prompt: `Pour ce produit d'imprimerie (${nom} - ${categorie}), suggère 4-5 tags pertinents pour la recherche.\nRéponds UNIQUEMENT avec les tags séparés par des virgules, ex: "flyer, impression, A5, papier glacé"`,
+    }),
+    analyseVentes: (topProducts, currentCA, previousCA, currentMonth) => ({
+      system: `Tu es consultant en stratégie commerciale pour une imprimerie à Moanda, Gabon.`,
+      prompt: `Analyse ces données de ventes et donne 3 recommandations concrètes et actionnables.\n\nTop produits ce mois : ${JSON.stringify(topProducts)}\nCA ce mois : ${currentCA} FCFA\nCA mois précédent : ${previousCA} FCFA\nSaison actuelle : ${currentMonth}\n\nRéponds en texte naturel, sans markdown, en 5-7 phrases maximum.`,
     }),
   },
   stocks: {

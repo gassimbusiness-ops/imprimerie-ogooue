@@ -770,10 +770,45 @@ export default function Catalogue() {
   };
 
   /* ─── IA Handlers ─── */
-  const handleGenImages = () => {
-    toast.info('Fonctionnalité en cours de développement', {
-      description: 'La génération d\'images IA sera bientôt disponible.',
-    });
+  const [imageGenProduct, setImageGenProduct] = useState(null);
+  const [imageGenUrl, setImageGenUrl] = useState(null);
+  const [imageGenLoading, setImageGenLoading] = useState(false);
+
+  const handleGenImages = async (product) => {
+    const p = product || (filtered.length > 0 ? filtered[0] : produits[0]);
+    if (!p) { toast.error('Aucun produit sélectionné'); return; }
+    setImageGenProduct(p);
+    setImageGenUrl(null);
+    setImageGenLoading(true);
+    try {
+      const res = await fetch('/api/generate-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          prompt: `Professional product photo for ${p.nom}, print shop in Gabon Africa, white background, commercial photography style, vibrant colors`,
+          size: '1024x1024',
+          quality: 'standard',
+        }),
+      });
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+      setImageGenUrl(data.url);
+      toast.success('Image generee !');
+    } catch (err) {
+      toast.error(`Erreur generation image : ${err.message}`);
+    } finally {
+      setImageGenLoading(false);
+    }
+  };
+
+  const handleUseGenImage = async () => {
+    if (!imageGenProduct || !imageGenUrl) return;
+    const images = [...(imageGenProduct.images || []), imageGenUrl];
+    await db.produits_catalogue.update(imageGenProduct.id, { images });
+    toast.success('Image ajoutee au produit');
+    setImageGenProduct(null);
+    setImageGenUrl(null);
+    load();
   };
 
   const handleGenDescriptions = async () => {
@@ -914,10 +949,10 @@ export default function Catalogue() {
             <Button
               className="gap-1.5 bg-[#E91E63] hover:bg-[#C2185B] text-white text-xs"
               size="sm"
-              onClick={handleGenImages}
-              disabled={!!iaLoading}
+              onClick={() => handleGenImages()}
+              disabled={!!iaLoading || imageGenLoading}
             >
-              {iaLoading === 'images' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ImagePlus className="h-3.5 w-3.5" />}
+              {imageGenLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ImagePlus className="h-3.5 w-3.5" />}
               Générer images IA
             </Button>
             <Button
@@ -1195,6 +1230,52 @@ export default function Catalogue() {
 
       {/* Zoom Overlay */}
       <ZoomOverlay src={zoomSrc} onClose={() => setZoomSrc(null)} />
+
+      {/* Image Generation Modal */}
+      <Dialog open={!!imageGenProduct} onOpenChange={() => { setImageGenProduct(null); setImageGenUrl(null); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ImagePlus className="h-4 w-4" /> Generer image IA
+            </DialogTitle>
+          </DialogHeader>
+          {imageGenProduct && (
+            <div className="space-y-4">
+              <p className="text-sm text-muted-foreground">Produit : <strong>{imageGenProduct.nom}</strong></p>
+              {imageGenLoading && (
+                <div className="flex flex-col items-center py-8 gap-3">
+                  <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                  <p className="text-sm text-muted-foreground">Generation en cours...</p>
+                </div>
+              )}
+              {imageGenUrl && (
+                <div className="space-y-3">
+                  <img src={imageGenUrl} alt="Generee par IA" className="w-full rounded-lg border" />
+                  <p className="text-[10px] text-muted-foreground text-center">Creee par IA — pour validation avant utilisation</p>
+                  <div className="flex gap-2">
+                    <Button className="flex-1 gap-1.5" onClick={handleUseGenImage}>
+                      <Eye className="h-3.5 w-3.5" /> Utiliser comme photo
+                    </Button>
+                    <Button variant="outline" className="flex-1 gap-1.5" onClick={() => handleGenImages(imageGenProduct)}>
+                      <Sparkles className="h-3.5 w-3.5" /> Regenerer
+                    </Button>
+                  </div>
+                  <a href={imageGenUrl} download={`${imageGenProduct.nom}-ia.png`} className="block">
+                    <Button variant="outline" className="w-full gap-1.5" size="sm">
+                      <FileDown className="h-3.5 w-3.5" /> Telecharger
+                    </Button>
+                  </a>
+                </div>
+              )}
+              {!imageGenLoading && !imageGenUrl && (
+                <Button className="w-full gap-2 bg-[#E91E63] hover:bg-[#C2185B] text-white" onClick={() => handleGenImages(imageGenProduct)}>
+                  <ImagePlus className="h-4 w-4" /> Lancer la generation
+                </Button>
+              )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
