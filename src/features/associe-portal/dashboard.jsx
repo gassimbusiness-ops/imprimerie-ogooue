@@ -176,6 +176,40 @@ function SimulateurZakat({ capInfo, myInvestisseur }) {
   );
 }
 
+// ── Auto-seed investisseurs si la collection est vide ──
+async function ensureInvestisseurs() {
+  const existing = await db.investisseurs.list();
+  if (existing && existing.length > 0) return existing;
+  // Seed les deux associes fondateurs
+  const inv1 = await db.investisseurs.create({
+    id: 'inv-oumar',
+    nom: 'Oumar Ibrahim (Abakar Senoussi)',
+    prenom: 'Oumar',
+    entreprise: 'Imprimerie Ogooue',
+    montantInitial: 4965000,
+    montantActuel: 4965000,
+    devise: 'FCFA',
+    dateEntree: '2024-01-01',
+    statut: 'actif',
+    notes: 'Gerant — Capital initial 3M + 1.965M Chine',
+    role: 'gerant',
+  });
+  const inv2 = await db.investisseurs.create({
+    id: 'inv-senouss',
+    nom: 'Senouss Saleh',
+    prenom: 'Senouss',
+    entreprise: 'Imprimerie Ogooue',
+    montantInitial: 2500000,
+    montantActuel: 2500000,
+    devise: 'FCFA',
+    dateEntree: '2024-01-01',
+    statut: 'actif',
+    notes: 'Associe',
+    role: 'associe',
+  });
+  return [inv1, inv2].filter(Boolean);
+}
+
 export default function AssocieDashboard() {
   const { user } = useAuth();
   const [loading, setLoading] = useState(true);
@@ -195,7 +229,7 @@ export default function AssocieDashboard() {
           db.produits.list(),
           db.commandes.list(),
           db.produits_catalogue.list(),
-          db.investisseurs.list(),
+          ensureInvestisseurs(),
           db.apports_associes.list(),
           db.dettes_associes.list(),
           db.remboursements_associes.list(),
@@ -237,10 +271,18 @@ export default function AssocieDashboard() {
 
   // Find the current associate's investor record
   const myInvestisseur = useMemo(() => {
-    const nom = `${user?.prenom || ''} ${user?.nom || ''}`.trim().toLowerCase();
+    const userNom = (user?.nom || '').toLowerCase();
+    const userPrenom = (user?.prenom || '').toLowerCase();
+    const userFull = `${userPrenom} ${userNom}`.trim();
     return data.investisseurs.find((inv) => {
       const invNom = (inv.nom || '').toLowerCase();
-      return inv.user_id === user?.id || invNom.includes((user?.nom || '').toLowerCase()) || invNom === nom;
+      const invPrenom = (inv.prenom || '').toLowerCase();
+      return inv.user_id === user?.id
+        || (userNom && invNom.includes(userNom))
+        || (userPrenom && invPrenom.includes(userPrenom))
+        || (userPrenom && invNom.includes(userPrenom))
+        || (userFull && invNom.includes(userFull))
+        || inv.role === 'associe' && user?.role === 'associe';
     });
   }, [data.investisseurs, user]);
 
