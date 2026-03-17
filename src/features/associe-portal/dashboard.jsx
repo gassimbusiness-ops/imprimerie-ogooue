@@ -186,12 +186,13 @@ async function ensureInvestisseurs() {
     nom: 'Oumar Ibrahim (Abakar Senoussi)',
     prenom: 'Oumar',
     entreprise: 'Imprimerie Ogooue',
-    montantInitial: 4965000,
-    montantActuel: 4965000,
+    montantInitial: 7965000,
+    montantActuel: 7965000,
+    pourcentage: 76.11,
     devise: 'FCFA',
     dateEntree: '2024-01-01',
     statut: 'actif',
-    notes: 'Gerant — Capital initial 3M + 1.965M Chine',
+    notes: 'Gerant — 3M + 1.965M + 2M + 1M = 7.965M',
     role: 'gerant',
   });
   const inv2 = await db.investisseurs.create({
@@ -201,6 +202,7 @@ async function ensureInvestisseurs() {
     entreprise: 'Imprimerie Ogooue',
     montantInitial: 2500000,
     montantActuel: 2500000,
+    pourcentage: 23.89,
     devise: 'FCFA',
     dateEntree: '2024-01-01',
     statut: 'actif',
@@ -223,7 +225,7 @@ export default function AssocieDashboard() {
   useEffect(() => {
     const loadData = async () => {
       try {
-        const [emp, stk, inv, cmd, prod, investisseurs, ap, dettes, remb, projets, params, s] = await Promise.all([
+        const [emp, stk, inv, cmd, prod, investisseurs, ap, dettes, remb, projets, params, s, comptes] = await Promise.all([
           db.employes.list(),
           db.produits_catalogue.list(),
           db.produits.list(),
@@ -236,6 +238,7 @@ export default function AssocieDashboard() {
           db.projets_travaux.list(),
           db.gouvernance_parametres?.list() ?? Promise.resolve([]),
           getSettings(),
+          db.comptes_bancaires.list(),
         ]);
         setData({
           employes: (emp || []).filter((e) => e.role !== 'client'),
@@ -249,16 +252,44 @@ export default function AssocieDashboard() {
           remboursements: remb || [],
           projets: projets || [],
         });
-        // Load saved valuation params
+
+        // Valuation depuis donnees REELLES Supabase
+        const allProduits = inv || [];
+        const stockReel = allProduits.reduce((s2, p) => {
+          const prix = p.prix_unitaire || p.prix_vente || 0;
+          const qte = p.quantite ?? p.stock ?? 0;
+          return s2 + (prix * qte);
+        }, 0);
+        const machinesReel = allProduits.reduce((s2, p) => {
+          if (p.type_article === 'machine') return s2 + (p.valeur_stock_achat || (p.prix_unitaire || 0) * (p.quantite ?? 1));
+          return s2;
+        }, 0);
+
+        // Whitelist comptes locaux, blacklist comptes internationaux
+        const COMPTES_IMPRIMERIE = ['finam', 'bgfi', 'airtel', 'moov', 'caisse', 'liquide'];
+        const COMPTES_EXCLUS = ['wise', 'mercury', 'paypal', 'stripe', 'airwallex'];
+        const comptesImprimerie = (comptes || []).filter((c) => {
+          const nom = (c.nom || '').toLowerCase();
+          if (COMPTES_EXCLUS.some((k) => nom.includes(k))) return false;
+          return COMPTES_IMPRIMERIE.some((k) => nom.includes(k)) || c.appartient_imprimerie === true;
+        });
+        const tresorerieCompte = comptesImprimerie
+          .filter((c) => !(c.nom || '').toLowerCase().includes('caisse') && !(c.nom || '').toLowerCase().includes('liquide'))
+          .reduce((s2, c) => s2 + (c.solde || 0), 0);
+        const tresorerieCaisse = comptesImprimerie
+          .filter((c) => (c.nom || '').toLowerCase().includes('caisse') || (c.nom || '').toLowerCase().includes('liquide'))
+          .reduce((s2, c) => s2 + (c.solde || 0), 0);
+
         const savedParams = (params || []).find((p) => p.type === 'valuation');
-        if (savedParams) {
-          setValuationParams({
-            inventaire: savedParams.inventaire ?? DEFAULT_VALUATION.inventaire,
-            machines: savedParams.machines ?? DEFAULT_VALUATION.machines,
-            tresorerie_compte: savedParams.tresorerie_compte ?? DEFAULT_VALUATION.tresorerie_compte,
-            tresorerie_caisse: savedParams.tresorerie_caisse ?? DEFAULT_VALUATION.tresorerie_caisse,
-          });
-        }
+        const hasRealStock = allProduits.length > 0;
+        const hasRealComptes = comptesImprimerie.length > 0;
+
+        setValuationParams({
+          inventaire: hasRealStock ? stockReel : (savedParams?.inventaire ?? DEFAULT_VALUATION.inventaire),
+          machines: hasRealStock ? machinesReel : (savedParams?.machines ?? DEFAULT_VALUATION.machines),
+          tresorerie_compte: hasRealComptes ? tresorerieCompte : (savedParams?.tresorerie_compte ?? DEFAULT_VALUATION.tresorerie_compte),
+          tresorerie_caisse: hasRealComptes ? tresorerieCaisse : (savedParams?.tresorerie_caisse ?? DEFAULT_VALUATION.tresorerie_caisse),
+        });
         setSettings(s);
       } catch (err) {
         console.error('Associe dashboard load error:', err);
@@ -300,18 +331,15 @@ export default function AssocieDashboard() {
     return { inventaire, machines, tresorerie, actifs, passifs, valeur_nette };
   }, [valuationParams, data.dettes, data.remboursements]);
 
-  // Cap table from investisseurs
+  // Parts sociales FIGEES — 76.11% Oumar / 23.89% Senouss / Total 10 465 000
   const capInfo = useMemo(() => {
     if (!myInvestisseur) return null;
-    const totalCapital = data.investisseurs.reduce((s, inv) => s + (inv.montantActuel || inv.montantInitial || 0), 0);
-    const myMontant = myInvestisseur.montantActuel || myInvestisseur.montantInitial || 0;
-    const myPct = totalCapital > 0 ? (myMontant / totalCapital) * 100 : 0;
-    // Adjust for management bonus (Oumar 70/30 rule)
-    const isOumar = myInvestisseur.id === 'inv-oumar' || myInvestisseur.nom?.includes('Oumar');
-    const finalPct = isOumar ? 70 : 30; // Simplified — matches cap table in gouvernance
+    const isOumar = myInvestisseur.id === 'inv-oumar' || myInvestisseur.nom?.toLowerCase().includes('oumar');
+    const finalPct = isOumar ? 76.11 : 23.89;
+    const myMontant = isOumar ? 7965000 : 2500000;
     const valeurPart = (valuation.valeur_nette * finalPct) / 100;
-    return { montant: myMontant, pct: finalPct, valeurPart, totalCapital };
-  }, [myInvestisseur, data.investisseurs, valuation]);
+    return { montant: myMontant, pct: finalPct, valeurPart, totalCapital: 10465000 };
+  }, [myInvestisseur, valuation]);
 
   const stats = useMemo(() => {
     const totalEmployes = data.employes.length;
@@ -479,7 +507,7 @@ export default function AssocieDashboard() {
       {/* Simulateur Zakat — visible des que l'utilisateur est associe */}
       {(capInfo || user?.role === 'associe') && (
         <SimulateurZakat
-          capInfo={capInfo || { pct: 30, valeurPart: myInvestisseur?.montantActuel || myInvestisseur?.montantInitial || 2500000, totalCapital: 7465000 }}
+          capInfo={capInfo || { pct: 23.89, valeurPart: 2500000, totalCapital: 10465000 }}
           myInvestisseur={myInvestisseur || { nom: `${user?.prenom || ''} ${user?.nom || ''}`.trim(), montantInitial: 2500000 }}
         />
       )}

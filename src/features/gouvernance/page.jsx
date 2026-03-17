@@ -39,22 +39,15 @@ function fmtDate(iso) {
 }
 
 // ─── Algorithme de dilution ───
-function computeCapTable(apports, capitalBase = 7465000) {
-  let oumarShares = 70;
-  let senoussShares = 30;
-  const extraApports = apports.filter((a) => a.type === 'apport_capital');
-  const totalExtra = extraApports.reduce((s, a) => s + (a.montant || 0), 0);
-  if (totalExtra > 0) {
-    const oumarExtra = extraApports.filter((a) => a.associe === 'oumar').reduce((s, a) => s + a.montant, 0);
-    const senoussExtra = extraApports.filter((a) => a.associe === 'senouss').reduce((s, a) => s + a.montant, 0);
-    const oumarTotal = (capitalBase * 0.70) + oumarExtra;
-    const senoussTotal = (capitalBase * 0.30) + senoussExtra;
-    const grandTotal = oumarTotal + senoussTotal;
-    oumarShares = (oumarTotal / grandTotal) * 100;
-    senoussShares = (senoussTotal / grandTotal) * 100;
-  }
-  return { oumar: oumarShares, senouss: senoussShares, totalCapital: capitalBase + totalExtra };
-}
+// Parts sociales FIGEES — ne changent que sur modification manuelle admin
+// Oumar: 3M + 1.965M + 2M + 1M = 7 965 000 | Senouss: 2 500 000 | Total: 10 465 000
+const PARTS_SOCIALES = {
+  oumar: 76.11,
+  senouss: 23.89,
+  totalCapital: 10465000,
+  apportsOumar: 7965000,
+  apportsSenouss: 2500000,
+};
 
 const COLORS = ['#3b82f6', '#f59e0b', '#10b981', '#8b5cf6'];
 
@@ -79,12 +72,13 @@ async function seedInvestisseurs() {
     nom: 'Oumar Ibrahim (Abakar Senoussi)',
     prenom: 'Oumar',
     entreprise: 'Imprimerie Ogooué',
-    montantInitial: 4965000,
-    montantActuel: 4965000,
+    montantInitial: 7965000,
+    montantActuel: 7965000,
+    pourcentage: 76.11,
     devise: 'FCFA',
     dateEntree: '2024-01-01',
     statut: 'actif',
-    notes: 'Gérant — Capital initial 3M + 1.965M Chine',
+    notes: 'Gérant — 3M + 1.965M + 2M + 1M = 7.965M',
     role: 'gerant',
   });
   await db.investisseurs.create({
@@ -94,6 +88,7 @@ async function seedInvestisseurs() {
     entreprise: 'Imprimerie Ogooué',
     montantInitial: 2500000,
     montantActuel: 2500000,
+    pourcentage: 23.89,
     devise: 'FCFA',
     dateEntree: '2024-01-01',
     statut: 'actif',
@@ -143,29 +138,64 @@ export default function Gouvernance() {
   const load = async () => {
     try {
       setLoadError(null);
-      const [a, d, r, inv, mods, params] = await Promise.all([
+      const [a, d, r, inv, mods, params, produits, comptes] = await Promise.all([
         db.apports_associes.list(),
         db.dettes_associes.list(),
         db.remboursements_associes.list(),
         db.investisseurs.list(),
         db.modifications_investisseurs.list(),
         db.gouvernance_parametres.list(),
+        db.produits.list(),
+        db.comptes_bancaires.list(),
       ]);
       setApports(a);
       setDettes(d);
       setRemboursements(r);
       setInvestisseurs(inv);
       setModifications(mods);
-      // Load saved valuation params or use defaults
-      const savedParams = params.find((p) => p.type === 'valuation');
-      if (savedParams) {
-        setValuationParams({
-          inventaire: savedParams.inventaire ?? DEFAULT_VALUATION.inventaire,
-          machines: savedParams.machines ?? DEFAULT_VALUATION.machines,
-          tresorerie_compte: savedParams.tresorerie_compte ?? DEFAULT_VALUATION.tresorerie_compte,
-          tresorerie_caisse: savedParams.tresorerie_caisse ?? DEFAULT_VALUATION.tresorerie_caisse,
-        });
-      }
+
+      // ── Valuation depuis données REELLES Supabase ──
+      // Stock réel = somme (prix_unitaire × quantite) depuis module Stocks
+      const stockReel = (produits || []).reduce((s, p) => {
+        const prix = p.prix_unitaire || p.prix_vente || 0;
+        const qte = p.quantite ?? p.stock ?? 0;
+        return s + (prix * qte);
+      }, 0);
+
+      // Machines réelles (type_article = 'machine') depuis module Stocks
+      const machinesReel = (produits || []).reduce((s, p) => {
+        if (p.type_article === 'machine') return s + (p.valeur_stock_achat || (p.prix_unitaire || 0) * (p.quantite ?? 1));
+        return s;
+      }, 0);
+
+      // Trésorerie réelle depuis comptes bancaires Imprimerie uniquement
+      // Whitelist : FINAM, BGFI, Airtel Money, Moov Money, Caisse/Liquide
+      // Blacklist : Wise, Mercury, PayPal, Stripe, Airwallex (comptes internationaux)
+      const COMPTES_IMPRIMERIE = ['finam', 'bgfi', 'airtel', 'moov', 'caisse', 'liquide'];
+      const COMPTES_EXCLUS = ['wise', 'mercury', 'paypal', 'stripe', 'airwallex'];
+      const comptesImprimerie = (comptes || []).filter((c) => {
+        const nom = (c.nom || '').toLowerCase();
+        if (COMPTES_EXCLUS.some((k) => nom.includes(k))) return false;
+        return COMPTES_IMPRIMERIE.some((k) => nom.includes(k)) || c.appartient_imprimerie === true;
+      });
+      const tresorerieCompte = comptesImprimerie
+        .filter((c) => !(c.nom || '').toLowerCase().includes('caisse') && !(c.nom || '').toLowerCase().includes('liquide'))
+        .reduce((s, c) => s + (c.solde || 0), 0);
+      const tresorerieCaisse = comptesImprimerie
+        .filter((c) => (c.nom || '').toLowerCase().includes('caisse') || (c.nom || '').toLowerCase().includes('liquide'))
+        .reduce((s, c) => s + (c.solde || 0), 0);
+
+      // Utiliser données réelles si disponibles, sinon fallback sur params sauvegardés ou seed
+      const savedParams = (params || []).find((p) => p.type === 'valuation');
+      const hasRealStock = (produits || []).length > 0;
+      const hasRealComptes = comptesImprimerie.length > 0;
+
+      setValuationParams({
+        inventaire: hasRealStock ? stockReel : (savedParams?.inventaire ?? DEFAULT_VALUATION.inventaire),
+        machines: hasRealStock ? machinesReel : (savedParams?.machines ?? DEFAULT_VALUATION.machines),
+        tresorerie_compte: hasRealComptes ? tresorerieCompte : (savedParams?.tresorerie_compte ?? DEFAULT_VALUATION.tresorerie_compte),
+        tresorerie_caisse: hasRealComptes ? tresorerieCaisse : (savedParams?.tresorerie_caisse ?? DEFAULT_VALUATION.tresorerie_caisse),
+      });
     } catch (err) {
       console.error('Gouvernance load error:', err);
       setLoadError(err.message || 'Erreur de chargement des données');
@@ -199,7 +229,8 @@ export default function Gouvernance() {
     })();
   }, []);
 
-  const capTable = useMemo(() => computeCapTable(apports), [apports]);
+  // Parts figees — plus de calcul dynamique
+  const capTable = PARTS_SOCIALES;
 
   const detteInfo = useMemo(() => {
     const dette = dettes.find((d) => d.associe === 'oumar');
@@ -652,7 +683,7 @@ export default function Gouvernance() {
                 </div>
                 <div className="space-y-3 mt-4">
                   {[
-                    { nom: 'Oumar Ibrahim (Abakar Senoussi)', pct: capTable.oumar, valeur: oumarValue, color: 'bg-blue-500', initial: '4 965 000 F + apports', role: 'Gérant' },
+                    { nom: 'Oumar Ibrahim (Abakar Senoussi)', pct: capTable.oumar, valeur: oumarValue, color: 'bg-blue-500', initial: '7 965 000 F', role: 'Gérant' },
                     { nom: 'Senouss Saleh', pct: capTable.senouss, valeur: senoussValue, color: 'bg-amber-500', initial: '2 500 000 F', role: 'Associé' },
                   ].map((a) => (
                     <div key={a.nom} className="rounded-xl border p-3">
@@ -829,8 +860,9 @@ export default function Gouvernance() {
                 <div className="mt-4 rounded-xl bg-slate-50 p-3 border">
                   <p className="text-xs font-semibold text-muted-foreground mb-2 flex items-center gap-1"><Shield className="h-3 w-3" /> Formule de dilution</p>
                   <div className="text-[11px] text-muted-foreground space-y-1">
-                    <p>Capital de base : 7 465 000 F (Oumar 70% / Senouss 30%)</p>
-                    <p>+ Apports post-création : {fmt(apports.reduce((s, a) => s + (a.type === 'apport_capital' ? a.montant : 0), 0))} F</p>
+                    <p>Capital total : {fmt(PARTS_SOCIALES.totalCapital)} F</p>
+                    <p>Oumar : {fmt(PARTS_SOCIALES.apportsOumar)} F (3M + 1.965M + 2M + 1M)</p>
+                    <p>Senouss : {fmt(PARTS_SOCIALES.apportsSenouss)} F</p>
                     <p className="font-semibold text-foreground">= Oumar {capTable.oumar.toFixed(2)}% / Senouss {capTable.senouss.toFixed(2)}%</p>
                   </div>
                 </div>

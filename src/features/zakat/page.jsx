@@ -19,23 +19,12 @@ const DEFAULT_VALUATION = {
   tresorerie_caisse: FINANCIAL_SUMMARY.cash_en_caisse,
 };
 
-// Meme logique que gouvernance/page.jsx — computeCapTable
-function computeCapTable(apports, capitalBase = 7465000) {
-  let oumarShares = 70;
-  let senoussShares = 30;
-  const extraApports = (apports || []).filter((a) => a.type === 'apport_capital');
-  const totalExtra = extraApports.reduce((s, a) => s + (a.montant || 0), 0);
-  if (totalExtra > 0) {
-    const oumarExtra = extraApports.filter((a) => a.associe === 'oumar').reduce((s, a) => s + a.montant, 0);
-    const senoussExtra = extraApports.filter((a) => a.associe === 'senouss').reduce((s, a) => s + a.montant, 0);
-    const oumarTotal = (capitalBase * 0.70) + oumarExtra;
-    const senoussTotal = (capitalBase * 0.30) + senoussExtra;
-    const grandTotal = oumarTotal + senoussTotal;
-    oumarShares = (oumarTotal / grandTotal) * 100;
-    senoussShares = (senoussTotal / grandTotal) * 100;
-  }
-  return { oumar: oumarShares, senouss: senoussShares, totalCapital: capitalBase + totalExtra };
-}
+// Parts sociales FIGEES — meme constante que Gouvernance
+const PARTS_SOCIALES = {
+  oumar: 76.11,
+  senouss: 23.89,
+  totalCapital: 10465000,
+};
 
 // Matcher un utilisateur vers un associe (oumar ou senouss)
 function matchAssocieKey(employe) {
@@ -52,7 +41,7 @@ export default function ZakatPage() {
   const { user, isAdmin } = useAuth();
   const [associes, setAssocies] = useState([]);
   const [investisseurs, setInvestisseurs] = useState([]);
-  const [apports, setApports] = useState([]);
+  // apports plus necessaire — parts figees
   const [dettes, setDettes] = useState([]);
   const [remboursements, setRemboursements] = useState([]);
   const [valuationParams, setValuationParams] = useState(DEFAULT_VALUATION);
@@ -66,30 +55,59 @@ export default function ZakatPage() {
   useEffect(() => {
     const load = async () => {
       try {
-        const [emp, inv, ap, det, remb, params] = await Promise.all([
+        const [emp, inv, ap, det, remb, params, produits, comptes] = await Promise.all([
           db.employes.list(),
           db.investisseurs.list(),
           db.apports_associes.list(),
           db.dettes_associes.list(),
           db.remboursements_associes.list(),
           db.gouvernance_parametres?.list() ?? Promise.resolve([]),
+          db.produits.list(),
+          db.comptes_bancaires.list(),
         ]);
         // Utilisateurs avec role associe ou admin
         setAssocies((emp || []).filter((e) => e.role === 'associe' || e.role === 'admin'));
         setInvestisseurs(inv || []);
-        setApports(ap || []);
         setDettes(det || []);
         setRemboursements(remb || []);
-        // Valuation sauvegardee
+
+        // Stock reel depuis module Stocks
+        const stockReel = (produits || []).reduce((s, p) => {
+          const prix = p.prix_unitaire || p.prix_vente || 0;
+          const qte = p.quantite ?? p.stock ?? 0;
+          return s + (prix * qte);
+        }, 0);
+        const machinesReel = (produits || []).reduce((s, p) => {
+          if (p.type_article === 'machine') return s + (p.valeur_stock_achat || (p.prix_unitaire || 0) * (p.quantite ?? 1));
+          return s;
+        }, 0);
+
+        // Tresorerie reelle — comptes Imprimerie uniquement
+        // Whitelist comptes locaux, blacklist comptes internationaux
+        const COMPTES_IMPRIMERIE = ['finam', 'bgfi', 'airtel', 'moov', 'caisse', 'liquide'];
+        const COMPTES_EXCLUS = ['wise', 'mercury', 'paypal', 'stripe', 'airwallex'];
+        const comptesImprimerie = (comptes || []).filter((c) => {
+          const nom = (c.nom || '').toLowerCase();
+          if (COMPTES_EXCLUS.some((k) => nom.includes(k))) return false;
+          return COMPTES_IMPRIMERIE.some((k) => nom.includes(k)) || c.appartient_imprimerie === true;
+        });
+        const tresorerieCompte = comptesImprimerie
+          .filter((c) => !(c.nom || '').toLowerCase().includes('caisse') && !(c.nom || '').toLowerCase().includes('liquide'))
+          .reduce((s, c) => s + (c.solde || 0), 0);
+        const tresorerieCaisse = comptesImprimerie
+          .filter((c) => (c.nom || '').toLowerCase().includes('caisse') || (c.nom || '').toLowerCase().includes('liquide'))
+          .reduce((s, c) => s + (c.solde || 0), 0);
+
         const savedParams = (params || []).find((p) => p.type === 'valuation');
-        if (savedParams) {
-          setValuationParams({
-            inventaire: savedParams.inventaire ?? DEFAULT_VALUATION.inventaire,
-            machines: savedParams.machines ?? DEFAULT_VALUATION.machines,
-            tresorerie_compte: savedParams.tresorerie_compte ?? DEFAULT_VALUATION.tresorerie_compte,
-            tresorerie_caisse: savedParams.tresorerie_caisse ?? DEFAULT_VALUATION.tresorerie_caisse,
-          });
-        }
+        const hasRealStock = (produits || []).length > 0;
+        const hasRealComptes = comptesImprimerie.length > 0;
+
+        setValuationParams({
+          inventaire: hasRealStock ? stockReel : (savedParams?.inventaire ?? DEFAULT_VALUATION.inventaire),
+          machines: hasRealStock ? machinesReel : (savedParams?.machines ?? DEFAULT_VALUATION.machines),
+          tresorerie_compte: hasRealComptes ? tresorerieCompte : (savedParams?.tresorerie_compte ?? DEFAULT_VALUATION.tresorerie_compte),
+          tresorerie_caisse: hasRealComptes ? tresorerieCaisse : (savedParams?.tresorerie_caisse ?? DEFAULT_VALUATION.tresorerie_caisse),
+        });
       } catch (err) {
         console.error('Zakat load error:', err);
       } finally {
@@ -99,8 +117,8 @@ export default function ZakatPage() {
     load();
   }, []);
 
-  // Cap table dynamique (meme calcul que Gouvernance)
-  const capTable = useMemo(() => computeCapTable(apports), [apports]);
+  // Parts figees — plus de calcul dynamique
+  const capTable = PARTS_SOCIALES;
 
   // Valuation nette de l'entreprise
   const valeurNette = useMemo(() => {
