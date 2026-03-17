@@ -40,6 +40,15 @@ export default async function handler(req, res) {
     // Reference unique pour cette transaction
     const reference = `OGO-${commandeId.slice(0, 8)}-${Date.now()}`;
 
+    // Merchant ID par operateur (variables d'environnement)
+    const merchantId = operateur === 'airtel'
+      ? process.env.SINGPAY_AIRTEL_MERCHANT
+      : process.env.SINGPAY_MOOV_MERCHANT;
+
+    if (!merchantId) {
+      return res.status(500).json({ error: `Merchant ID non configure pour l'operateur ${operateur}` });
+    }
+
     // Appel API SingPay — initiation paiement
     const paymentResponse = await fetch(`${baseUrl}/api/payments`, {
       method: 'POST',
@@ -49,6 +58,7 @@ export default async function handler(req, res) {
       },
       body: JSON.stringify({
         wallet_id: process.env.SINGPAY_WALLET_ID,
+        merchant_id: merchantId,
         amount: Math.round(montant),
         phone_number: telClean,
         operator: operateur,
