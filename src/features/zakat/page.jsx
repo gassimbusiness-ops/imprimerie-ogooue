@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { db } from '@/services/db';
 import { useAuth } from '@/services/auth';
-import { INVESTISSEURS, FINANCIAL_SUMMARY, MACHINES, INVENTAIRE_STOCK } from '@/utils/seed-data';
+import { FINANCIAL_SUMMARY, MACHINES, INVENTAIRE_STOCK } from '@/utils/seed-data';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -9,58 +9,87 @@ import { BarChart3, Loader2, Sparkles, Users, Moon } from 'lucide-react';
 
 function fmt(n) { return new Intl.NumberFormat('fr-FR').format(Math.round(n || 0)); }
 
-// Valuation de l'entreprise (donnees statiques seed-data)
-const VALUATION = (() => {
-  const inventaire = INVENTAIRE_STOCK.reduce((s, i) => s + (i.qte * i.prix_achat), 0);
-  const machines = MACHINES.reduce((s, m) => s + m.valeur, 0);
-  const tresorerie = FINANCIAL_SUMMARY.cash_en_compte + FINANCIAL_SUMMARY.cash_en_caisse;
-  const actifs = inventaire + machines + tresorerie;
-  const passifs = Math.max(0, 2300000);
-  return { inventaire, machines, tresorerie, actifs, passifs, valeurNette: actifs - passifs };
-})();
-
 // Nisab 2025-2026 : 85g d'or x ~35 000 FCFA/g
 const NISAB = 2975000;
 
-// Mapping des donnees financieres des associes (seed-data)
-const ASSOCIES_DATA = {
-  oumar: INVESTISSEURS.oumar,
-  senouss: INVESTISSEURS.senouss,
+const DEFAULT_VALUATION = {
+  inventaire: INVENTAIRE_STOCK.reduce((s, i) => s + (i.qte * i.prix_achat), 0),
+  machines: MACHINES.reduce((s, m) => s + m.valeur, 0),
+  tresorerie_compte: FINANCIAL_SUMMARY.cash_en_compte,
+  tresorerie_caisse: FINANCIAL_SUMMARY.cash_en_caisse,
 };
 
-// Matcher un utilisateur (employe) a un profil financier investisseur
-function matchInvestisseurData(employe) {
+// Meme logique que gouvernance/page.jsx — computeCapTable
+function computeCapTable(apports, capitalBase = 7465000) {
+  let oumarShares = 70;
+  let senoussShares = 30;
+  const extraApports = (apports || []).filter((a) => a.type === 'apport_capital');
+  const totalExtra = extraApports.reduce((s, a) => s + (a.montant || 0), 0);
+  if (totalExtra > 0) {
+    const oumarExtra = extraApports.filter((a) => a.associe === 'oumar').reduce((s, a) => s + a.montant, 0);
+    const senoussExtra = extraApports.filter((a) => a.associe === 'senouss').reduce((s, a) => s + a.montant, 0);
+    const oumarTotal = (capitalBase * 0.70) + oumarExtra;
+    const senoussTotal = (capitalBase * 0.30) + senoussExtra;
+    const grandTotal = oumarTotal + senoussTotal;
+    oumarShares = (oumarTotal / grandTotal) * 100;
+    senoussShares = (senoussTotal / grandTotal) * 100;
+  }
+  return { oumar: oumarShares, senouss: senoussShares, totalCapital: capitalBase + totalExtra };
+}
+
+// Matcher un utilisateur vers un associe (oumar ou senouss)
+function matchAssocieKey(employe) {
   if (!employe) return null;
   const nom = `${employe.prenom || ''} ${employe.nom || ''}`.toLowerCase();
-  // Matching par nom
-  if (nom.includes('senouss') || nom.includes('saleh')) return { key: 'senouss', ...ASSOCIES_DATA.senouss };
-  if (nom.includes('oumar') || nom.includes('abakar') || nom.includes('ibrahim')) return { key: 'oumar', ...ASSOCIES_DATA.oumar };
-  // Fallback : si c'est un associe sans match, donner les donnees Senouss par defaut
-  if (employe.role === 'associe') return { key: 'senouss', ...ASSOCIES_DATA.senouss };
-  // Si c'est admin/gerant, donner Oumar
-  if (employe.role === 'admin') return { key: 'oumar', ...ASSOCIES_DATA.oumar };
+  if (nom.includes('senouss') || nom.includes('saleh')) return 'senouss';
+  if (nom.includes('oumar') || nom.includes('abakar') || nom.includes('ibrahim')) return 'oumar';
+  if (employe.role === 'associe') return 'senouss';
+  if (employe.role === 'admin') return 'oumar';
   return null;
 }
 
 export default function ZakatPage() {
   const { user, isAdmin } = useAuth();
   const [associes, setAssocies] = useState([]);
+  const [investisseurs, setInvestisseurs] = useState([]);
+  const [apports, setApports] = useState([]);
+  const [dettes, setDettes] = useState([]);
+  const [remboursements, setRemboursements] = useState([]);
+  const [valuationParams, setValuationParams] = useState(DEFAULT_VALUATION);
   const [selectedId, setSelectedId] = useState('__auto__');
   const [loading, setLoading] = useState(true);
   const [annee, setAnnee] = useState(new Date().getFullYear());
   const [resultatIA, setResultatIA] = useState(null);
   const [loadingIA, setLoadingIA] = useState(false);
 
-  // Charger les utilisateurs avec role associe (+ admin pour le gerant)
+  // Charger toutes les donnees (memes sources que page Gouvernance)
   useEffect(() => {
     const load = async () => {
       try {
-        const employes = await db.employes.list();
-        // Filtrer les associes + admin (qui est aussi gerant/investisseur)
-        const associesList = (employes || []).filter(
-          (e) => e.role === 'associe' || e.role === 'admin'
-        );
-        setAssocies(associesList);
+        const [emp, inv, ap, det, remb, params] = await Promise.all([
+          db.employes.list(),
+          db.investisseurs.list(),
+          db.apports_associes.list(),
+          db.dettes_associes.list(),
+          db.remboursements_associes.list(),
+          db.gouvernance_parametres?.list() ?? Promise.resolve([]),
+        ]);
+        // Utilisateurs avec role associe ou admin
+        setAssocies((emp || []).filter((e) => e.role === 'associe' || e.role === 'admin'));
+        setInvestisseurs(inv || []);
+        setApports(ap || []);
+        setDettes(det || []);
+        setRemboursements(remb || []);
+        // Valuation sauvegardee
+        const savedParams = (params || []).find((p) => p.type === 'valuation');
+        if (savedParams) {
+          setValuationParams({
+            inventaire: savedParams.inventaire ?? DEFAULT_VALUATION.inventaire,
+            machines: savedParams.machines ?? DEFAULT_VALUATION.machines,
+            tresorerie_compte: savedParams.tresorerie_compte ?? DEFAULT_VALUATION.tresorerie_compte,
+            tresorerie_caisse: savedParams.tresorerie_caisse ?? DEFAULT_VALUATION.tresorerie_caisse,
+          });
+        }
       } catch (err) {
         console.error('Zakat load error:', err);
       } finally {
@@ -70,27 +99,51 @@ export default function ZakatPage() {
     load();
   }, []);
 
-  // Determiner l'associe courant
+  // Cap table dynamique (meme calcul que Gouvernance)
+  const capTable = useMemo(() => computeCapTable(apports), [apports]);
+
+  // Valuation nette de l'entreprise
+  const valeurNette = useMemo(() => {
+    const { inventaire, machines, tresorerie_compte, tresorerie_caisse } = valuationParams;
+    const tresorerie = tresorerie_compte + tresorerie_caisse;
+    const totalRemb = remboursements.reduce((s, r) => s + (r.montant || 0), 0);
+    const dette = dettes.find((d) => d.associe === 'oumar');
+    const detteRestante = (dette?.montant_initial || 2300000) - totalRemb;
+    const actifs = inventaire + machines + tresorerie;
+    const passifs = Math.max(0, detteRestante);
+    return actifs - passifs;
+  }, [valuationParams, dettes, remboursements]);
+
+  // Determiner l'utilisateur selectionne
   const currentUser = useMemo(() => {
     if (selectedId !== '__auto__') {
       return associes.find((a) => a.id === selectedId) || null;
     }
-    // Auto : l'utilisateur connecte
     if (isAdmin) {
-      // Admin -> montrer son propre profil par defaut
       return associes.find((a) => a.id === user?.id) || associes[0] || null;
     }
-    // Associe -> son propre profil
     return associes.find((a) => a.id === user?.id) || associes.find((a) => a.role === 'associe') || null;
   }, [selectedId, associes, isAdmin, user]);
 
-  // Donnees financieres du profil selectionne
-  const investData = useMemo(() => matchInvestisseurData(currentUser), [currentUser]);
+  // Cle associe (oumar ou senouss) et donnees financieres
+  const associeKey = useMemo(() => matchAssocieKey(currentUser), [currentUser]);
+
+  // Montant investi (depuis collection investisseurs Supabase)
+  const investisseurRecord = useMemo(() => {
+    if (!associeKey) return null;
+    return investisseurs.find((inv) => {
+      const invNom = (inv.nom || '').toLowerCase();
+      if (associeKey === 'oumar') return invNom.includes('oumar') || invNom.includes('abakar') || inv.id === 'inv-oumar';
+      return invNom.includes('senouss') || invNom.includes('saleh') || inv.id === 'inv-senouss';
+    });
+  }, [investisseurs, associeKey]);
+
+  // Pourcentage reel depuis capTable (meme que Gouvernance affiche)
+  const pourcentage = associeKey ? capTable[associeKey] : 0;
+  const totalInvesti = investisseurRecord?.montantActuel || investisseurRecord?.montantInitial || (associeKey === 'oumar' ? 4965000 : 2500000);
 
   // Calcul Zakat
-  const pourcentage = investData?.pourcentage_final || 30;
-  const totalInvesti = investData?.total_investi || 2500000;
-  const valeurPart = (VALUATION.valeurNette * pourcentage) / 100;
+  const valeurPart = (valeurNette * pourcentage) / 100;
   const zakatBrute = valeurPart * 0.025;
   const zakatObligatoire = valeurPart >= NISAB;
   const zakatDue = zakatObligatoire ? zakatBrute : 0;
@@ -173,7 +226,7 @@ export default function ZakatPage() {
         </Card>
       )}
 
-      {currentUser && investData ? (
+      {currentUser && associeKey ? (
         <Card className="border-green-200 bg-green-50/30">
           <CardContent className="p-4 sm:p-6">
             {/* Profil */}
@@ -184,7 +237,7 @@ export default function ZakatPage() {
               <div>
                 <h2 className="text-lg font-bold">{displayName}</h2>
                 <p className="text-xs text-muted-foreground">
-                  Part : {pourcentage}% — Valeur : {fmt(valeurPart)} FCFA
+                  Part : {pourcentage.toFixed(1)}% — Valeur : {fmt(valeurPart)} FCFA
                 </p>
               </div>
             </div>
@@ -207,7 +260,7 @@ export default function ZakatPage() {
             <div className="grid grid-cols-2 gap-3 mb-5">
               <div className="rounded-xl bg-white p-3 border">
                 <p className="text-[10px] text-muted-foreground">Part</p>
-                <p className="text-lg font-bold">{pourcentage}%</p>
+                <p className="text-lg font-bold">{pourcentage.toFixed(1)}%</p>
               </div>
               <div className="rounded-xl bg-white p-3 border">
                 <p className="text-[10px] text-muted-foreground">Valeur actuelle</p>
@@ -244,10 +297,11 @@ export default function ZakatPage() {
               </h3>
               <div className="space-y-2 text-sm">
                 {[
+                  { label: 'Capital total entreprise', val: fmt(capTable.totalCapital) + ' FCFA' },
                   { label: 'Investissement initial', val: fmt(totalInvesti) + ' FCFA' },
-                  { label: "Part dans l'entreprise", val: pourcentage + '%' },
-                  { label: 'Valuation entreprise nette', val: fmt(VALUATION.valeurNette) + ' FCFA' },
-                  { label: `Valeur de la part (${pourcentage}%)`, val: fmt(valeurPart) + ' FCFA' },
+                  { label: "Part dans l'entreprise", val: pourcentage.toFixed(1) + '%' },
+                  { label: 'Valuation entreprise nette', val: fmt(valeurNette) + ' FCFA' },
+                  { label: `Valeur de la part (${pourcentage.toFixed(1)}%)`, val: fmt(valeurPart) + ' FCFA' },
                   { label: 'Taux Zakat', val: '2,5%' },
                   { label: `Nisab (seuil ${annee})`, val: '~' + fmt(NISAB) + ' FCFA' },
                 ].map(({ label, val }) => (
