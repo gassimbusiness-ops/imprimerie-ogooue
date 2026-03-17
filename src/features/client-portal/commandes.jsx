@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { db } from '@/services/db';
 import { useAuth } from '@/services/auth';
 import { Card, CardContent } from '@/components/ui/card';
@@ -6,11 +6,10 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { Package, Clock, CheckCircle, Truck, Printer, XCircle, CreditCard, Download, Smartphone } from 'lucide-react';
+import { Package, Clock, CheckCircle, Truck, Printer, XCircle, CreditCard, Download, Smartphone, Loader2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { notifyNouvelleCommande } from '@/services/notifications';
 import { exportDocument } from '@/services/export-pdf';
-import { initierPaiement } from '@/services/mobile-money';
 import { toast } from 'sonner';
 
 function fmt(n) { return new Intl.NumberFormat('fr-FR').format(Math.round(n || 0)); }
@@ -82,6 +81,10 @@ export default function ClientCommandes() {
   const [showPaiement, setShowPaiement] = useState(null); // commande to pay
   const [operateur, setOperateur] = useState('');
   const [telephone, setTelephone] = useState('');
+  const [paiementEtape, setPaiementEtape] = useState('form'); // form | pending | success | error
+  const [paiementError, setPaiementError] = useState('');
+  const [paiementLoading, setPaiementLoading] = useState(false);
+  const pollingRef = useRef(null);
 
   const loadData = async () => {
     const [all, notifs] = await Promise.all([db.commandes.list(), db.notifications_app.list()]);
@@ -105,38 +108,100 @@ export default function ClientCommandes() {
     setShowPaiement(cmd);
     setOperateur('');
     setTelephone('');
+    setPaiementEtape('form');
+    setPaiementError('');
+    setPaiementLoading(false);
+    if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null; }
   };
 
-  // ── Initier paiement Mobile Money → statut paiement_initie ──
+  // Cleanup polling on unmount
+  useEffect(() => {
+    return () => { if (pollingRef.current) clearInterval(pollingRef.current); };
+  }, []);
+
+  // ── Initier paiement SingPay Mobile Money ──
   const handleInitierPaiement = async () => {
     if (!operateur || !telephone) return;
     const cmd = showPaiement;
+    setPaiementLoading(true);
+    setPaiementError('');
+
     try {
       const montant = cmd.montant_total || cmd.total || 0;
-      const result = await initierPaiement({ operateur, montant, telephone, commandeId: cmd.id });
 
+      // Appel API SingPay via serverless function
+      const response = await fetch('/api/singpay-initiate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          commandeId: cmd.id,
+          montant: montant,
+          telephone: telephone,
+          operateur: operateur,
+          nomClient: cmd.client_nom || `${user?.prenom || ''} ${user?.nom || ''}`.trim(),
+        }),
+      });
+
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || 'Erreur SingPay');
+
+      // Mise a jour locale aussi (au cas ou l'API serverless ne le ferait pas)
       const auteur = `${user?.prenom || ''} ${user?.nom || ''}`.trim();
-      const historique = [...(cmd.historique_statuts || []), {
-        statut: 'paiement_initie',
-        date: new Date().toISOString(),
-        auteur: auteur || 'Client',
-      }];
       await db.commandes.update(cmd.id, {
         statut: 'paiement_initie',
-        historique_statuts: historique,
+        historique_statuts: [...(cmd.historique_statuts || []), {
+          statut: 'paiement_initie',
+          date: new Date().toISOString(),
+          auteur: auteur || 'Client',
+        }],
         operateur_paiement: operateur === 'airtel' ? 'Airtel Money' : 'Moov Money',
         telephone_paiement: telephone,
-        reference_paiement: result.reference,
+        singpay_reference: data.reference,
+        reference_paiement: data.reference,
         date_paiement_initie: new Date().toISOString(),
       });
+
       // Notifier le staff
       notifyNouvelleCommande(`Paiement ${operateur === 'airtel' ? 'Airtel Money' : 'Moov Money'} initie — ${cmd.client_nom} — ${fmt(montant)} F — ${cmd.numero}`);
-      toast.success('Paiement initie ! Notre equipe va confirmer la reception.');
-      setShowPaiement(null);
-      loadData();
+
+      setPaiementEtape('pending');
+
+      // Polling toutes les 5 secondes pour verifier le statut
+      const interval = setInterval(async () => {
+        try {
+          const statusRes = await fetch(`/api/singpay-status?reference=${data.reference}`);
+          const statusData = await statusRes.json();
+
+          if (statusData.status === 'paid') {
+            clearInterval(interval);
+            pollingRef.current = null;
+            setPaiementEtape('success');
+            toast.success('Paiement confirme ! Commande en production.');
+            setTimeout(() => { setShowPaiement(null); loadData(); }, 2500);
+          } else if (['failed', 'expired', 'cancelled'].includes(statusData.status)) {
+            clearInterval(interval);
+            pollingRef.current = null;
+            setPaiementEtape('error');
+            setPaiementError('Paiement non abouti. Reessayez ou contactez-nous au 060 44 46 34.');
+          }
+        } catch { /* continue polling */ }
+      }, 5000);
+      pollingRef.current = interval;
+
+      // Arreter le polling apres 5 minutes
+      setTimeout(() => {
+        if (pollingRef.current) {
+          clearInterval(pollingRef.current);
+          pollingRef.current = null;
+        }
+      }, 300000);
+
     } catch (err) {
-      console.error('Erreur paiement:', err);
-      toast.error('Erreur lors du paiement');
+      console.error('Erreur paiement SingPay:', err);
+      setPaiementEtape('error');
+      setPaiementError(err.message || 'Erreur lors du paiement');
+    } finally {
+      setPaiementLoading(false);
     }
   };
 
@@ -291,25 +356,27 @@ export default function ClientCommandes() {
         </div>
       )}
 
-      {/* ═══ Modal Paiement Mobile Money ═══ */}
-      <Dialog open={!!showPaiement} onOpenChange={() => setShowPaiement(null)}>
+      {/* ═══ Modal Paiement SingPay Mobile Money ═══ */}
+      <Dialog open={!!showPaiement} onOpenChange={() => { if (paiementEtape !== 'pending') { setShowPaiement(null); if (pollingRef.current) { clearInterval(pollingRef.current); pollingRef.current = null; } } }}>
         <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <Smartphone className="h-5 w-5 text-primary" />
-              Paiement Mobile Money
-            </DialogTitle>
-          </DialogHeader>
-          {showPaiement && (
-            <div className="space-y-4 pt-2">
-              <div className="rounded-lg bg-muted/50 p-3 text-center">
+          {showPaiement && paiementEtape === 'form' && (
+            <div className="space-y-4">
+              <div className="text-center">
+                <h2 className="text-xl font-bold flex items-center justify-center gap-2">
+                  <Smartphone className="h-5 w-5 text-primary" />
+                  Paiement Mobile Money
+                </h2>
+                <p className="text-xs text-muted-foreground mt-1">via SingPay — Agregateur gabonais securise</p>
+              </div>
+
+              <div className="rounded-xl bg-muted/50 p-4 text-center">
                 <p className="text-xs text-muted-foreground">Montant a payer</p>
-                <p className="text-2xl font-bold text-primary">{fmt(showPaiement.montant_total || showPaiement.total)} F</p>
+                <p className="text-2xl font-bold text-emerald-600">{fmt(showPaiement.montant_total || showPaiement.total)} FCFA</p>
                 <p className="text-xs text-muted-foreground mt-1">Commande {showPaiement.numero}</p>
               </div>
 
               <div>
-                <label className="block text-sm font-medium mb-2">Choisir l&apos;operateur</label>
+                <label className="block text-sm font-medium mb-2">Choisissez votre operateur</label>
                 <div className="grid grid-cols-2 gap-3">
                   <button
                     onClick={() => setOperateur('airtel')}
@@ -339,23 +406,69 @@ export default function ClientCommandes() {
                   placeholder="Ex: 060 XX XX XX"
                   value={telephone}
                   onChange={(e) => setTelephone(e.target.value)}
+                  className="text-lg"
                 />
               </div>
 
-              <div className="rounded-lg bg-amber-50 border border-amber-200 p-3">
-                <p className="text-xs text-amber-700">
-                  Votre commande passera en production apres confirmation de reception du paiement par notre equipe.
-                </p>
-              </div>
+              <p className="text-[10px] text-muted-foreground">
+                Vous recevrez une demande de paiement sur votre telephone.
+                La commande passera en production apres confirmation.
+              </p>
 
-              <Button
-                className="w-full gap-2"
-                onClick={handleInitierPaiement}
-                disabled={!operateur || !telephone || telephone.length < 8}
-              >
-                <CreditCard className="h-4 w-4" />
-                Confirmer le paiement
-              </Button>
+              <div className="flex gap-3">
+                <Button variant="outline" className="flex-1" onClick={() => setShowPaiement(null)}>
+                  Annuler
+                </Button>
+                <Button
+                  className="flex-1 gap-2 bg-emerald-600 hover:bg-emerald-700"
+                  onClick={handleInitierPaiement}
+                  disabled={!operateur || !telephone || telephone.length < 8 || paiementLoading}
+                >
+                  {paiementLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <CreditCard className="h-4 w-4" />}
+                  {paiementLoading ? 'Envoi...' : 'Confirmer le paiement'}
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {showPaiement && paiementEtape === 'pending' && (
+            <div className="text-center py-8 space-y-4">
+              <div className="text-5xl animate-pulse">📱</div>
+              <h3 className="text-xl font-bold">En attente de confirmation</h3>
+              <p className="text-muted-foreground">Veuillez confirmer le paiement de</p>
+              <p className="text-2xl font-bold text-emerald-600">{fmt(showPaiement.montant_total || showPaiement.total)} FCFA</p>
+              <p className="text-sm text-muted-foreground">sur votre telephone {telephone}</p>
+              <div className="flex justify-center gap-1.5">
+                {[0,1,2].map((i) => (
+                  <div key={i} className="w-2.5 h-2.5 bg-emerald-500 rounded-full animate-bounce"
+                    style={{ animationDelay: `${i * 0.15}s` }} />
+                ))}
+              </div>
+              <p className="text-[10px] text-muted-foreground">Verification automatique en cours... Ne fermez pas cette fenetre.</p>
+            </div>
+          )}
+
+          {showPaiement && paiementEtape === 'success' && (
+            <div className="text-center py-8 space-y-3">
+              <div className="text-6xl">✅</div>
+              <h3 className="text-xl font-bold text-emerald-600">Paiement confirme !</h3>
+              <p className="text-muted-foreground">Votre commande est maintenant en production.</p>
+            </div>
+          )}
+
+          {showPaiement && paiementEtape === 'error' && (
+            <div className="text-center py-8 space-y-4">
+              <div className="text-5xl">❌</div>
+              <h3 className="text-xl font-bold text-red-600">Paiement non abouti</h3>
+              <p className="text-sm text-muted-foreground">{paiementError}</p>
+              <div className="flex gap-3">
+                <Button variant="outline" className="flex-1" onClick={() => setShowPaiement(null)}>
+                  Fermer
+                </Button>
+                <Button className="flex-1 bg-emerald-600 hover:bg-emerald-700" onClick={() => setPaiementEtape('form')}>
+                  Reessayer
+                </Button>
+              </div>
             </div>
           )}
         </DialogContent>
