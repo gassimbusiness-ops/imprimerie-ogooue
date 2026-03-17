@@ -4,12 +4,13 @@ import { useAuth } from '@/services/auth';
 import { cn } from '@/lib/utils';
 import {
   LayoutDashboard, BookOpen, Boxes, Users,
-  TrendingUp, LogOut, Menu, X, Hammer,
+  TrendingUp, LogOut, Menu, X, Hammer, Moon,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
 const ASSOCIE_NAV = [
   { name: 'Tableau de bord', href: '/associe', icon: LayoutDashboard },
+  { name: 'Simulateur Zakat', href: '/associe/zakat', icon: Moon },
   { name: 'Catalogue', href: '/associe/catalogue', icon: BookOpen },
   { name: 'Stocks', href: '/associe/stocks', icon: Boxes },
   { name: 'Travaux & Projets', href: '/associe/travaux', icon: Hammer },

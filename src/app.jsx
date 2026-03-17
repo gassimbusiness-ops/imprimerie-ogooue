@@ -48,6 +48,8 @@ import ClientDevis from '@/features/client-portal/devis';
 // Associé portal
 import AssocieLayout from '@/components/layout/associe-layout';
 import AssocieDashboard from '@/features/associe-portal/dashboard';
+// Zakat (shared between associé + admin)
+import ZakatPage from '@/features/zakat/page';
 import { Toaster } from 'sonner';
 
 function ProtectedRoutes() {
@@ -121,6 +123,7 @@ export default function App() {
         {/* Associé portal — separate layout */}
         <Route path="/associe" element={<ProtectedAssocieRoutes />}>
           <Route index element={<AssocieDashboard />} />
+          <Route path="zakat" element={<ZakatPage />} />
           <Route path="catalogue" element={<Catalogue />} />
           <Route path="stocks" element={<Stocks />} />
           <Route path="travaux" element={<Travaux />} />
@@ -161,6 +164,7 @@ export default function App() {
           <Route path="marketing" element={<RequirePermission module="clients"><Marketing /></RequirePermission>} />
           <Route path="mockup-ia" element={<RequirePermission module="catalogue"><MockupIA /></RequirePermission>} />
           <Route path="admin-import" element={<RequirePermission module="parametres"><AdminImport /></RequirePermission>} />
+          <Route path="zakat" element={<RequirePermission module="gouvernance"><ZakatPage /></RequirePermission>} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>

@@ -35,6 +35,7 @@ import {
   TrendingUp,
   Megaphone,
   Paintbrush,
+  Moon,
 } from 'lucide-react';
 
 const NAV_GROUPS = [
@@ -94,6 +95,7 @@ const NAV_GROUPS = [
     label: 'Gouvernance',
     items: [
       { name: 'Capital & Investisseurs', href: '/gouvernance', icon: TrendingUp, module: 'gouvernance' },
+      { name: 'Simulateur Zakat', href: '/zakat', icon: Moon, module: 'gouvernance' },
     ],
   },
   {

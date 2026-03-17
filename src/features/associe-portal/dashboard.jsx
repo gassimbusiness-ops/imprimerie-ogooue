@@ -282,7 +282,7 @@ export default function AssocieDashboard() {
         || (userPrenom && invPrenom.includes(userPrenom))
         || (userPrenom && invNom.includes(userPrenom))
         || (userFull && invNom.includes(userFull))
-        || inv.role === 'associe' && user?.role === 'associe';
+        || (inv.role === 'associe' && user?.role === 'associe');
     });
   }, [data.investisseurs, user]);
 
@@ -476,7 +476,13 @@ export default function AssocieDashboard() {
       )}
 
       {/* ═══ Simulateur Zakat ═══ */}
-      {capInfo && <SimulateurZakat capInfo={capInfo} myInvestisseur={myInvestisseur} />}
+      {/* Simulateur Zakat — visible des que l'utilisateur est associe */}
+      {(capInfo || user?.role === 'associe') && (
+        <SimulateurZakat
+          capInfo={capInfo || { pct: 30, valeurPart: myInvestisseur?.montantActuel || myInvestisseur?.montantInitial || 2500000, totalCapital: 7465000 }}
+          myInvestisseur={myInvestisseur || { nom: `${user?.prenom || ''} ${user?.nom || ''}`.trim(), montantInitial: 2500000 }}
+        />
+      )}
 
       {/* Projets en cours */}
       {data.projets.length > 0 && (
