@@ -1,74 +1,66 @@
 import { useState, useEffect, useMemo } from 'react';
 import { db } from '@/services/db';
 import { useAuth } from '@/services/auth';
-import { FINANCIAL_SUMMARY, MACHINES, INVENTAIRE_STOCK } from '@/utils/seed-data';
+import { INVESTISSEURS, FINANCIAL_SUMMARY, MACHINES, INVENTAIRE_STOCK } from '@/utils/seed-data';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import {
-  BarChart3, Loader2, Sparkles, Users, Moon,
-} from 'lucide-react';
+import { BarChart3, Loader2, Sparkles, Users, Moon } from 'lucide-react';
 
 function fmt(n) { return new Intl.NumberFormat('fr-FR').format(Math.round(n || 0)); }
 
-const DEFAULT_VALUATION = {
-  inventaire: INVENTAIRE_STOCK.reduce((s, i) => s + (i.qte * i.prix_achat), 0),
-  machines: MACHINES.reduce((s, m) => s + m.valeur, 0),
-  tresorerie_compte: FINANCIAL_SUMMARY.cash_en_compte,
-  tresorerie_caisse: FINANCIAL_SUMMARY.cash_en_caisse,
+// Valuation de l'entreprise (donnees statiques seed-data)
+const VALUATION = (() => {
+  const inventaire = INVENTAIRE_STOCK.reduce((s, i) => s + (i.qte * i.prix_achat), 0);
+  const machines = MACHINES.reduce((s, m) => s + m.valeur, 0);
+  const tresorerie = FINANCIAL_SUMMARY.cash_en_compte + FINANCIAL_SUMMARY.cash_en_caisse;
+  const actifs = inventaire + machines + tresorerie;
+  const passifs = Math.max(0, 2300000);
+  return { inventaire, machines, tresorerie, actifs, passifs, valeurNette: actifs - passifs };
+})();
+
+// Nisab 2025-2026 : 85g d'or x ~35 000 FCFA/g
+const NISAB = 2975000;
+
+// Mapping des donnees financieres des associes (seed-data)
+const ASSOCIES_DATA = {
+  oumar: INVESTISSEURS.oumar,
+  senouss: INVESTISSEURS.senouss,
 };
 
-// Nisab 2025-2026 : 85g d'or x ~35 000 FCFA/g = 2 975 000 FCFA
-const NISAB = 2975000;
+// Matcher un utilisateur (employe) a un profil financier investisseur
+function matchInvestisseurData(employe) {
+  if (!employe) return null;
+  const nom = `${employe.prenom || ''} ${employe.nom || ''}`.toLowerCase();
+  // Matching par nom
+  if (nom.includes('senouss') || nom.includes('saleh')) return { key: 'senouss', ...ASSOCIES_DATA.senouss };
+  if (nom.includes('oumar') || nom.includes('abakar') || nom.includes('ibrahim')) return { key: 'oumar', ...ASSOCIES_DATA.oumar };
+  // Fallback : si c'est un associe sans match, donner les donnees Senouss par defaut
+  if (employe.role === 'associe') return { key: 'senouss', ...ASSOCIES_DATA.senouss };
+  // Si c'est admin/gerant, donner Oumar
+  if (employe.role === 'admin') return { key: 'oumar', ...ASSOCIES_DATA.oumar };
+  return null;
+}
 
 export default function ZakatPage() {
   const { user, isAdmin } = useAuth();
-  const [investisseurs, setInvestisseurs] = useState([]);
+  const [associes, setAssocies] = useState([]);
   const [selectedId, setSelectedId] = useState('__auto__');
   const [loading, setLoading] = useState(true);
   const [annee, setAnnee] = useState(new Date().getFullYear());
   const [resultatIA, setResultatIA] = useState(null);
   const [loadingIA, setLoadingIA] = useState(false);
-  const [dettes, setDettes] = useState([]);
-  const [remboursements, setRemboursements] = useState([]);
-  const [valuationParams, setValuationParams] = useState(DEFAULT_VALUATION);
 
+  // Charger les utilisateurs avec role associe (+ admin pour le gerant)
   useEffect(() => {
     const load = async () => {
       try {
-        const [inv, det, remb, params] = await Promise.all([
-          db.investisseurs.list(),
-          db.dettes_associes.list(),
-          db.remboursements_associes.list(),
-          db.gouvernance_parametres?.list() ?? Promise.resolve([]),
-        ]);
-        let investisseursList = inv || [];
-        // Auto-seed si vide
-        if (investisseursList.length === 0) {
-          const inv1 = await db.investisseurs.create({
-            id: 'inv-oumar', nom: 'Oumar Ibrahim (Abakar Senoussi)', prenom: 'Oumar',
-            entreprise: 'Imprimerie Ogooue', montantInitial: 4965000, montantActuel: 4965000,
-            devise: 'FCFA', dateEntree: '2024-01-01', statut: 'actif', role: 'gerant',
-          });
-          const inv2 = await db.investisseurs.create({
-            id: 'inv-senouss', nom: 'Senouss Saleh', prenom: 'Senouss',
-            entreprise: 'Imprimerie Ogooue', montantInitial: 2500000, montantActuel: 2500000,
-            devise: 'FCFA', dateEntree: '2024-01-01', statut: 'actif', role: 'associe',
-          });
-          investisseursList = [inv1, inv2].filter(Boolean);
-        }
-        setInvestisseurs(investisseursList);
-        setDettes(det || []);
-        setRemboursements(remb || []);
-        const savedParams = (params || []).find((p) => p.type === 'valuation');
-        if (savedParams) {
-          setValuationParams({
-            inventaire: savedParams.inventaire ?? DEFAULT_VALUATION.inventaire,
-            machines: savedParams.machines ?? DEFAULT_VALUATION.machines,
-            tresorerie_compte: savedParams.tresorerie_compte ?? DEFAULT_VALUATION.tresorerie_compte,
-            tresorerie_caisse: savedParams.tresorerie_caisse ?? DEFAULT_VALUATION.tresorerie_caisse,
-          });
-        }
+        const employes = await db.employes.list();
+        // Filtrer les associes + admin (qui est aussi gerant/investisseur)
+        const associesList = (employes || []).filter(
+          (e) => e.role === 'associe' || e.role === 'admin'
+        );
+        setAssocies(associesList);
       } catch (err) {
         console.error('Zakat load error:', err);
       } finally {
@@ -78,50 +70,27 @@ export default function ZakatPage() {
     load();
   }, []);
 
-  // Trouver l'investisseur courant (auto = matching par nom/role, ou selection admin)
-  const currentInvestisseur = useMemo(() => {
+  // Determiner l'associe courant
+  const currentUser = useMemo(() => {
     if (selectedId !== '__auto__') {
-      return investisseurs.find((inv) => inv.id === selectedId);
+      return associes.find((a) => a.id === selectedId) || null;
     }
-    // Auto-match pour associe
-    const userNom = (user?.nom || '').toLowerCase();
-    const userPrenom = (user?.prenom || '').toLowerCase();
-    return investisseurs.find((inv) => {
-      const invNom = (inv.nom || '').toLowerCase();
-      const invPrenom = (inv.prenom || '').toLowerCase();
-      return inv.user_id === user?.id
-        || (userNom && invNom.includes(userNom))
-        || (userPrenom && invPrenom.includes(userPrenom))
-        || (userPrenom && invNom.includes(userPrenom))
-        || (inv.role === 'associe' && user?.role === 'associe');
-    });
-  }, [investisseurs, selectedId, user]);
+    // Auto : l'utilisateur connecte
+    if (isAdmin) {
+      // Admin -> montrer son propre profil par defaut
+      return associes.find((a) => a.id === user?.id) || associes[0] || null;
+    }
+    // Associe -> son propre profil
+    return associes.find((a) => a.id === user?.id) || associes.find((a) => a.role === 'associe') || null;
+  }, [selectedId, associes, isAdmin, user]);
 
-  // Calcul valuation
-  const valuation = useMemo(() => {
-    const inventaire = valuationParams.inventaire;
-    const machines = valuationParams.machines;
-    const tresorerie = valuationParams.tresorerie_compte + valuationParams.tresorerie_caisse;
-    const totalRemb = remboursements.reduce((s, r) => s + (r.montant || 0), 0);
-    const dette = dettes.find((d) => d.associe === 'oumar');
-    const detteRestante = (dette?.montant_initial || 2300000) - totalRemb;
-    const actifs = inventaire + machines + tresorerie;
-    const passifs = Math.max(0, detteRestante);
-    return actifs - passifs;
-  }, [valuationParams, dettes, remboursements]);
+  // Donnees financieres du profil selectionne
+  const investData = useMemo(() => matchInvestisseurData(currentUser), [currentUser]);
 
-  // Cap info
-  const capInfo = useMemo(() => {
-    if (!currentInvestisseur) return null;
-    const totalCapital = investisseurs.reduce((s, inv) => s + (inv.montantActuel || inv.montantInitial || 0), 0);
-    const myMontant = currentInvestisseur.montantActuel || currentInvestisseur.montantInitial || 0;
-    const isOumar = currentInvestisseur.id === 'inv-oumar' || currentInvestisseur.nom?.includes('Oumar');
-    const finalPct = isOumar ? 70 : 30;
-    const valeurPart = (valuation * finalPct) / 100;
-    return { montant: myMontant, pct: finalPct, valeurPart, totalCapital };
-  }, [currentInvestisseur, investisseurs, valuation]);
-
-  const valeurPart = capInfo?.valeurPart || 0;
+  // Calcul Zakat
+  const pourcentage = investData?.pourcentage_final || 30;
+  const totalInvesti = investData?.total_investi || 2500000;
+  const valeurPart = (VALUATION.valeurNette * pourcentage) / 100;
   const zakatBrute = valeurPart * 0.025;
   const zakatObligatoire = valeurPart >= NISAB;
   const zakatDue = zakatObligatoire ? zakatBrute : 0;
@@ -129,14 +98,15 @@ export default function ZakatPage() {
   const analyserAvecIA = async () => {
     setLoadingIA(true);
     try {
+      const displayName = currentUser ? `${currentUser.prenom || ''} ${currentUser.nom || ''}`.trim() : 'Associe';
       const res = await fetch('/api/zakat-analyse', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          nom: currentInvestisseur?.nom || 'Associe',
+          nom: displayName,
           valeurPart,
-          parts: capInfo?.pct || 0,
-          investissementDepart: currentInvestisseur?.montantInitial || 0,
+          parts: pourcentage,
+          investissementDepart: totalInvesti,
           annee,
           zakatCalculee: zakatDue,
           zakatObligatoire,
@@ -159,6 +129,8 @@ export default function ZakatPage() {
     );
   }
 
+  const displayName = currentUser ? `${currentUser.prenom || ''} ${currentUser.nom || ''}`.trim() : '';
+
   return (
     <div className="space-y-6 max-w-2xl mx-auto">
       {/* Header */}
@@ -175,22 +147,22 @@ export default function ZakatPage() {
       </div>
 
       {/* Selection associe (admin only) */}
-      {isAdmin && investisseurs.length > 0 && (
+      {isAdmin && associes.length > 0 && (
         <Card>
           <CardContent className="p-4">
             <div className="flex items-center gap-3">
               <Users className="h-5 w-5 text-muted-foreground" />
               <div className="flex-1">
-                <label className="text-sm font-medium mb-1 block">Simuler pour l&apos;associe</label>
+                <label className="text-sm font-medium mb-1 block">Simuler pour</label>
                 <Select value={selectedId} onValueChange={(v) => { setSelectedId(v); setResultatIA(null); }}>
                   <SelectTrigger>
                     <SelectValue placeholder="Selectionner un associe" />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="__auto__">Auto (mon profil)</SelectItem>
-                    {investisseurs.map((inv) => (
-                      <SelectItem key={inv.id} value={inv.id}>
-                        {inv.nom} — {fmt(inv.montantActuel || inv.montantInitial)} FCFA
+                    <SelectItem value="__auto__">Mon profil</SelectItem>
+                    {associes.map((a) => (
+                      <SelectItem key={a.id} value={a.id}>
+                        {a.prenom} {a.nom} — {a.role === 'admin' ? 'Gerant' : 'Associe'}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -201,7 +173,7 @@ export default function ZakatPage() {
         </Card>
       )}
 
-      {currentInvestisseur ? (
+      {currentUser && investData ? (
         <Card className="border-green-200 bg-green-50/30">
           <CardContent className="p-4 sm:p-6">
             {/* Profil */}
@@ -210,9 +182,9 @@ export default function ZakatPage() {
                 🌙
               </div>
               <div>
-                <h2 className="text-lg font-bold">{currentInvestisseur.nom}</h2>
+                <h2 className="text-lg font-bold">{displayName}</h2>
                 <p className="text-xs text-muted-foreground">
-                  Part : {capInfo?.pct?.toFixed(1)}% — Valeur : {fmt(valeurPart)} FCFA
+                  Part : {pourcentage}% — Valeur : {fmt(valeurPart)} FCFA
                 </p>
               </div>
             </div>
@@ -235,7 +207,7 @@ export default function ZakatPage() {
             <div className="grid grid-cols-2 gap-3 mb-5">
               <div className="rounded-xl bg-white p-3 border">
                 <p className="text-[10px] text-muted-foreground">Part</p>
-                <p className="text-lg font-bold">{capInfo?.pct?.toFixed(1) || '—'}%</p>
+                <p className="text-lg font-bold">{pourcentage}%</p>
               </div>
               <div className="rounded-xl bg-white p-3 border">
                 <p className="text-[10px] text-muted-foreground">Valeur actuelle</p>
@@ -272,10 +244,12 @@ export default function ZakatPage() {
               </h3>
               <div className="space-y-2 text-sm">
                 {[
-                  { label: `Valeur de la part (${capInfo?.pct?.toFixed(1) || '—'}%)`, val: fmt(valeurPart) + ' FCFA' },
+                  { label: 'Investissement initial', val: fmt(totalInvesti) + ' FCFA' },
+                  { label: "Part dans l'entreprise", val: pourcentage + '%' },
+                  { label: 'Valuation entreprise nette', val: fmt(VALUATION.valeurNette) + ' FCFA' },
+                  { label: `Valeur de la part (${pourcentage}%)`, val: fmt(valeurPart) + ' FCFA' },
                   { label: 'Taux Zakat', val: '2,5%' },
                   { label: `Nisab (seuil ${annee})`, val: '~' + fmt(NISAB) + ' FCFA' },
-                  { label: 'Valuation entreprise nette', val: fmt(valuation) + ' FCFA' },
                 ].map(({ label, val }) => (
                   <div key={label} className="flex justify-between">
                     <span className="text-muted-foreground">{label}</span>
@@ -321,11 +295,11 @@ export default function ZakatPage() {
         <Card>
           <CardContent className="p-8 text-center">
             <Moon className="h-12 w-12 mx-auto mb-4 text-muted-foreground/30" />
-            <p className="text-lg font-medium">Aucun profil investisseur trouve</p>
+            <p className="text-lg font-medium">Profil non trouve</p>
             <p className="text-sm text-muted-foreground mt-1">
               {isAdmin
-                ? 'Selectionnez un associe dans la liste ci-dessus.'
-                : 'Votre compte n\'est pas encore lie a un profil investisseur. Contactez l\'administrateur.'}
+                ? 'Selectionnez un profil dans la liste ci-dessus.'
+                : "Votre compte n'est pas lie a un profil associe. Contactez l'administrateur."}
             </p>
           </CardContent>
         </Card>
