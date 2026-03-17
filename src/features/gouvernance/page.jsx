@@ -17,7 +17,7 @@ import {
   Crown, TrendingUp, Landmark, DollarSign, Users, Plus, ArrowDownCircle,
   Building2, Wallet, CreditCard, PiggyBank, Shield, History,
   Edit3, AlertTriangle, FileText, Filter, Search, ChevronDown,
-  ChevronUp, Eye, Download, Pencil,
+  ChevronUp, Eye, Download, Pencil, Calculator,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -60,8 +60,10 @@ const TYPE_OPERATIONS = [
 
 const TABS = [
   { id: 'capital', label: 'Capital & Investisseurs', icon: Crown },
+  { id: 'resultat', label: 'Résultat Annuel', icon: Calculator },
   { id: 'historique', label: 'Historique des modifications', icon: History },
 ];
+
 
 // ─── Seed investisseurs initiaux ───
 async function seedInvestisseurs() {
@@ -130,6 +132,12 @@ export default function Gouvernance() {
 
   const [loadError, setLoadError] = useState(null);
 
+  // Resultat annuel
+  const [rapports, setRapports] = useState([]);
+  const [chargesFixes, setChargesFixes] = useState([]);
+  const [anneeResultat, setAnneeResultat] = useState(new Date().getFullYear());
+  const [resultatStatut, setResultatStatut] = useState(null); // from gouvernance_parametres
+
   // Editable valuation parameters (stored in DB)
   const [valuationParams, setValuationParams] = useState(DEFAULT_VALUATION);
   const [editField, setEditField] = useState(null); // { key, label, value }
@@ -138,7 +146,7 @@ export default function Gouvernance() {
   const load = async () => {
     try {
       setLoadError(null);
-      const [a, d, r, inv, mods, params, produits, comptes] = await Promise.all([
+      const [a, d, r, inv, mods, params, produits, comptes, raps, chFixes] = await Promise.all([
         db.apports_associes.list(),
         db.dettes_associes.list(),
         db.remboursements_associes.list(),
@@ -147,12 +155,19 @@ export default function Gouvernance() {
         db.gouvernance_parametres.list(),
         db.produits.list(),
         db.comptes_bancaires.list(),
+        db.rapports.list(),
+        db.charges_fixes.list(),
       ]);
       setApports(a);
       setDettes(d);
       setRemboursements(r);
       setInvestisseurs(inv);
       setModifications(mods);
+      setRapports(raps || []);
+      setChargesFixes(chFixes || []);
+      // Charger statut resultat annuel
+      const savedResultat = (params || []).find((p) => p.type === 'resultat_annuel');
+      setResultatStatut(savedResultat || null);
 
       // ── Valuation depuis données REELLES Supabase ──
       // Stock réel = somme (prix_unitaire × quantite) depuis module Stocks
@@ -258,6 +273,67 @@ export default function Gouvernance() {
     { name: 'Machines', value: valuation.machines, color: '#8b5cf6' },
     { name: 'Trésorerie', value: valuation.tresorerie, color: '#10b981' },
   ];
+
+  // ─── Resultat annuel ───
+  const resultatAnnuel = useMemo(() => {
+    const anneeStr = String(anneeResultat);
+    const rapportsAnnee = rapports.filter((r) => (r.date || '').startsWith(anneeStr));
+
+    // CA et depenses operationnelles depuis db.rapports
+    let caAnnuel = 0;
+    let depensesOp = 0;
+    rapportsAnnee.forEach((r) => {
+      const cats = r.categories || {};
+      caAnnuel += Object.values(cats).reduce((s, v) => s + (v || 0), 0);
+      // Toutes les depenses des rapports = depenses operationnelles
+      (r.depenses || []).forEach((d) => { depensesOp += d.montant || 0; });
+    });
+
+    // Charges fixes annuelles depuis db.charges_fixes (source dediee)
+    // Chaque charge fixe a un montant (mensuel ou annuel) — on somme sur l'annee
+    const totalChargesFixes = chargesFixes.reduce((s, cf) => {
+      const montant = cf.montant || 0;
+      // Si la charge a une periodicite mensuelle, multiplier par 12
+      // Sinon (annuel ou pas precise), prendre le montant tel quel
+      const periodicite = (cf.periodicite || cf.frequence || 'mensuel').toLowerCase();
+      if (periodicite === 'mensuel' || periodicite === 'mensuelle') return s + (montant * 12);
+      if (periodicite === 'trimestriel' || periodicite === 'trimestrielle') return s + (montant * 4);
+      return s + montant; // annuel par defaut
+    }, 0);
+
+    const beneficeNet = caAnnuel - depensesOp - totalChargesFixes;
+    const remGestion = beneficeNet > 0 ? beneficeNet * 0.20 : 0;
+    const distribuable = beneficeNet > 0 ? beneficeNet - remGestion : beneficeNet;
+    const partOumar = distribuable * (capTable.oumar / 100);
+    const partSenouss = distribuable * (capTable.senouss / 100);
+
+    // Statut : soit sauvegarde en base, soit estime par defaut
+    const savedStatut = resultatStatut?.annee === anneeResultat ? resultatStatut.statut : null;
+    const statut = savedStatut || 'estime';
+
+    return {
+      caAnnuel, depensesOp, chargesFixes: totalChargesFixes, beneficeNet,
+      remGestion, distribuable, partOumar, partSenouss,
+      statut, nbRapports: rapportsAnnee.length,
+    };
+  }, [rapports, chargesFixes, anneeResultat, capTable, resultatStatut]);
+
+  // Sauvegarder le statut de l'exercice
+  const handleSaveStatut = async (newStatut) => {
+    try {
+      const data = { type: 'resultat_annuel', annee: anneeResultat, statut: newStatut };
+      if (resultatStatut?.id) {
+        await db.gouvernance_parametres.update(resultatStatut.id, data);
+      } else {
+        await db.gouvernance_parametres.create(data);
+      }
+      setResultatStatut({ ...resultatStatut, ...data });
+      toast.success(`Exercice ${anneeResultat} marqué : ${newStatut}`);
+      await logAction('update', 'gouvernance', { details: `Statut exercice ${anneeResultat} → ${newStatut}` });
+    } catch (err) {
+      toast.error('Erreur lors de la sauvegarde du statut');
+    }
+  };
 
   // ─── Handlers ───
   const handleAddApport = async () => {
@@ -538,7 +614,7 @@ export default function Gouvernance() {
           >
             <Icon className="h-4 w-4" />
             <span className="hidden sm:inline">{label}</span>
-            <span className="sm:hidden">{id === 'capital' ? 'Capital' : 'Historique'}</span>
+            <span className="sm:hidden">{id === 'capital' ? 'Capital' : id === 'resultat' ? 'Résultat' : 'Historique'}</span>
             {id === 'historique' && modifications.length > 0 && (
               <Badge variant="secondary" className="text-[10px] px-1.5 py-0">{modifications.length}</Badge>
             )}
@@ -872,7 +948,175 @@ export default function Gouvernance() {
         </>
       )}
 
-      {/* ═══════════════ TAB 2 : HISTORIQUE DES MODIFICATIONS ═══════════════ */}
+      {/* ═══════════════ TAB 2 : RESULTAT ANNUEL ═══════════════ */}
+      {tab === 'resultat' && (
+        <div className="space-y-4">
+          {/* Selecteur d'annee */}
+          <div className="flex items-center justify-between">
+            <h3 className="text-lg font-bold flex items-center gap-2">
+              <Calculator className="h-5 w-5 text-emerald-600" />
+              Résultat de l'exercice {anneeResultat}
+            </h3>
+            <select
+              value={anneeResultat}
+              onChange={(e) => setAnneeResultat(parseInt(e.target.value))}
+              className="rounded-lg border px-3 py-2 text-sm bg-white"
+            >
+              {[2024, 2025, 2026, 2027].map((y) => (
+                <option key={y} value={y}>{y}</option>
+              ))}
+            </select>
+          </div>
+
+          {resultatAnnuel.nbRapports === 0 ? (
+            <Card>
+              <CardContent className="p-8 text-center">
+                <FileText className="h-12 w-12 mx-auto mb-3 text-muted-foreground/30" />
+                <p className="font-medium">Aucun rapport journalier pour {anneeResultat}</p>
+                <p className="text-sm text-muted-foreground mt-1">
+                  Les données apparaîtront au fur et à mesure des rapports saisis.
+                </p>
+              </CardContent>
+            </Card>
+          ) : (
+            <>
+              {/* Indicateur estimation */}
+              <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 flex items-center gap-2 text-sm">
+                <AlertTriangle className="h-4 w-4 text-amber-600 shrink-0" />
+                <span className="text-amber-800">
+                  {resultatAnnuel.statut === 'estime'
+                    ? `Estimation en cours — basée sur ${resultatAnnuel.nbRapports} rapport(s) journalier(s) de ${anneeResultat}.`
+                    : `Exercice ${anneeResultat} : ${resultatAnnuel.statut}.`}
+                </span>
+              </div>
+
+              {/* Tableau du resultat */}
+              <Card>
+                <CardContent className="p-4 sm:p-6">
+                  <div className="space-y-3">
+                    {/* 1. CA annuel */}
+                    <div className="flex justify-between items-center py-2">
+                      <span className="font-medium">Chiffre d'affaires annuel</span>
+                      <span className="text-lg font-bold text-blue-600">{fmt(resultatAnnuel.caAnnuel)} FCFA</span>
+                    </div>
+
+                    {/* 2. Depenses operationnelles */}
+                    <div className="flex justify-between items-center py-2 border-t">
+                      <span className="text-muted-foreground">Dépenses opérationnelles</span>
+                      <span className="text-red-600">- {fmt(resultatAnnuel.depensesOp)} FCFA</span>
+                    </div>
+
+                    {/* 3. Charges fixes */}
+                    <div className="flex justify-between items-center py-2 border-t">
+                      <span className="text-muted-foreground">Charges fixes annuelles</span>
+                      <span className="text-red-600">- {fmt(resultatAnnuel.chargesFixes)} FCFA</span>
+                    </div>
+
+                    {/* 4. Benefice net */}
+                    <div className={`flex justify-between items-center py-3 border-t-2 border-b-2 ${resultatAnnuel.beneficeNet >= 0 ? 'bg-green-50' : 'bg-red-50'} -mx-4 sm:-mx-6 px-4 sm:px-6`}>
+                      <span className="font-bold text-lg">Bénéfice net annuel</span>
+                      <span className={`text-xl font-black ${resultatAnnuel.beneficeNet >= 0 ? 'text-green-700' : 'text-red-700'}`}>
+                        {fmt(resultatAnnuel.beneficeNet)} FCFA
+                      </span>
+                    </div>
+
+                    {resultatAnnuel.beneficeNet > 0 && (
+                      <>
+                        {/* 5. Remuneration gestion */}
+                        <div className="flex justify-between items-center py-2">
+                          <div>
+                            <span className="font-medium">Rémunération de gestion</span>
+                            <p className="text-xs text-muted-foreground">Oumar Ibrahim — 20% du bénéfice net</p>
+                          </div>
+                          <span className="text-orange-600 font-semibold">- {fmt(resultatAnnuel.remGestion)} FCFA</span>
+                        </div>
+
+                        {/* 6. Benefice distribuable */}
+                        <div className="flex justify-between items-center py-3 border-t-2 bg-emerald-50 -mx-4 sm:-mx-6 px-4 sm:px-6">
+                          <span className="font-bold text-lg">Bénéfice distribuable</span>
+                          <span className="text-xl font-black text-emerald-700">{fmt(resultatAnnuel.distribuable)} FCFA</span>
+                        </div>
+
+                        {/* 7 & 8. Repartition theorique */}
+                        <div className="rounded-xl bg-muted/30 border p-4 mt-2">
+                          <h4 className="text-sm font-semibold mb-3 flex items-center gap-1.5">
+                            <Users className="h-4 w-4 text-muted-foreground" />
+                            Répartition théorique (simulation)
+                          </h4>
+                          <p className="text-[10px] text-muted-foreground mb-3">
+                            Ces montants sont une simulation de distribution — aucun paiement automatique n'est déclenché.
+                          </p>
+                          <div className="space-y-2">
+                            <div className="flex justify-between items-center">
+                              <span className="text-sm">Oumar Ibrahim ({capTable.oumar}%)</span>
+                              <span className="font-bold text-blue-600">{fmt(resultatAnnuel.partOumar)} FCFA</span>
+                            </div>
+                            <div className="flex justify-between items-center">
+                              <span className="text-sm">Senouss Saleh ({capTable.senouss}%)</span>
+                              <span className="font-bold text-amber-600">{fmt(resultatAnnuel.partSenouss)} FCFA</span>
+                            </div>
+                          </div>
+                        </div>
+                      </>
+                    )}
+
+                    {resultatAnnuel.beneficeNet <= 0 && (
+                      <div className="rounded-xl bg-red-50 border border-red-200 p-4 text-center">
+                        <p className="font-medium text-red-800">Pas de bénéfice distribuable</p>
+                        <p className="text-xs text-red-600 mt-1">L'exercice est déficitaire ou à l'équilibre.</p>
+                      </div>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+
+              {/* 9. Statut de l'exercice */}
+              {isAdmin && (
+                <Card>
+                  <CardContent className="p-4">
+                    <h4 className="text-sm font-semibold mb-3">Statut de l'exercice {anneeResultat}</h4>
+                    <div className="flex flex-wrap gap-2">
+                      {['estime', 'cloture', 'distribue', 'mis_en_reserve'].map((s) => (
+                        <Button
+                          key={s}
+                          size="sm"
+                          variant={resultatAnnuel.statut === s ? 'default' : 'outline'}
+                          onClick={() => handleSaveStatut(s)}
+                          className={resultatAnnuel.statut === s ? '' : 'text-muted-foreground'}
+                        >
+                          {s === 'estime' && '📊 Estimé'}
+                          {s === 'cloture' && '✅ Clôturé'}
+                          {s === 'distribue' && '💰 Distribué'}
+                          {s === 'mis_en_reserve' && '🏦 Mis en réserve'}
+                        </Button>
+                      ))}
+                    </div>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Sources des donnees */}
+              <Card>
+                <CardContent className="p-4">
+                  <h4 className="text-sm font-semibold mb-2 text-muted-foreground">Sources des données</h4>
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div className="rounded-lg bg-blue-50 p-2">
+                      <p className="font-medium text-blue-800">CA + Dép. opérationnelles</p>
+                      <p className="text-blue-600">Rapports journaliers ({resultatAnnuel.nbRapports} rapport(s))</p>
+                    </div>
+                    <div className="rounded-lg bg-violet-50 p-2">
+                      <p className="font-medium text-violet-800">Charges fixes</p>
+                      <p className="text-violet-600">Module charges fixes ({chargesFixes.length} poste(s))</p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* ═══════════════ TAB 3 : HISTORIQUE DES MODIFICATIONS ═══════════════ */}
       {tab === 'historique' && (
         <>
           {/* Filtres */}

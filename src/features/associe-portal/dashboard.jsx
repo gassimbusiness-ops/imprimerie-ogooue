@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button';
 import {
   TrendingUp, Users, Boxes, BookOpen, DollarSign,
   PieChart, BarChart3, Package, Eye, Building2, Wallet,
-  Hammer, Moon, Loader2, Sparkles,
+  Hammer, Moon, Loader2, Sparkles, Calculator,
 } from 'lucide-react';
 
 function fmt(n) { return new Intl.NumberFormat('fr-FR').format(Math.round(n || 0)); }
@@ -217,7 +217,7 @@ export default function AssocieDashboard() {
   const [loading, setLoading] = useState(true);
   const [data, setData] = useState({
     employes: [], stocks: [], inventaire: [], commandes: [], produits: [],
-    investisseurs: [], apports: [], dettes: [], remboursements: [], projets: [],
+    investisseurs: [], apports: [], dettes: [], remboursements: [], projets: [], rapports: [], chargesFixes: [],
   });
   const [valuationParams, setValuationParams] = useState(DEFAULT_VALUATION);
   const [settings, setSettings] = useState(null);
@@ -225,7 +225,7 @@ export default function AssocieDashboard() {
   useEffect(() => {
     const loadData = async () => {
       try {
-        const [emp, stk, inv, cmd, prod, investisseurs, ap, dettes, remb, projets, params, s, comptes] = await Promise.all([
+        const [emp, stk, inv, cmd, prod, investisseurs, ap, dettes, remb, projets, params, s, comptes, raps, chFixes] = await Promise.all([
           db.employes.list(),
           db.produits_catalogue.list(),
           db.produits.list(),
@@ -239,6 +239,8 @@ export default function AssocieDashboard() {
           db.gouvernance_parametres?.list() ?? Promise.resolve([]),
           getSettings(),
           db.comptes_bancaires.list(),
+          db.rapports.list(),
+          db.charges_fixes.list(),
         ]);
         setData({
           employes: (emp || []).filter((e) => e.role !== 'client'),
@@ -251,6 +253,8 @@ export default function AssocieDashboard() {
           dettes: dettes || [],
           remboursements: remb || [],
           projets: projets || [],
+          rapports: raps || [],
+          chargesFixes: chFixes || [],
         });
 
         // Valuation depuis donnees REELLES Supabase
@@ -352,6 +356,33 @@ export default function AssocieDashboard() {
 
     return { totalEmployes, totalProduits, commandesMois: commandesMois.length, projetsEnCours };
   }, [data]);
+
+  // Resultat annuel (lecture seule pour associe)
+  const resultatAnnuel = useMemo(() => {
+    const annee = String(new Date().getFullYear());
+    const rapsAnnee = data.rapports.filter((r) => (r.date || '').startsWith(annee));
+    if (rapsAnnee.length === 0) return null;
+    // CA et depenses operationnelles depuis rapports journaliers
+    let ca = 0, depOp = 0;
+    rapsAnnee.forEach((r) => {
+      ca += Object.values(r.categories || {}).reduce((s, v) => s + (v || 0), 0);
+      (r.depenses || []).forEach((d) => { depOp += d.montant || 0; });
+    });
+    // Charges fixes depuis db.charges_fixes (source dediee)
+    const chFixes = (data.chargesFixes || []).reduce((s, cf) => {
+      const montant = cf.montant || 0;
+      const periodicite = (cf.periodicite || cf.frequence || 'mensuel').toLowerCase();
+      if (periodicite === 'mensuel' || periodicite === 'mensuelle') return s + (montant * 12);
+      if (periodicite === 'trimestriel' || periodicite === 'trimestrielle') return s + (montant * 4);
+      return s + montant;
+    }, 0);
+    const benefice = ca - depOp - chFixes;
+    const remGestion = benefice > 0 ? benefice * 0.20 : 0;
+    const distribuable = benefice > 0 ? benefice - remGestion : benefice;
+    const myPct = capInfo?.pct || 23.89;
+    const maPart = distribuable * (myPct / 100);
+    return { ca, benefice, distribuable, maPart, myPct, nbRapports: rapsAnnee.length };
+  }, [data.rapports, data.chargesFixes, capInfo]);
 
   if (loading) return (
     <div className="flex justify-center py-12">
@@ -499,6 +530,40 @@ export default function AssocieDashboard() {
                 </div>
               </div>
             </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ═══ Résultat annuel (lecture seule) ═══ */}
+      {resultatAnnuel && (
+        <Card className="border-emerald-200 bg-emerald-50/20">
+          <CardContent className="p-4">
+            <h2 className="font-semibold text-sm flex items-center gap-2 mb-3">
+              <Calculator className="h-4 w-4 text-emerald-600" />
+              Ma part estimée {new Date().getFullYear()} (simulation)
+            </h2>
+            <div className="grid grid-cols-2 gap-3 mb-3">
+              <div className="rounded-lg bg-white border p-2.5">
+                <p className="text-[10px] text-muted-foreground">CA annuel</p>
+                <p className="font-bold text-sm">{fmt(resultatAnnuel.ca)} F</p>
+              </div>
+              <div className="rounded-lg bg-white border p-2.5">
+                <p className="text-[10px] text-muted-foreground">Bénéfice net</p>
+                <p className={`font-bold text-sm ${resultatAnnuel.benefice >= 0 ? 'text-green-600' : 'text-red-600'}`}>{fmt(resultatAnnuel.benefice)} F</p>
+              </div>
+            </div>
+            {resultatAnnuel.distribuable > 0 ? (
+              <div className="rounded-xl bg-emerald-50 border border-emerald-200 p-3 text-center">
+                <p className="text-xs text-emerald-700 mb-0.5">Part théorique ({resultatAnnuel.myPct}%)</p>
+                <p className="text-xl font-black text-emerald-700">{fmt(resultatAnnuel.maPart)} FCFA</p>
+                <p className="text-[10px] text-muted-foreground mt-1">Simulation — après rémunération gestion 20%</p>
+              </div>
+            ) : (
+              <p className="text-xs text-center text-muted-foreground">Pas de bénéfice distribuable pour le moment.</p>
+            )}
+            <p className="text-[10px] text-muted-foreground mt-2 text-center">
+              Basé sur {resultatAnnuel.nbRapports} rapport(s) journalier(s). Détail complet dans Gouvernance.
+            </p>
           </CardContent>
         </Card>
       )}
