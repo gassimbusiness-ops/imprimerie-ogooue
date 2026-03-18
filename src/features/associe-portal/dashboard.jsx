@@ -575,7 +575,7 @@ export default function AssocieDashboard() {
       {/* Simulateur Zakat — visible des que l'utilisateur est associe */}
       {(capInfo || user?.role === 'associe') && (
         <SimulateurZakat
-          capInfo={capInfo || { pct: 23.89, valeurPart: 2500000, totalCapital: 10465000 }}
+          capInfo={capInfo || { pct: 23.89, valeurPart: (valuation.valeur_nette * 23.89) / 100, totalCapital: 10465000 }}
           myInvestisseur={myInvestisseur || { nom: `${user?.prenom || ''} ${user?.nom || ''}`.trim(), montantInitial: 2500000 }}
         />
       )}
