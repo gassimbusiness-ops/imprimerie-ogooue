@@ -33,7 +33,15 @@ const PRIORITES = {
 const KANBAN_COLUMNS = ['planifie', 'en_cours', 'termine'];
 
 const emptyProjet = { nom: '', description: '', statut: 'planifie', budget_prevu: '', date_debut: '', date_fin: '', responsable: '', priorite: 'moyenne' };
-const emptyEtape = { nom: '', description: '', statut: 'en_attente', budget: '', depense: '' };
+const emptyEtape = { nom: '', description: '', statut: 'en_attente', budget: '', depense: '', statut_paiement: 'non_paye', source_paiement: 'caisse' };
+
+const SOURCES_PAIEMENT = [
+  { value: 'caisse', label: 'Caisse / Liquide' },
+  { value: 'finam', label: 'FINAM' },
+  { value: 'bgfi', label: 'BGFI' },
+  { value: 'airtel_money', label: 'Airtel Money' },
+  { value: 'moov_money', label: 'Moov Money' },
+];
 
 export default function Travaux() {
   const { hasPermission, user } = useAuth();
@@ -117,13 +125,89 @@ export default function Travaux() {
   };
 
   const openAddEtape = (projetId) => { setSelectedProjet(projetId); setEditEtape(null); setEtapeForm(emptyEtape); setShowEtapeForm(true); };
-  const openEditEtape = (e) => { setSelectedProjet(e.projet_id); setEditEtape(e); setEtapeForm({ nom: e.nom || '', description: e.description || '', statut: e.statut || 'en_attente', budget: e.budget || '', depense: e.depense || '' }); setShowEtapeForm(true); };
+  const openEditEtape = (e) => { setSelectedProjet(e.projet_id); setEditEtape(e); setEtapeForm({ nom: e.nom || '', description: e.description || '', statut: e.statut || 'en_attente', budget: e.budget || '', depense: e.depense || '', statut_paiement: e.statut_paiement || 'non_paye', source_paiement: e.source_paiement || 'caisse' }); setShowEtapeForm(true); };
 
   const handleSaveEtape = async () => {
     if (!etapeForm.nom.trim()) { toast.error('Nom requis'); return; }
-    const data = { ...etapeForm, projet_id: selectedProjet, budget: Number(etapeForm.budget) || 0, depense: Number(etapeForm.depense) || 0 };
-    if (editEtape) { await db.etapes_travaux.update(editEtape.id, data); toast.success('Etape modifiee'); }
-    else { await db.etapes_travaux.create(data); toast.success('Etape ajoutee'); }
+    const depense = Number(etapeForm.depense) || 0;
+    const data = { ...etapeForm, projet_id: selectedProjet, budget: Number(etapeForm.budget) || 0, depense };
+
+    // Trouver le nom du projet pour la description du mouvement
+    const projet = projets.find((p) => p.id === selectedProjet);
+    const projetNom = projet?.nom || 'Projet';
+    const sourceLabel = SOURCES_PAIEMENT.find((s) => s.value === etapeForm.source_paiement)?.label || etapeForm.source_paiement;
+
+    if (editEtape) {
+      const ancienPaye = editEtape.statut_paiement === 'paye';
+      const nouveauPaye = etapeForm.statut_paiement === 'paye';
+      const ancienneDepense = editEtape.depense || 0;
+
+      await db.etapes_travaux.update(editEtape.id, data);
+
+      // Cas 1 : non_paye → paye — creer le mouvement sortie
+      if (!ancienPaye && nouveauPaye && depense > 0) {
+        await db.mouvements_financiers.create({
+          type: 'sortie',
+          montant: depense,
+          description: `Travaux: ${projetNom} — ${etapeForm.nom}`,
+          source: etapeForm.source_paiement,
+          date: new Date().toISOString().slice(0, 10),
+          reference: `PROJET-${editEtape.id}`,
+          categorie: 'travaux',
+        });
+        toast.success(`Etape modifiee — sortie ${sourceLabel} de ${fmt(depense)} F enregistree`);
+      }
+      // Cas 2 : paye → non_paye — contrepassation (annulation explicite)
+      else if (ancienPaye && !nouveauPaye && ancienneDepense > 0) {
+        await db.mouvements_financiers.create({
+          type: 'entree',
+          montant: ancienneDepense,
+          description: `ANNULATION — Travaux: ${projetNom} — ${etapeForm.nom} (contrepassation)`,
+          source: editEtape.source_paiement || 'caisse',
+          date: new Date().toISOString().slice(0, 10),
+          reference: `ANNUL-PROJET-${editEtape.id}`,
+          categorie: 'travaux_annulation',
+        });
+        toast.success(`Etape modifiee — annulation sortie ${fmt(ancienneDepense)} F enregistree`);
+      }
+      // Cas 3 : paye reste paye, mais montant change — mouvement correctif
+      else if (ancienPaye && nouveauPaye && depense !== ancienneDepense) {
+        const diff = depense - ancienneDepense;
+        if (diff !== 0) {
+          await db.mouvements_financiers.create({
+            type: diff > 0 ? 'sortie' : 'entree',
+            montant: Math.abs(diff),
+            description: `${diff > 0 ? 'Complement' : 'Correction'} — Travaux: ${projetNom} — ${etapeForm.nom}`,
+            source: etapeForm.source_paiement,
+            date: new Date().toISOString().slice(0, 10),
+            reference: `CORRECT-PROJET-${editEtape.id}`,
+            categorie: 'travaux_correction',
+          });
+          toast.success(`Etape modifiee — ${diff > 0 ? 'complement' : 'correction'} ${fmt(Math.abs(diff))} F`);
+        } else {
+          toast.success('Etape modifiee');
+        }
+      } else {
+        toast.success('Etape modifiee');
+      }
+    } else {
+      const created = await db.etapes_travaux.create(data);
+      // Si nouvelle etape directement marquee payee
+      if (etapeForm.statut_paiement === 'paye' && depense > 0) {
+        await db.mouvements_financiers.create({
+          type: 'sortie',
+          montant: depense,
+          description: `Travaux: ${projetNom} — ${etapeForm.nom}`,
+          source: etapeForm.source_paiement,
+          date: new Date().toISOString().slice(0, 10),
+          reference: `PROJET-${created?.id || 'new'}`,
+          categorie: 'travaux',
+        });
+        toast.success(`Etape ajoutee — sortie ${sourceLabel} de ${fmt(depense)} F enregistree`);
+      } else {
+        toast.success('Etape ajoutee');
+      }
+    }
     setShowEtapeForm(false); load();
   };
 
@@ -454,6 +538,34 @@ export default function Travaux() {
               <div><label className="mb-1.5 block text-sm font-medium">Budget (F)</label><Input type="number" value={etapeForm.budget} onChange={(e) => setEtapeForm({ ...etapeForm, budget: e.target.value })} /></div>
               <div><label className="mb-1.5 block text-sm font-medium">Depense (F)</label><Input type="number" value={etapeForm.depense} onChange={(e) => setEtapeForm({ ...etapeForm, depense: e.target.value })} /></div>
             </div>
+            {/* Paiement */}
+            {Number(etapeForm.depense) > 0 && (
+              <div className="grid grid-cols-2 gap-3 rounded-lg bg-muted/50 p-3">
+                <div>
+                  <label className="mb-1.5 block text-sm font-medium">Paiement</label>
+                  <Select value={etapeForm.statut_paiement} onValueChange={(v) => setEtapeForm({ ...etapeForm, statut_paiement: v })}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="non_paye">Non paye</SelectItem>
+                      <SelectItem value="paye">Paye</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                {etapeForm.statut_paiement === 'paye' && (
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium">Source</label>
+                    <Select value={etapeForm.source_paiement} onValueChange={(v) => setEtapeForm({ ...etapeForm, source_paiement: v })}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        {SOURCES_PAIEMENT.map((s) => (
+                          <SelectItem key={s.value} value={s.value}>{s.label}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+              </div>
+            )}
             <Button className="w-full" onClick={handleSaveEtape}>{editEtape ? 'Enregistrer' : 'Ajouter'}</Button>
           </div>
         </DialogContent>
