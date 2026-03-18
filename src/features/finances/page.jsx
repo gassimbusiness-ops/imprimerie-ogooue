@@ -104,6 +104,14 @@ export default function Finances() {
 
   // ── KPIs ──
   const totalSoldeComptes = comptes.reduce((s, c) => s + (c.solde || 0), 0);
+  // Tresorerie Imprimerie uniquement (whitelist + blacklist)
+  const COMPTES_IMPRIMERIE = ['finam', 'bgfi', 'airtel', 'moov', 'caisse', 'liquide'];
+  const COMPTES_EXCLUS = ['wise', 'mercury', 'paypal', 'stripe', 'airwallex'];
+  const tresorerieImprimerie = comptes.filter((c) => {
+    const nom = (c.nom || '').toLowerCase();
+    if (COMPTES_EXCLUS.some((k) => nom.includes(k))) return false;
+    return COMPTES_IMPRIMERIE.some((k) => nom.includes(k)) || c.appartient_imprimerie === true;
+  }).reduce((s, c) => s + (c.solde || 0), 0);
   const totalCharges = charges.filter((c) => c.actif !== false).reduce((s, c) => s + (c.montant || 0), 0);
   const totalDettes = dettes.reduce((s, d) => s + (d.montant_restant || d.montant_initial || 0), 0);
   const totalInvest = investissements.reduce((s, i) => s + (i.montant || 0), 0);
@@ -222,8 +230,11 @@ export default function Finances() {
       {/* KPIs */}
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <Card className="border-l-4 border-l-emerald-500"><CardContent className="p-4">
-          <p className="text-xs text-muted-foreground">Solde total comptes</p>
-          <p className="text-xl font-bold text-emerald-700">{fmt(totalSoldeComptes)} F</p>
+          <p className="text-xs text-muted-foreground">Tresorerie Imprimerie</p>
+          <p className="text-xl font-bold text-emerald-700">{fmt(tresorerieImprimerie)} F</p>
+          {totalSoldeComptes !== tresorerieImprimerie && (
+            <p className="text-[10px] text-muted-foreground mt-0.5">Tous comptes : {fmt(totalSoldeComptes)} F</p>
+          )}
         </CardContent></Card>
         <Card className="border-l-4 border-l-red-500"><CardContent className="p-4">
           <p className="text-xs text-muted-foreground">Charges mensuelles</p>
