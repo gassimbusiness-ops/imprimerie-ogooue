@@ -225,13 +225,16 @@ export default function AssocieDashboard() {
   useEffect(() => {
     const loadData = async () => {
       try {
+        // Seed investisseurs en parallele mais sans bloquer le chargement si erreur
+        ensureInvestisseurs().catch((e) => console.warn('Seed investisseurs skip:', e.message));
+
         const [emp, stk, inv, cmd, prod, investisseurs, ap, dettes, remb, projets, params, s, comptes, raps, chFixes] = await Promise.all([
           db.employes.list(),
           db.produits_catalogue.list(),
           db.produits.list(),
           db.commandes.list(),
           db.produits_catalogue.list(),
-          ensureInvestisseurs(),
+          db.investisseurs.list(),
           db.apports_associes.list(),
           db.dettes_associes.list(),
           db.remboursements_associes.list(),
