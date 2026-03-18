@@ -520,8 +520,8 @@ export default function AssocieDashboard() {
                   <p className="text-sm font-bold">{fmt(myInvestisseur.montantInitial)} F</p>
                 </div>
                 <div className="rounded-lg bg-muted/50 p-2">
-                  <p className="text-[10px] text-muted-foreground">Montant actuel</p>
-                  <p className="text-sm font-bold text-primary">{fmt(myInvestisseur.montantActuel)} F</p>
+                  <p className="text-[10px] text-muted-foreground">Valeur actuelle</p>
+                  <p className="text-sm font-bold text-primary">{fmt(capInfo?.valeurPart || 0)} F</p>
                 </div>
                 <div className="rounded-lg bg-muted/50 p-2">
                   <p className="text-[10px] text-muted-foreground">Parts</p>
