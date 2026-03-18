@@ -573,12 +573,19 @@ export default function AssocieDashboard() {
 
       {/* ═══ Simulateur Zakat ═══ */}
       {/* Simulateur Zakat — visible des que l'utilisateur est associe */}
-      {(capInfo || user?.role === 'associe') && (
-        <SimulateurZakat
-          capInfo={capInfo || { pct: 23.89, valeurPart: (valuation.valeur_nette * 23.89) / 100, totalCapital: 10465000 }}
-          myInvestisseur={myInvestisseur || { nom: `${user?.prenom || ''} ${user?.nom || ''}`.trim(), montantInitial: 2500000 }}
-        />
-      )}
+      {(capInfo || user?.role === 'associe' || user?.role === 'admin') && (() => {
+        // Detecter le bon associe pour le fallback
+        const nom = `${user?.prenom || ''} ${user?.nom || ''}`.toLowerCase();
+        const isOumar = nom.includes('oumar') || nom.includes('abakar') || nom.includes('ibrahim') || user?.role === 'admin';
+        const fallbackPct = isOumar ? 76.11 : 23.89;
+        const fallbackInvest = isOumar ? 7965000 : 2500000;
+        return (
+          <SimulateurZakat
+            capInfo={capInfo || { pct: fallbackPct, valeurPart: (valuation.valeur_nette * fallbackPct) / 100, totalCapital: 10465000 }}
+            myInvestisseur={myInvestisseur || { nom: `${user?.prenom || ''} ${user?.nom || ''}`.trim(), montantInitial: fallbackInvest }}
+          />
+        );
+      })()}
 
       {/* Projets en cours */}
       {data.projets.length > 0 && (
