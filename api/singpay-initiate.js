@@ -89,19 +89,34 @@ export default async function handler(req, res) {
     }
 
     // ── Appel SingPay
+    console.log('[SingPay] POST', endpoint, 'body:', JSON.stringify(body));
     const paymentResponse = await fetch(endpoint, {
       method: 'POST',
       headers: getSingPayHeaders(),
       body: JSON.stringify(body),
     });
 
-    const paymentData = await paymentResponse.json().catch(() => ({}));
+    // Capture du body brut pour bien diagnostiquer en cas d'erreur non-JSON
+    const responseText = await paymentResponse.text();
+    let paymentData;
+    try {
+      paymentData = responseText ? JSON.parse(responseText) : {};
+    } catch (parseErr) {
+      paymentData = { _raw: responseText.slice(0, 500), _parseError: parseErr.message };
+    }
 
     if (!paymentResponse.ok || paymentData?.status?.success === false) {
-      console.error('[SingPay] Initiation failed:', paymentResponse.status, paymentData);
+      console.error('[SingPay] Initiation failed:', paymentResponse.status, responseText.slice(0, 500));
+      const detailMsg = paymentData?.status?.message
+        || paymentData?.message
+        || paymentData?.error
+        || paymentData?._raw
+        || `HTTP ${paymentResponse.status}`;
       return res.status(502).json({
-        error: paymentData?.status?.message || paymentData?.message || 'Erreur SingPay',
-        details: paymentData,
+        error: 'Erreur SingPay',
+        detail: typeof detailMsg === 'string' ? detailMsg.slice(0, 200) : 'Format inconnu',
+        httpStatus: paymentResponse.status,
+        endpoint,
       });
     }
 
@@ -113,51 +128,56 @@ export default async function handler(req, res) {
     const externalLink = paymentData.link || null;
     const expiresAt = paymentData.exp || null;
 
-    // ── Persistance dans Supabase
-    await supabase.from('app_data').insert({
-      id: crypto.randomUUID(),
-      collection: 'paiements_singpay',
-      data: {
+    // ── Persistance dans Supabase (en best-effort : si echec, on log mais on continue
+    //    car la transaction SingPay est deja creee et le frontend va polling le statut)
+    try {
+      await supabase.from('app_data').insert({
         id: crypto.randomUUID(),
-        commande_id: commandeId,
-        singpay_transaction_id: transactionId,
-        payment_reference: reference,
-        wallet_id: walletId,
-        phone_number: telClean,
-        operateur,
-        amount: Math.round(montant),
-        status: 'pending',
-        nom_client: nomClient || 'Client',
-        external_link: externalLink,
-        expires_at: expiresAt,
-        raw_response: paymentData,
-        created_at: new Date().toISOString(),
-      },
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    });
-
-    // ── Mise a jour de la commande
-    const { data: cmdRow } = await supabase
-      .from('app_data')
-      .select('id, data')
-      .eq('id', commandeId)
-      .eq('collection', 'commandes')
-      .maybeSingle();
-
-    if (cmdRow) {
-      await supabase.from('app_data').update({
+        collection: 'paiements_singpay',
         data: {
-          ...cmdRow.data,
-          statut: 'paiement_initie',
-          operateur_paiement: operateur,
-          telephone_paiement: telClean,
-          singpay_reference: reference,
+          id: crypto.randomUUID(),
+          commande_id: commandeId,
           singpay_transaction_id: transactionId,
-          updated_at: new Date().toISOString(),
+          payment_reference: reference,
+          wallet_id: walletId,
+          phone_number: telClean,
+          operateur,
+          amount: Math.round(montant),
+          status: 'pending',
+          nom_client: nomClient || 'Client',
+          external_link: externalLink,
+          expires_at: expiresAt,
+          raw_response: paymentData,
+          created_at: new Date().toISOString(),
         },
+        created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
-      }).eq('id', commandeId);
+      });
+
+      // Mise a jour de la commande
+      const { data: cmdRow } = await supabase
+        .from('app_data')
+        .select('id, data')
+        .eq('id', commandeId)
+        .eq('collection', 'commandes')
+        .maybeSingle();
+
+      if (cmdRow) {
+        await supabase.from('app_data').update({
+          data: {
+            ...cmdRow.data,
+            statut: 'paiement_initie',
+            operateur_paiement: operateur,
+            telephone_paiement: telClean,
+            singpay_reference: reference,
+            singpay_transaction_id: transactionId,
+            updated_at: new Date().toISOString(),
+          },
+          updated_at: new Date().toISOString(),
+        }).eq('id', commandeId);
+      }
+    } catch (supabaseErr) {
+      console.error('[SingPay] Supabase persistance failed (transaction SingPay reste valide):', supabaseErr.message);
     }
 
     res.json({

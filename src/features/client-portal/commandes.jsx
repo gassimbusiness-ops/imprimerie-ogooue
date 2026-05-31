@@ -420,16 +420,28 @@ export default function ClientCommandes() {
                       operateur === 'airtel' ? 'border-red-500 bg-red-50 ring-2 ring-red-200' : 'border-muted hover:border-red-300'
                     }`}
                   >
-                    <span className="text-2xl">📱</span>
+                    <img
+                      src="/logos/airtel-money.png"
+                      alt="Airtel Money"
+                      className="h-12 w-12 object-contain"
+                      onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.nextSibling.style.display = 'inline'; }}
+                    />
+                    <span className="text-2xl hidden">📱</span>
                     <span className="text-sm font-semibold">Airtel Money</span>
                   </button>
                   <button
                     onClick={() => setOperateur('moov')}
                     className={`flex flex-col items-center gap-2 rounded-xl border-2 p-4 transition-all ${
-                      operateur === 'moov' ? 'border-blue-500 bg-blue-50 ring-2 ring-blue-200' : 'border-muted hover:border-blue-300'
+                      operateur === 'moov' ? 'border-orange-500 bg-orange-50 ring-2 ring-orange-200' : 'border-muted hover:border-orange-300'
                     }`}
                   >
-                    <span className="text-2xl">📱</span>
+                    <img
+                      src="/logos/moov-money.png"
+                      alt="Moov Money"
+                      className="h-12 w-12 object-contain"
+                      onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.nextSibling.style.display = 'inline'; }}
+                    />
+                    <span className="text-2xl hidden">📱</span>
                     <span className="text-sm font-semibold">Moov Money</span>
                   </button>
                 </div>
