@@ -52,6 +52,8 @@ import {
   notifyCommandePrete,
   notifyCommandeLivree,
   notifyFactureDisponible,
+  notifyTacheAssignee,
+  notifyRappelOperateur,
 } from '@/services/notifications';
 import { syncClientFromCommande } from '@/services/sync-clients';
 import { syncCommandeToRapport } from '@/services/sync-commande-rapport';
@@ -137,6 +139,7 @@ export default function Commandes() {
   const canChangeStatut = isAdmin || isManager || isEmploye;
   const [commandes, setCommandes] = useState([]);
   const [clients, setClients] = useState([]);
+  const [employes, setEmployes] = useState([]);
   const [search, setSearch] = useState('');
   const [filterStatut, setFilterStatut] = useState('all');
   const [loading, setLoading] = useState(true);
@@ -156,9 +159,10 @@ export default function Commandes() {
   });
 
   const load = useCallback(async () => {
-    const [c, cl] = await Promise.all([db.commandes.list(), db.clients.list()]);
+    const [c, cl, em] = await Promise.all([db.commandes.list(), db.clients.list(), db.employes.list()]);
     setCommandes(c.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || '')));
     setClients(cl);
+    setEmployes(em.filter((e) => ['employe', 'manager', 'admin'].includes(e.role)));
     setLoading(false);
   }, []);
 
@@ -350,6 +354,16 @@ export default function Commandes() {
       syncCommandeToRapport(cmd).catch((err) => console.error('Sync rapport error:', err));
       crediterPointsFidelite(cmd).catch((err) => console.error('Fidelite error:', err));
       syncStockFromCommande(cmd).catch((err) => console.error('Sync stock error:', err));
+      // Cloturer la tache associee si elle existe
+      try {
+        const allTaches = await db.taches.list();
+        const tache = allTaches.find((t) => t.commande_id === cmd.id);
+        if (tache && tache.statut !== 'terminee' && tache.statut !== 'validee') {
+          await db.taches.update(tache.id, { statut: 'terminee', progression: 100 });
+        }
+      } catch (err) {
+        console.error('Cloture tache liee error:', err);
+      }
     }
 
     // Auto-generation facture a la livraison
@@ -534,6 +548,82 @@ export default function Commandes() {
     await db.commandes.delete(cmd.id);
     toast.success('Commande supprimée');
     load();
+  };
+
+  // ── Assignation à un opérateur + auto-création tâche ──
+  const handleAssignCommande = async (cmd, employeId) => {
+    const employe = employes.find((e) => e.id === employeId);
+    const assigneNom = employe ? `${employe.prenom || ''} ${employe.nom || ''}`.trim() : '';
+
+    // 1) Mise a jour de la commande
+    await db.commandes.update(cmd.id, {
+      assignee_id: employeId || null,
+      assignee_nom: assigneNom,
+      historique_statuts: [
+        ...(cmd.historique_statuts || []),
+        {
+          statut: cmd.statut,
+          date: new Date().toISOString(),
+          auteur: `${currentUser.prenom || ''} ${currentUser.nom || ''}`.trim() || 'Admin',
+          action: employeId ? `Assignée à ${assigneNom}` : 'Désassignée',
+        },
+      ],
+    });
+
+    if (employeId && employe) {
+      // 2) Verifier si une tache existe deja pour cette commande (idempotent)
+      const allTaches = await db.taches.list();
+      const existing = allTaches.find((t) => t.commande_id === cmd.id);
+
+      if (!existing) {
+        // Creer une nouvelle tache liee a la commande
+        await db.taches.create({
+          titre: `Commande ${cmd.numero} — ${cmd.client_nom}`,
+          description: cmd.description || (cmd.lignes || []).map((l) => `${l.quantite}× ${l.description}`).join('\n'),
+          priorite: 'haute',
+          categorie: 'Commande',
+          statut: 'en_attente',
+          assigne_a: employeId,
+          assigne_nom: assigneNom,
+          date_echeance: cmd.date_echeance || '',
+          progression: 0,
+          commande_id: cmd.id,
+          commande_numero: cmd.numero,
+        });
+      } else {
+        // Reassigner la tache existante
+        await db.taches.update(existing.id, {
+          assigne_a: employeId,
+          assigne_nom: assigneNom,
+        });
+      }
+
+      // 3) Notifier l'operateur cible (par user_id)
+      await notifyTacheAssignee(employeId, cmd.numero, cmd.client_nom);
+      toast.success(`Assignée à ${assigneNom}`);
+    } else {
+      // Désassignation : on retire l'assigne de la tache mais on la garde
+      const allTaches = await db.taches.list();
+      const existing = allTaches.find((t) => t.commande_id === cmd.id);
+      if (existing) {
+        await db.taches.update(existing.id, { assigne_a: '', assigne_nom: '' });
+      }
+      toast.success('Désassignée');
+    }
+
+    const updated = await db.commandes.getById(cmd.id);
+    if (updated) setShowDetail(updated);
+    load();
+  };
+
+  // ── Envoyer un rappel à l'opérateur assigné ──
+  const handleRappelOperateur = async (cmd) => {
+    if (!cmd.assignee_id) {
+      toast.error('Aucun opérateur assigné');
+      return;
+    }
+    await notifyRappelOperateur(cmd.assignee_id, cmd.numero, cmd.client_nom);
+    toast.success(`Rappel envoyé à ${cmd.assignee_nom || 'l\'opérateur'}`);
   };
 
   // ── Purger les commandes de test (montant 0 ou anciennes tests) ──
@@ -974,6 +1064,54 @@ export default function Commandes() {
                   <Button variant="outline" className="w-full gap-1.5 text-sm" onClick={() => handleSaveComments(showDetail)}>
                     💾 Enregistrer les commentaires
                   </Button>
+                )}
+
+                {/* ── Assignation à un opérateur (Admin/Manager seulement) ── */}
+                {canWriteAdmin && (
+                  <div className="rounded-lg border bg-blue-500/5 p-3 space-y-2">
+                    <label className="flex items-center gap-1.5 text-sm font-medium">
+                      <User className="h-3.5 w-3.5 text-blue-600" />
+                      Opérateur assigné
+                      {showDetail.assignee_nom && (
+                        <Badge variant="outline" className="text-[10px] border-blue-500/40 text-blue-700">
+                          {showDetail.assignee_nom}
+                        </Badge>
+                      )}
+                    </label>
+                    <div className="flex gap-2">
+                      <Select
+                        value={showDetail.assignee_id || '__none__'}
+                        onValueChange={(v) => handleAssignCommande(showDetail, v === '__none__' ? '' : v)}
+                      >
+                        <SelectTrigger className="flex-1"><SelectValue placeholder="Non assignée" /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__none__">— Non assignée —</SelectItem>
+                          {employes.map((e) => (
+                            <SelectItem key={e.id} value={e.id}>
+                              {(e.prenom || '') + ' ' + (e.nom || '')} {e.role ? `(${e.role})` : ''}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {showDetail.assignee_id && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleRappelOperateur(showDetail)}
+                          className="gap-1.5 shrink-0"
+                          title="Envoyer un rappel à l'opérateur"
+                        >
+                          <Bell className="h-3.5 w-3.5" />
+                          Rappel
+                        </Button>
+                      )}
+                    </div>
+                    {showDetail.assignee_id && (
+                      <p className="text-[10px] text-muted-foreground">
+                        ✓ Une tâche est créée automatiquement dans le module Tâches.
+                      </p>
+                    )}
+                  </div>
                 )}
 
                 {/* Historique des statuts */}

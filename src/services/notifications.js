@@ -55,6 +55,16 @@ const NOTIF_TYPES = {
     label: 'Facture disponible',
     link: '/client/factures',
   },
+  tache_assignee: {
+    icon: '📋',
+    label: 'Tâche assignée',
+    link: '/taches',
+  },
+  rappel_operateur: {
+    icon: '🔔',
+    label: 'Rappel commande',
+    link: '/commandes',
+  },
 };
 
 /**
@@ -245,6 +255,30 @@ export function notifyPromotion(message) {
     `🎉 ${message}`,
     'client',
     { type: 'promotion' }
+  );
+}
+
+/**
+ * Notifier un opérateur qu'une commande lui a été assignée (= nouvelle tâche)
+ */
+export function notifyTacheAssignee(operateurId, numeroCmd, clientNom) {
+  return createNotification(
+    'tache_assignee',
+    `📋 Nouvelle tâche : commande ${numeroCmd} (${clientNom})`,
+    operateurId,
+    { type: 'tache', commande_numero: numeroCmd }
+  );
+}
+
+/**
+ * Envoyer un rappel manuel à un opérateur pour une commande à traiter
+ */
+export function notifyRappelOperateur(operateurId, numeroCmd, clientNom) {
+  return createNotification(
+    'rappel_operateur',
+    `🔔 Rappel — Commande ${numeroCmd} (${clientNom}) à traiter`,
+    operateurId,
+    { type: 'rappel', commande_numero: numeroCmd, priorite: 'haute' }
   );
 }
 

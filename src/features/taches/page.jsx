@@ -33,7 +33,7 @@ const PRIORITES = {
   basse: { label: 'Basse', color: 'bg-slate-100 text-slate-600', dot: 'bg-slate-400' },
 };
 
-const CATEGORIES = ['Impression', 'Reliure', 'Design', 'Livraison', 'Administratif', 'Maintenance', 'Autre'];
+const CATEGORIES = ['Commande', 'Impression', 'Reliure', 'Design', 'Livraison', 'Administratif', 'Maintenance', 'Autre'];
 
 const emptyForm = {
   titre: '', description: '', priorite: 'normale', categorie: 'Impression',
@@ -172,6 +172,11 @@ export default function Taches() {
               <div className="flex flex-wrap items-center gap-1.5 mt-2">
                 <Badge variant="outline" className={`text-[10px] ${prio.color}`}>{prio.label}</Badge>
                 <Badge variant="outline" className="text-[10px]">{t.categorie}</Badge>
+                {t.commande_numero && (
+                  <Badge variant="outline" className="text-[10px] border-blue-500/40 text-blue-700">
+                    📦 {t.commande_numero}
+                  </Badge>
+                )}
                 {overdue && <Badge className="text-[10px] bg-red-500 text-white">En retard</Badge>}
               </div>
               <div className="flex items-center gap-3 mt-2 text-[10px] text-muted-foreground">
