@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { db } from '@/services/db';
 import { logAction } from '@/services/audit';
 import { useAuth } from '@/services/auth';
+import { executerPrelevementsDus } from '@/services/credit-mensualites';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -20,6 +21,23 @@ import {
 import { toast } from 'sonner';
 
 function fmt(n) { return new Intl.NumberFormat('fr-FR').format(Math.round(n || 0)); }
+
+// ── Helpers credit ─────────────────────────────────────────────
+function calcMensualite(montant_initial, taux_interet, duree_mois) {
+  const m = Number(montant_initial) || 0;
+  const t = Number(taux_interet) || 0;
+  const d = Number(duree_mois) || 0;
+  if (!m || !d) return 0;
+  // Capital + interets simples sur la duree totale, divise en mensualites egales
+  return Math.round((m * (1 + t / 100)) / d);
+}
+function addMonths(dateStr, n = 1) {
+  if (!dateStr) return '';
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return '';
+  d.setMonth(d.getMonth() + n);
+  return d.toISOString().slice(0, 10);
+}
 
 const TABS = [
   { id: 'comptes', label: 'Comptes bancaires', icon: Building2 },
@@ -100,7 +118,38 @@ export default function Finances() {
     setLoading(false);
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    (async () => {
+      await load();
+      // Rattrapage automatique des mensualites dues au chargement (silencieux)
+      try {
+        const r = await executerPrelevementsDus();
+        if (r.processed.length > 0) {
+          toast.success(`${r.processed.length} prélèvement(s) automatique(s) effectué(s)`);
+          await load(); // refresh apres prelevements
+        }
+      } catch (e) {
+        console.error('[Finances] Erreur prelevements auto:', e);
+      }
+    })();
+  }, []);
+
+  const handleForcerPrelevement = async () => {
+    const r = await executerPrelevementsDus();
+    if (r.errors.length > 0) {
+      toast.error(`${r.errors.length} erreur(s) — voir console`);
+      console.error('[Finances] Erreurs prelevement:', r.errors);
+    }
+    if (r.processed.length > 0) {
+      const total = r.processed.reduce((s, p) => s + (p.montant_total || 0), 0);
+      const totalMens = r.processed.reduce((s, p) => s + (p.mensualites || 0), 0);
+      toast.success(`${totalMens} mensualité(s) prélevée(s) — ${fmt(total)} F`);
+      await logAction('update', 'finances', { entityLabel: 'Prélèvement crédits', details: `${totalMens} mensualités, ${fmt(total)} F` });
+      await load();
+    } else if (r.errors.length === 0) {
+      toast.info('Aucune échéance due');
+    }
+  };
 
   // ── KPIs ──
   const totalSoldeComptes = comptes.reduce((s, c) => s + (c.solde || 0), 0);
@@ -147,7 +196,7 @@ export default function Finances() {
     } else if (activeTab === 'charges') {
       setForm({ libelle: '', type: 'loyer', montant: '', beneficiaire: '', actif: true, categorie: '' });
     } else if (activeTab === 'dettes') {
-      setForm({ libelle: '', montant_initial: '', taux_interet: '', duree_mois: '', montant_restant: '', date_debut: '' });
+      setForm({ libelle: '', montant_initial: '', taux_interet: '2.5', duree_mois: '', montant_restant: '', date_debut: new Date().toISOString().slice(0, 10), compte_id: '', jour_prelevement: '5', prelevement_auto: true, statut: 'actif' });
     } else if (activeTab === 'actionnaires') {
       setForm({ nom: '', pourcentage: '', investissement: '' });
     } else {
@@ -166,9 +215,28 @@ export default function Finances() {
     const coll = getCollection();
     const data = { ...form };
     // Convert numbers
-    ['montant', 'solde', 'montant_initial', 'taux_interet', 'duree_mois', 'montant_restant', 'pourcentage', 'investissement', 'roi_estime'].forEach((k) => {
+    ['montant', 'solde', 'montant_initial', 'taux_interet', 'duree_mois', 'montant_restant', 'pourcentage', 'investissement', 'roi_estime', 'jour_prelevement'].forEach((k) => {
       if (data[k] !== undefined && data[k] !== '') data[k] = Number(data[k]) || 0;
     });
+
+    // DETTES : auto-calcul mensualite + prochaine echeance si manquant
+    if (activeTab === 'dettes') {
+      data.mensualite_montant = calcMensualite(data.montant_initial, data.taux_interet, data.duree_mois);
+      if (data.montant_restant === undefined || data.montant_restant === '' || data.montant_restant === 0) {
+        // A la creation : restant = initial + interets totaux
+        if (!editItem) {
+          data.montant_restant = Math.round((data.montant_initial || 0) * (1 + (data.taux_interet || 0) / 100));
+        }
+      }
+      if (!data.prochaine_echeance && data.date_debut && data.jour_prelevement) {
+        // Premiere echeance = date_debut + 1 mois, ajustee au jour_prelevement
+        const next = new Date(data.date_debut);
+        next.setMonth(next.getMonth() + 1);
+        next.setDate(Math.min(Number(data.jour_prelevement) || 5, 28));
+        data.prochaine_echeance = next.toISOString().slice(0, 10);
+      }
+      if (!data.statut) data.statut = 'actif';
+    }
 
     // Mouvement: update account balance
     if (activeTab === 'mouvements' && !editItem) {
@@ -411,41 +479,77 @@ export default function Finances() {
 
       {/* ═══════════ DETTES ═══════════ */}
       {activeTab === 'dettes' && (
-        <Card><CardContent className="p-0">
-          <div className="divide-y">
-            {dettes.length === 0 ? <p className="py-12 text-center text-sm text-muted-foreground">Aucune dette</p> :
-              dettes.map((d) => {
-                const progress = d.montant_initial > 0 ? ((d.montant_initial - (d.montant_restant || 0)) / d.montant_initial) * 100 : 0;
-                return (
-                  <div key={d.id} className="px-4 py-3 hover:bg-muted/50">
-                    <div className="flex items-center gap-4">
-                      <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-orange-500/10 shrink-0"><CreditCard className="h-4 w-4 text-orange-600" /></div>
-                      <div className="flex-1 min-w-0">
-                        <p className="font-semibold text-sm">{d.libelle}</p>
-                        <p className="text-[10px] text-muted-foreground">{d.taux_interet}% sur {d.duree_mois} mois{d.date_debut ? ` — depuis le ${d.date_debut}` : ''}</p>
-                      </div>
-                      <div className="text-right shrink-0">
-                        <p className="text-sm font-bold">{fmt(d.montant_restant || 0)} F</p>
-                        <p className="text-[10px] text-muted-foreground">sur {fmt(d.montant_initial)} F</p>
-                      </div>
-                      {(isAdmin || isManager) && (
-                        <div className="flex gap-1 shrink-0">
-                          <button onClick={() => openEdit(d)} className="rounded p-1.5 hover:bg-muted"><Edit2 className="h-3.5 w-3.5 text-muted-foreground" /></button>
-                          <button onClick={() => handleDelete(d)} className="rounded p-1.5 hover:bg-red-50"><Trash2 className="h-3.5 w-3.5 text-red-500" /></button>
+        <>
+          {/* Bouton forcer prelevement */}
+          {(isAdmin || isManager) && dettes.some((d) => d.prelevement_auto && d.statut !== 'solde') && (
+            <div className="flex justify-end">
+              <Button variant="outline" size="sm" onClick={handleForcerPrelevement} className="gap-2">
+                <RefreshCw className="h-3.5 w-3.5" />
+                Forcer prélèvement (échéances dues)
+              </Button>
+            </div>
+          )}
+          <Card><CardContent className="p-0">
+            <div className="divide-y">
+              {dettes.length === 0 ? <p className="py-12 text-center text-sm text-muted-foreground">Aucune dette</p> :
+                dettes.map((d) => {
+                  const progress = d.montant_initial > 0 ? ((d.montant_initial - (d.montant_restant || 0)) / d.montant_initial) * 100 : 0;
+                  const mens = d.mensualite_montant || calcMensualite(d.montant_initial, d.taux_interet, d.duree_mois);
+                  const compteSrc = d.compte_id ? compteNom(d.compte_id) : null;
+                  const isSolde = d.statut === 'solde' || (d.montant_restant || 0) <= 0;
+                  const isSuspendu = d.statut === 'suspendu';
+                  return (
+                    <div key={d.id} className="px-4 py-3 hover:bg-muted/50">
+                      <div className="flex items-center gap-4">
+                        <div className={`flex h-9 w-9 items-center justify-center rounded-lg shrink-0 ${isSolde ? 'bg-emerald-500/10' : 'bg-orange-500/10'}`}>
+                          <CreditCard className={`h-4 w-4 ${isSolde ? 'text-emerald-600' : 'text-orange-600'}`} />
                         </div>
-                      )}
-                    </div>
-                    <div className="mt-2 ml-13">
-                      <div className="h-2 w-full rounded-full bg-muted">
-                        <div className="h-2 rounded-full bg-orange-500 transition-all" style={{ width: `${Math.min(progress, 100)}%` }} />
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <p className="font-semibold text-sm">{d.libelle}</p>
+                            {d.prelevement_auto && !isSolde && (
+                              <Badge variant="outline" className="text-[9px] px-1.5 py-0 gap-1 border-emerald-500/40 text-emerald-700">
+                                <RefreshCw className="h-2.5 w-2.5" />Auto
+                              </Badge>
+                            )}
+                            {isSolde && <Badge className="text-[9px] px-1.5 py-0 bg-emerald-100 text-emerald-700">Soldé</Badge>}
+                            {isSuspendu && <Badge className="text-[9px] px-1.5 py-0 bg-amber-100 text-amber-700">Suspendu</Badge>}
+                          </div>
+                          <p className="text-[10px] text-muted-foreground">
+                            {d.taux_interet || 0}% sur {d.duree_mois || 0} mois
+                            {d.date_debut ? ` — depuis le ${d.date_debut}` : ''}
+                            {compteSrc ? ` — débit ${compteSrc}` : ''}
+                          </p>
+                          {!isSolde && mens > 0 && (
+                            <p className="text-[10px] text-orange-700 font-medium mt-0.5">
+                              Mensualité {fmt(mens)} F
+                              {d.prochaine_echeance ? ` — prochaine échéance le ${d.prochaine_echeance}` : ''}
+                            </p>
+                          )}
+                        </div>
+                        <div className="text-right shrink-0">
+                          <p className="text-sm font-bold">{fmt(d.montant_restant || 0)} F</p>
+                          <p className="text-[10px] text-muted-foreground">sur {fmt(d.montant_initial)} F</p>
+                        </div>
+                        {(isAdmin || isManager) && (
+                          <div className="flex gap-1 shrink-0">
+                            <button onClick={() => openEdit(d)} className="rounded p-1.5 hover:bg-muted"><Edit2 className="h-3.5 w-3.5 text-muted-foreground" /></button>
+                            <button onClick={() => handleDelete(d)} className="rounded p-1.5 hover:bg-red-50"><Trash2 className="h-3.5 w-3.5 text-red-500" /></button>
+                          </div>
+                        )}
                       </div>
-                      <p className="mt-0.5 text-[10px] text-muted-foreground">{progress.toFixed(0)}% remboursé</p>
+                      <div className="mt-2 ml-13">
+                        <div className="h-2 w-full rounded-full bg-muted">
+                          <div className={`h-2 rounded-full transition-all ${isSolde ? 'bg-emerald-500' : 'bg-orange-500'}`} style={{ width: `${Math.min(progress, 100)}%` }} />
+                        </div>
+                        <p className="mt-0.5 text-[10px] text-muted-foreground">{progress.toFixed(0)}% remboursé</p>
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
-          </div>
-        </CardContent></Card>
+                  );
+                })}
+            </div>
+          </CardContent></Card>
+        </>
       )}
 
       {/* ═══════════ ACTIONNAIRES ═══════════ */}
@@ -590,16 +694,74 @@ export default function Finances() {
 
             {/* DETTES FORM */}
             {activeTab === 'dettes' && (<>
-              <div><label className="mb-1.5 block text-sm font-medium">Libellé</label><Input value={form.libelle || ''} onChange={(e) => setForm({ ...form, libelle: e.target.value })} /></div>
+              <div><label className="mb-1.5 block text-sm font-medium">Libellé</label><Input value={form.libelle || ''} onChange={(e) => setForm({ ...form, libelle: e.target.value })} placeholder="Ex: Crédit FINAM achat matériel" /></div>
               <div className="grid grid-cols-2 gap-3">
                 <div><label className="mb-1.5 block text-sm font-medium">Montant initial (F)</label><Input type="number" value={form.montant_initial || ''} onChange={(e) => setForm({ ...form, montant_initial: e.target.value })} /></div>
-                <div><label className="mb-1.5 block text-sm font-medium">Restant (F)</label><Input type="number" value={form.montant_restant || ''} onChange={(e) => setForm({ ...form, montant_restant: e.target.value })} /></div>
+                <div><label className="mb-1.5 block text-sm font-medium">Restant (F)</label><Input type="number" value={form.montant_restant || ''} onChange={(e) => setForm({ ...form, montant_restant: e.target.value })} placeholder="auto si vide" /></div>
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div><label className="mb-1.5 block text-sm font-medium">Taux (%)</label><Input type="number" step="0.1" value={form.taux_interet || ''} onChange={(e) => setForm({ ...form, taux_interet: e.target.value })} /></div>
                 <div><label className="mb-1.5 block text-sm font-medium">Durée (mois)</label><Input type="number" value={form.duree_mois || ''} onChange={(e) => setForm({ ...form, duree_mois: e.target.value })} /></div>
               </div>
-              <div><label className="mb-1.5 block text-sm font-medium">Date début</label><Input type="date" value={form.date_debut || ''} onChange={(e) => setForm({ ...form, date_debut: e.target.value })} /></div>
+              <div className="grid grid-cols-2 gap-3">
+                <div><label className="mb-1.5 block text-sm font-medium">Date début</label><Input type="date" value={form.date_debut || ''} onChange={(e) => setForm({ ...form, date_debut: e.target.value })} /></div>
+                <div><label className="mb-1.5 block text-sm font-medium">Statut</label>
+                  <Select value={form.statut || 'actif'} onValueChange={(v) => setForm({ ...form, statut: v })}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="actif">Actif</SelectItem>
+                      <SelectItem value="suspendu">Suspendu</SelectItem>
+                      <SelectItem value="solde">Soldé</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+
+              {/* Section prelevement auto */}
+              <div className="rounded-lg border bg-muted/30 p-3 space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="text-sm font-medium flex items-center gap-2">
+                    <RefreshCw className="h-3.5 w-3.5" />
+                    Prélèvement automatique
+                  </label>
+                  <input
+                    type="checkbox"
+                    checked={form.prelevement_auto !== false}
+                    onChange={(e) => setForm({ ...form, prelevement_auto: e.target.checked })}
+                    className="h-4 w-4"
+                  />
+                </div>
+
+                <div><label className="mb-1.5 block text-xs font-medium text-muted-foreground">Compte source (débité chaque mois)</label>
+                  <Select value={form.compte_id || '__none__'} onValueChange={(v) => setForm({ ...form, compte_id: v === '__none__' ? '' : v })}>
+                    <SelectTrigger><SelectValue placeholder="Choisir un compte..." /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="__none__">— Aucun —</SelectItem>
+                      {comptes.map((c) => <SelectItem key={c.id} value={c.id}>{c.nom} ({c.devise})</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div><label className="mb-1.5 block text-xs font-medium text-muted-foreground">Jour du prélèvement</label>
+                    <Input type="number" min="1" max="28" value={form.jour_prelevement || ''} onChange={(e) => setForm({ ...form, jour_prelevement: e.target.value })} placeholder="ex: 5" />
+                  </div>
+                  <div><label className="mb-1.5 block text-xs font-medium text-muted-foreground">Prochaine échéance</label>
+                    <Input type="date" value={form.prochaine_echeance || ''} onChange={(e) => setForm({ ...form, prochaine_echeance: e.target.value })} placeholder="auto" />
+                  </div>
+                </div>
+
+                {/* Apercu mensualite calculee */}
+                {form.montant_initial && form.duree_mois && (
+                  <div className="rounded bg-orange-500/10 border border-orange-500/30 px-3 py-2">
+                    <p className="text-xs text-muted-foreground">Mensualité calculée</p>
+                    <p className="text-lg font-bold text-orange-700">{fmt(calcMensualite(form.montant_initial, form.taux_interet, form.duree_mois))} F / mois</p>
+                    <p className="text-[10px] text-muted-foreground">
+                      ({fmt(form.montant_initial)} × (1 + {form.taux_interet || 0}%)) / {form.duree_mois} mois
+                    </p>
+                  </div>
+                )}
+              </div>
             </>)}
 
             {/* ACTIONNAIRES FORM */}
