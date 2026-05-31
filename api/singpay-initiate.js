@@ -112,11 +112,24 @@ export default async function handler(req, res) {
         || paymentData?.error
         || paymentData?._raw
         || `HTTP ${paymentResponse.status}`;
+      // DEBUG (temporaire) : on expose un diagnostic des env vars pour identifier
+      // si SINGPAY_WALLET_ID est accessible cote serverless. A retirer apres fix.
       return res.status(502).json({
         error: 'Erreur SingPay',
         detail: typeof detailMsg === 'string' ? detailMsg.slice(0, 200) : 'Format inconnu',
         httpStatus: paymentResponse.status,
         endpoint,
+        debug: {
+          hasClientId: !!process.env.SINGPAY_CLIENT_ID,
+          clientIdLen: (process.env.SINGPAY_CLIENT_ID || '').length,
+          hasClientSecret: !!process.env.SINGPAY_CLIENT_SECRET,
+          clientSecretLen: (process.env.SINGPAY_CLIENT_SECRET || '').length,
+          hasWallet: !!process.env.SINGPAY_WALLET_ID,
+          walletLen: (process.env.SINGPAY_WALLET_ID || '').length,
+          walletPrefix: (process.env.SINGPAY_WALLET_ID || '').slice(0, 6),
+          walletSuffix: (process.env.SINGPAY_WALLET_ID || '').slice(-4),
+          baseUrl: process.env.SINGPAY_BASE_URL || '(default)',
+        },
       });
     }
 

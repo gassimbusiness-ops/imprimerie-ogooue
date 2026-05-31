@@ -436,7 +436,7 @@ export default function ClientCommandes() {
                     }`}
                   >
                     <img
-                      src="/logos/moov-money.png"
+                      src="/logos/moov-money.jpg"
                       alt="Moov Money"
                       className="h-12 w-12 object-contain"
                       onError={(e) => { e.currentTarget.style.display = 'none'; e.currentTarget.nextSibling.style.display = 'inline'; }}
