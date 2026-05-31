@@ -584,20 +584,20 @@ export default function Travaux() {
             </div>
             {/* Paiement */}
             {Number(etapeForm.depense) > 0 && (
-              <div className="grid grid-cols-2 gap-3 rounded-lg bg-muted/50 p-3">
-                <div>
-                  <label className="mb-1.5 block text-sm font-medium">Paiement</label>
-                  <Select value={etapeForm.statut_paiement} onValueChange={(v) => setEtapeForm({ ...etapeForm, statut_paiement: v })}>
-                    <SelectTrigger><SelectValue /></SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="non_paye">Non paye</SelectItem>
-                      <SelectItem value="paye">Paye</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                {etapeForm.statut_paiement === 'paye' && (
+              <div className="space-y-3 rounded-lg bg-muted/50 p-3">
+                <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="mb-1.5 block text-sm font-medium">Source</label>
+                    <label className="mb-1.5 block text-sm font-medium">Statut paiement</label>
+                    <Select value={etapeForm.statut_paiement} onValueChange={(v) => setEtapeForm({ ...etapeForm, statut_paiement: v })}>
+                      <SelectTrigger><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="non_paye">Non payé</SelectItem>
+                        <SelectItem value="paye">Payé</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div>
+                    <label className="mb-1.5 block text-sm font-medium">Source du paiement</label>
                     <Select value={etapeForm.source_paiement} onValueChange={(v) => setEtapeForm({ ...etapeForm, source_paiement: v })}>
                       <SelectTrigger><SelectValue /></SelectTrigger>
                       <SelectContent>
@@ -607,7 +607,24 @@ export default function Travaux() {
                       </SelectContent>
                     </Select>
                   </div>
-                )}
+                </div>
+                {/* Indicateur compte bancaire mappe */}
+                {(() => {
+                  const compte = findCompteBySource(etapeForm.source_paiement);
+                  return (
+                    <div className={`text-[11px] rounded px-2 py-1.5 ${compte ? 'bg-emerald-500/10 text-emerald-700' : 'bg-amber-500/10 text-amber-700'}`}>
+                      {compte ? (
+                        <>✓ Compte débité : <strong>{compte.nom}</strong> (solde actuel : {fmt(compte.solde || 0)} F)
+                          {etapeForm.statut_paiement === 'paye' && Number(etapeForm.depense) > 0 && (
+                            <> → après paiement : <strong>{fmt((compte.solde || 0) - Number(etapeForm.depense))} F</strong></>
+                          )}
+                        </>
+                      ) : (
+                        <>⚠️ Aucun compte bancaire trouvé pour "{etapeForm.source_paiement}". Créez-le dans Finances → Comptes bancaires.</>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
             )}
             <Button className="w-full" onClick={handleSaveEtape}>{editEtape ? 'Enregistrer' : 'Ajouter'}</Button>

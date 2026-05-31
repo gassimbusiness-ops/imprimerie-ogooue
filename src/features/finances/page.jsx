@@ -99,6 +99,11 @@ export default function Finances() {
     const d = new Date();
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
   });
+  // Filtres avances mouvements : plage de dates + recherche + "tout afficher"
+  const [mvDateFrom, setMvDateFrom] = useState('');
+  const [mvDateTo, setMvDateTo] = useState('');
+  const [mvSearch, setMvSearch] = useState('');
+  const [mvShowAll, setMvShowAll] = useState(false); // bypass total du filtre mois
 
   const load = async () => {
     const [cp, mv, ch, de, ac, inv] = await Promise.all([
@@ -166,10 +171,33 @@ export default function Finances() {
   const totalInvest = investissements.reduce((s, i) => s + (i.montant || 0), 0);
   const totalParts = actionnaires.reduce((s, a) => s + (a.pourcentage || 0), 0);
 
-  // Mouvements filtrés par mois
+  // Mouvements filtrés : plage de dates OU mois OU tout afficher + recherche mot-cle
+  const mvUsePlage = !!(mvDateFrom || mvDateTo);
   const mouvementsFiltres = useMemo(() => {
-    return mouvements.filter((m) => (m.date || m.created_at || '').startsWith(filterMonth));
-  }, [mouvements, filterMonth]);
+    const q = (mvSearch || '').trim().toLowerCase();
+    return mouvements.filter((m) => {
+      const d = (m.date || m.created_at || '').slice(0, 10);
+      // Filtre date : plage > mois > all
+      if (mvShowAll) {
+        // pas de filtre date
+      } else if (mvUsePlage) {
+        if (mvDateFrom && d < mvDateFrom) return false;
+        if (mvDateTo && d > mvDateTo) return false;
+      } else {
+        if (!d.startsWith(filterMonth)) return false;
+      }
+      // Filtre recherche : description, reference, source, categorie, compte_nom
+      if (q) {
+        const compte = comptes.find((c) => c.id === m.compte_id);
+        const hay = [
+          m.description, m.reference, m.source, m.categorie,
+          compte?.nom,
+        ].filter(Boolean).join(' ').toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [mouvements, filterMonth, mvDateFrom, mvDateTo, mvSearch, mvUsePlage, mvShowAll, comptes]);
 
   const mvEntrees = mouvementsFiltres.filter((m) => m.type === 'entree' || m.type === 'depot_hebdo').reduce((s, m) => s + (m.montant || 0), 0);
   const mvSorties = mouvementsFiltres.filter((m) => m.type === 'sortie').reduce((s, m) => s + (m.montant || 0), 0);
@@ -394,11 +422,11 @@ export default function Finances() {
         <>
           <div className="grid grid-cols-3 gap-3">
             <Card className="border-l-4 border-l-emerald-500"><CardContent className="p-3">
-              <p className="text-[10px] text-muted-foreground uppercase">Entrées du mois</p>
+              <p className="text-[10px] text-muted-foreground uppercase">Entrées {mvShowAll ? '(tout)' : mvUsePlage ? '(plage)' : 'du mois'}</p>
               <p className="text-lg font-bold text-emerald-600">+{fmt(mvEntrees)} F</p>
             </CardContent></Card>
             <Card className="border-l-4 border-l-red-500"><CardContent className="p-3">
-              <p className="text-[10px] text-muted-foreground uppercase">Sorties du mois</p>
+              <p className="text-[10px] text-muted-foreground uppercase">Sorties {mvShowAll ? '(tout)' : mvUsePlage ? '(plage)' : 'du mois'}</p>
               <p className="text-lg font-bold text-red-600">-{fmt(mvSorties)} F</p>
             </CardContent></Card>
             <Card className="border-l-4 border-l-blue-500"><CardContent className="p-3">
@@ -406,9 +434,46 @@ export default function Finances() {
               <p className={`text-lg font-bold ${mvEntrees - mvSorties >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>{fmt(mvEntrees - mvSorties)} F</p>
             </CardContent></Card>
           </div>
+
+          {/* Bandeau filtres avances */}
+          <div className="flex flex-wrap items-end gap-2 rounded-lg border bg-muted/30 p-3">
+            <div className="flex items-center gap-2">
+              <Calendar className="h-4 w-4 text-muted-foreground" />
+              <span className="text-xs font-medium text-muted-foreground">Filtrer :</span>
+            </div>
+            <div className="flex flex-col">
+              <label className="text-[10px] text-muted-foreground">Du</label>
+              <Input type="date" value={mvDateFrom} onChange={(e) => { setMvDateFrom(e.target.value); setMvShowAll(false); }} className="h-8 w-[140px]" disabled={mvShowAll} />
+            </div>
+            <div className="flex flex-col">
+              <label className="text-[10px] text-muted-foreground">Au</label>
+              <Input type="date" value={mvDateTo} onChange={(e) => { setMvDateTo(e.target.value); setMvShowAll(false); }} className="h-8 w-[140px]" disabled={mvShowAll} />
+            </div>
+            <div className="flex flex-col flex-1 min-w-[180px]">
+              <label className="text-[10px] text-muted-foreground">Recherche (description, réf, compte, source)</label>
+              <Input type="text" value={mvSearch} onChange={(e) => setMvSearch(e.target.value)} placeholder="Mot-clé..." className="h-8" />
+            </div>
+            <Button
+              variant={mvShowAll ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => { setMvShowAll((v) => !v); if (!mvShowAll) { setMvDateFrom(''); setMvDateTo(''); } }}
+              className="h-8 gap-1"
+            >
+              <RefreshCw className="h-3.5 w-3.5" /> {mvShowAll ? 'Tout affiché' : 'Tout afficher'}
+            </Button>
+            {(mvDateFrom || mvDateTo || mvSearch || mvShowAll) && (
+              <Button variant="ghost" size="sm" onClick={() => { setMvDateFrom(''); setMvDateTo(''); setMvSearch(''); setMvShowAll(false); }} className="h-8">
+                Réinitialiser
+              </Button>
+            )}
+            <Badge variant="outline" className="h-7">
+              {mouvementsFiltres.length} / {mouvements.length} mouvements
+            </Badge>
+          </div>
+
           <Card><CardContent className="p-0">
-            <div className="divide-y">
-              {mouvementsFiltres.length === 0 ? <p className="py-12 text-center text-sm text-muted-foreground">Aucun mouvement ce mois</p> :
+            <div className="divide-y max-h-[70vh] overflow-y-auto">
+              {mouvementsFiltres.length === 0 ? <p className="py-12 text-center text-sm text-muted-foreground">Aucun mouvement</p> :
                 mouvementsFiltres.map((m) => {
                   const mt = MOVEMENT_TYPES.find((t) => t.value === m.type);
                   const MtIcon = mt?.icon || ArrowLeftRight;
