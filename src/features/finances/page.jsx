@@ -3,6 +3,7 @@ import { db } from '@/services/db';
 import { logAction } from '@/services/audit';
 import { useAuth } from '@/services/auth';
 import { executerPrelevementsDus } from '@/services/credit-mensualites';
+import { executerChargesDues } from '@/services/charges-fixes-prelevement';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -126,11 +127,15 @@ export default function Finances() {
   useEffect(() => {
     (async () => {
       await load();
-      // Rattrapage automatique des mensualites dues au chargement (silencieux)
+      // Rattrapage automatique des mensualites + charges fixes dues au chargement (silencieux)
       try {
-        const r = await executerPrelevementsDus();
-        if (r.processed.length > 0) {
-          toast.success(`${r.processed.length} prélèvement(s) automatique(s) effectué(s)`);
+        const [rCredit, rCharges] = await Promise.all([
+          executerPrelevementsDus(),
+          executerChargesDues(),
+        ]);
+        const totalAuto = (rCredit.processed?.length || 0) + (rCharges.processed?.length || 0);
+        if (totalAuto > 0) {
+          toast.success(`${totalAuto} prélèvement(s) automatique(s) effectué(s)`);
           await load(); // refresh apres prelevements
         }
       } catch (e) {
@@ -153,6 +158,23 @@ export default function Finances() {
       await load();
     } else if (r.errors.length === 0) {
       toast.info('Aucune échéance due');
+    }
+  };
+
+  const handleForcerPrelevementCharges = async () => {
+    const r = await executerChargesDues();
+    if (r.errors.length > 0) {
+      toast.error(`${r.errors.length} erreur(s) — voir console`);
+      console.error('[Finances] Erreurs prelevement charges:', r.errors);
+    }
+    if (r.processed.length > 0) {
+      const total = r.processed.reduce((s, p) => s + (p.montant_total || 0), 0);
+      const totalEch = r.processed.reduce((s, p) => s + (p.echeances || 0), 0);
+      toast.success(`${totalEch} charge(s) prélevée(s) — ${fmt(total)} F`);
+      await logAction('update', 'finances', { entityLabel: 'Prélèvement charges fixes', details: `${totalEch} échéances, ${fmt(total)} F` });
+      await load();
+    } else if (r.errors.length === 0) {
+      toast.info('Aucune charge due');
     }
   };
 
@@ -222,7 +244,11 @@ export default function Finances() {
     } else if (activeTab === 'mouvements') {
       setForm({ type: 'entree', montant: '', description: '', compte_id: '', compte_dest_id: '', date: new Date().toISOString().slice(0, 10), reference: '' });
     } else if (activeTab === 'charges') {
-      setForm({ libelle: '', type: 'loyer', montant: '', beneficiaire: '', actif: true, categorie: '' });
+      setForm({
+        libelle: '', type: 'loyer', montant: '', beneficiaire: '', actif: true, categorie: '',
+        compte_id: '', periodicite: 'mensuelle', jour_prelevement: '5', prelevement_auto: false,
+        prochaine_echeance: '',
+      });
     } else if (activeTab === 'dettes') {
       setForm({ libelle: '', montant_initial: '', taux_interet: '2.5', duree_mois: '', montant_restant: '', date_debut: new Date().toISOString().slice(0, 10), compte_id: '', jour_prelevement: '5', prelevement_auto: true, statut: 'actif' });
     } else if (activeTab === 'actionnaires') {
@@ -264,6 +290,17 @@ export default function Finances() {
         data.prochaine_echeance = next.toISOString().slice(0, 10);
       }
       if (!data.statut) data.statut = 'actif';
+    }
+
+    // CHARGES FIXES : auto-renseigne prochaine_echeance si manquant
+    if (activeTab === 'charges' && data.prelevement_auto) {
+      if (!data.prochaine_echeance) {
+        // Premier prelevement = aujourd'hui + jour_prelevement du mois prochain
+        const next = new Date();
+        next.setMonth(next.getMonth() + 1);
+        next.setDate(Math.min(Number(data.jour_prelevement) || 5, 28));
+        data.prochaine_echeance = next.toISOString().slice(0, 10);
+      }
     }
 
     // Mouvement: update account balance
@@ -513,33 +550,59 @@ export default function Finances() {
 
       {/* ═══════════ CHARGES FIXES ═══════════ */}
       {activeTab === 'charges' && (
-        <Card><CardContent className="p-0">
-          <div className="divide-y">
-            {charges.length === 0 ? <p className="py-12 text-center text-sm text-muted-foreground">Aucune charge fixe</p> :
-              charges.map((c) => (
-                <div key={c.id} className="flex items-center gap-4 px-4 py-3 hover:bg-muted/50">
-                  <div className={`flex h-9 w-9 items-center justify-center rounded-lg shrink-0 ${c.type === 'online' ? 'bg-purple-500/10' : 'bg-red-500/10'}`}>
-                    {c.type === 'online' ? <Globe className="h-4 w-4 text-purple-600" /> : <Receipt className="h-4 w-4 text-red-600" />}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="font-semibold text-sm">{c.libelle}</p>
-                    <div className="flex items-center gap-2 mt-0.5">
-                      <Badge variant="outline" className={`text-[10px] ${c.type === 'online' ? 'border-purple-300 text-purple-700' : ''}`}>{c.type}</Badge>
-                      {c.beneficiaire && <span className="text-[10px] text-muted-foreground">{c.beneficiaire}</span>}
-                      {c.actif === false && <Badge className="text-[10px] bg-slate-200 text-slate-600">Inactif</Badge>}
+        <>
+          {/* Bouton forcer prelevement charges */}
+          {(isAdmin || isManager) && charges.some((c) => c.prelevement_auto && c.actif !== false) && (
+            <div className="flex justify-end">
+              <Button variant="outline" size="sm" onClick={handleForcerPrelevementCharges} className="gap-2">
+                <RefreshCw className="h-3.5 w-3.5" />
+                Forcer prélèvement charges (échéances dues)
+              </Button>
+            </div>
+          )}
+          <Card><CardContent className="p-0">
+            <div className="divide-y">
+              {charges.length === 0 ? <p className="py-12 text-center text-sm text-muted-foreground">Aucune charge fixe</p> :
+                charges.map((c) => {
+                  const compteSrc = c.compte_id ? compteNom(c.compte_id) : null;
+                  const periodLabel = c.periodicite === 'annuelle' ? '/an' : c.periodicite === 'trimestrielle' ? '/trim.' : '/mois';
+                  return (
+                    <div key={c.id} className="flex items-center gap-4 px-4 py-3 hover:bg-muted/50">
+                      <div className={`flex h-9 w-9 items-center justify-center rounded-lg shrink-0 ${c.type === 'online' ? 'bg-purple-500/10' : 'bg-red-500/10'}`}>
+                        {c.type === 'online' ? <Globe className="h-4 w-4 text-purple-600" /> : <Receipt className="h-4 w-4 text-red-600" />}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <p className="font-semibold text-sm">{c.libelle}</p>
+                          {c.prelevement_auto && c.actif !== false && (
+                            <Badge variant="outline" className="text-[9px] px-1.5 py-0 gap-1 border-emerald-500/40 text-emerald-700">
+                              <RefreshCw className="h-2.5 w-2.5" />Auto
+                            </Badge>
+                          )}
+                          {c.actif === false && <Badge className="text-[9px] px-1.5 py-0 bg-slate-200 text-slate-600">Inactif</Badge>}
+                        </div>
+                        <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                          <Badge variant="outline" className={`text-[10px] ${c.type === 'online' ? 'border-purple-300 text-purple-700' : ''}`}>{c.type}</Badge>
+                          {c.beneficiaire && <span className="text-[10px] text-muted-foreground">{c.beneficiaire}</span>}
+                          {compteSrc && <span className="text-[10px] text-muted-foreground">→ {compteSrc}</span>}
+                          {c.prochaine_echeance && c.prelevement_auto && (
+                            <span className="text-[10px] text-emerald-700 font-medium">échéance: {c.prochaine_echeance}</span>
+                          )}
+                        </div>
+                      </div>
+                      <span className="text-sm font-bold text-red-600 shrink-0">{fmt(c.montant)} F{periodLabel}</span>
+                      {(isAdmin || isManager) && (
+                        <div className="flex gap-1 shrink-0">
+                          <button onClick={() => openEdit(c)} className="rounded p-1.5 hover:bg-muted"><Edit2 className="h-3.5 w-3.5 text-muted-foreground" /></button>
+                          <button onClick={() => handleDelete(c)} className="rounded p-1.5 hover:bg-red-50"><Trash2 className="h-3.5 w-3.5 text-red-500" /></button>
+                        </div>
+                      )}
                     </div>
-                  </div>
-                  <span className="text-sm font-bold text-red-600 shrink-0">{fmt(c.montant)} F/mois</span>
-                  {(isAdmin || isManager) && (
-                    <div className="flex gap-1 shrink-0">
-                      <button onClick={() => openEdit(c)} className="rounded p-1.5 hover:bg-muted"><Edit2 className="h-3.5 w-3.5 text-muted-foreground" /></button>
-                      <button onClick={() => handleDelete(c)} className="rounded p-1.5 hover:bg-red-50"><Trash2 className="h-3.5 w-3.5 text-red-500" /></button>
-                    </div>
-                  )}
-                </div>
-              ))}
-          </div>
-        </CardContent></Card>
+                  );
+                })}
+            </div>
+          </CardContent></Card>
+        </>
       )}
 
       {/* ═══════════ DETTES ═══════════ */}
@@ -742,7 +805,7 @@ export default function Finances() {
 
             {/* CHARGES FORM */}
             {activeTab === 'charges' && (<>
-              <div><label className="mb-1.5 block text-sm font-medium">Libellé</label><Input value={form.libelle || ''} onChange={(e) => setForm({ ...form, libelle: e.target.value })} /></div>
+              <div><label className="mb-1.5 block text-sm font-medium">Libellé</label><Input value={form.libelle || ''} onChange={(e) => setForm({ ...form, libelle: e.target.value })} placeholder="Ex: Loyer, Wifi, Salaires..." /></div>
               <div className="grid grid-cols-2 gap-3">
                 <div><label className="mb-1.5 block text-sm font-medium">Type</label>
                   <Select value={form.type || 'loyer'} onValueChange={(v) => setForm({ ...form, type: v })}>
@@ -752,9 +815,68 @@ export default function Finances() {
                     </SelectContent>
                   </Select>
                 </div>
-                <div><label className="mb-1.5 block text-sm font-medium">Montant (F/mois)</label><Input type="number" value={form.montant || ''} onChange={(e) => setForm({ ...form, montant: e.target.value })} /></div>
+                <div><label className="mb-1.5 block text-sm font-medium">Montant ({form.periodicite === 'annuelle' ? 'F/an' : form.periodicite === 'trimestrielle' ? 'F/trim.' : 'F/mois'})</label><Input type="number" value={form.montant || ''} onChange={(e) => setForm({ ...form, montant: e.target.value })} /></div>
               </div>
-              <div><label className="mb-1.5 block text-sm font-medium">Bénéficiaire</label><Input value={form.beneficiaire || ''} onChange={(e) => setForm({ ...form, beneficiaire: e.target.value })} /></div>
+              <div><label className="mb-1.5 block text-sm font-medium">Bénéficiaire</label><Input value={form.beneficiaire || ''} onChange={(e) => setForm({ ...form, beneficiaire: e.target.value })} placeholder="À qui est versée cette charge" /></div>
+
+              {/* Section prelevement auto */}
+              <div className="rounded-lg border bg-muted/30 p-3 space-y-3">
+                <div className="flex items-center justify-between">
+                  <label className="text-sm font-medium flex items-center gap-2">
+                    <RefreshCw className="h-3.5 w-3.5" />
+                    Prélèvement automatique récurrent
+                  </label>
+                  <input
+                    type="checkbox"
+                    checked={form.prelevement_auto === true}
+                    onChange={(e) => setForm({ ...form, prelevement_auto: e.target.checked })}
+                    className="h-4 w-4"
+                  />
+                </div>
+
+                {form.prelevement_auto && (
+                  <>
+                    <div><label className="mb-1.5 block text-xs font-medium text-muted-foreground">Compte source (débité à chaque échéance)</label>
+                      <Select value={form.compte_id || '__none__'} onValueChange={(v) => setForm({ ...form, compte_id: v === '__none__' ? '' : v })}>
+                        <SelectTrigger><SelectValue placeholder="Choisir un compte..." /></SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="__none__">— Aucun —</SelectItem>
+                          {comptes.map((c) => <SelectItem key={c.id} value={c.id}>{c.nom} ({c.devise})</SelectItem>)}
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-3">
+                      <div><label className="mb-1.5 block text-xs font-medium text-muted-foreground">Périodicité</label>
+                        <Select value={form.periodicite || 'mensuelle'} onValueChange={(v) => setForm({ ...form, periodicite: v })}>
+                          <SelectTrigger><SelectValue /></SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="mensuelle">Mensuelle</SelectItem>
+                            <SelectItem value="trimestrielle">Trimestrielle</SelectItem>
+                            <SelectItem value="annuelle">Annuelle</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div><label className="mb-1.5 block text-xs font-medium text-muted-foreground">Jour</label>
+                        <Input type="number" min="1" max="28" value={form.jour_prelevement || ''} onChange={(e) => setForm({ ...form, jour_prelevement: e.target.value })} placeholder="ex: 5" />
+                      </div>
+                      <div><label className="mb-1.5 block text-xs font-medium text-muted-foreground">Prochaine échéance</label>
+                        <Input type="date" value={form.prochaine_echeance || ''} onChange={(e) => setForm({ ...form, prochaine_echeance: e.target.value })} placeholder="auto" />
+                      </div>
+                    </div>
+
+                    {form.montant && (
+                      <div className="rounded bg-blue-500/10 border border-blue-500/30 px-3 py-2 text-xs">
+                        <strong>{fmt(form.montant)} F</strong> seront prélevés{' '}
+                        {form.periodicite === 'mensuelle' && 'chaque mois'}
+                        {form.periodicite === 'trimestrielle' && 'chaque trimestre'}
+                        {form.periodicite === 'annuelle' && 'chaque année'}
+                        {form.compte_id && <> sur <strong>{comptes.find((c) => c.id === form.compte_id)?.nom || '—'}</strong></>}
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
             </>)}
 
             {/* DETTES FORM */}

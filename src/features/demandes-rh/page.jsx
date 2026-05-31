@@ -56,15 +56,21 @@ export default function DemandesRH() {
   const [filterStatut, setFilterStatut] = useState('all');
   const [filterCategory, setFilterCategory] = useState('all');
   const [showForm, setShowForm] = useState(false);
+  const [comptes, setComptes] = useState([]);
   const [form, setForm] = useState({
     type: 'conge', motif: '', date_debut: '', date_fin: '',
-    montant: '', employe_id: '', employe_nom: '',
+    montant: '', employe_id: '', employe_nom: '', compte_id: '',
   });
 
   const load = async () => {
-    const [d, e] = await Promise.all([db.demandes_rh.list(), db.employes.list()]);
+    const [d, e, cp] = await Promise.all([
+      db.demandes_rh.list(),
+      db.employes.list(),
+      db.comptes_bancaires.list(),
+    ]);
     setDemandes(d.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || '')));
     setEmployes(e.filter((emp) => emp.role !== 'client'));
+    setComptes(cp);
     setLoading(false);
   };
 
@@ -132,6 +138,7 @@ export default function DemandesRH() {
       category: isCharge ? 'charge' : 'rh',
       user_id: user?.id,
       user_nom: `${user?.prenom} ${user?.nom}`,
+      ...(form.compte_id ? { compte_id: form.compte_id } : {}),
     };
 
     if (isCharge && form.employe_id) {
@@ -152,13 +159,67 @@ export default function DemandesRH() {
     const label = decision === 'approuvee' ? 'approbation' : decision === 'payee' ? 'paiement' : 'rejet';
     const commentaire = prompt(`Commentaire pour ${label} :`);
     if (commentaire === null) return;
+
+    // ── Si decision = "payee" et la demande a un montant + un compte source :
+    //    creer un mouvement financier reel + debiter le compte
+    let compteIdFinal = d.compte_id;
+    let mouvementCree = null;
+    if (decision === 'payee' && (d.montant || 0) > 0) {
+      // Si pas de compte_id sur la demande, demander a l'admin lequel debiter
+      if (!compteIdFinal && comptes.length > 0) {
+        const liste = comptes.map((c, i) => `${i + 1}. ${c.nom} (solde: ${(c.solde || 0).toLocaleString('fr-FR')} F)`).join('\n');
+        const choix = prompt(`Quel compte débiter ?\n\n${liste}\n\nEntrez le numéro :`);
+        if (choix === null) return;
+        const idx = Number(choix) - 1;
+        if (idx >= 0 && idx < comptes.length) compteIdFinal = comptes[idx].id;
+      }
+
+      if (compteIdFinal) {
+        // Idempotence : verifier qu'aucun mouvement n'existe deja pour cette demande
+        const allMvts = await db.mouvements_financiers.list();
+        const reference = `demande:${d.id}`;
+        const existing = allMvts.find((m) => m.reference === reference);
+        if (!existing) {
+          const compte = comptes.find((c) => c.id === compteIdFinal);
+          const isCharge = d.category === 'charge';
+          const desc = isCharge
+            ? `Charge ${ALL_TYPES[d.type]?.label || d.type} — ${d.motif}`
+            : `${ALL_TYPES[d.type]?.label || 'Demande'} — ${d.user_nom} — ${d.motif}`;
+
+          mouvementCree = await db.mouvements_financiers.create({
+            type: 'sortie',
+            montant: d.montant,
+            description: desc,
+            compte_id: compteIdFinal,
+            date: new Date().toISOString().slice(0, 10),
+            reference,
+            categorie: isCharge ? 'charge_ponctuelle' : 'avance_employe',
+            source: 'demandes_rh',
+          });
+
+          // Debit du compte
+          if (compte) {
+            await db.comptes_bancaires.update(compte.id, { solde: (compte.solde || 0) - d.montant });
+          }
+        }
+      }
+    }
+
     await db.demandes_rh.update(d.id, {
       statut: decision,
       commentaire_admin: commentaire,
       date_decision: new Date().toISOString(),
+      ...(compteIdFinal ? { compte_id: compteIdFinal } : {}),
+      ...(mouvementCree ? { mouvement_id: mouvementCree.id } : {}),
     });
-    await logAction('update', 'demandes_rh', { entityId: d.id, entityLabel: d.user_nom, details: `Demande ${decision}` });
-    toast.success(`Demande ${decision === 'approuvee' ? 'approuvée' : decision === 'payee' ? 'marquée payée' : 'rejetée'}`);
+    await logAction('update', 'demandes_rh', { entityId: d.id, entityLabel: d.user_nom, details: `Demande ${decision}${mouvementCree ? ` (mouvement créé)` : ''}` });
+
+    if (decision === 'payee' && mouvementCree) {
+      const compteNom = comptes.find((c) => c.id === compteIdFinal)?.nom || 'compte';
+      toast.success(`Payée — ${d.montant.toLocaleString('fr-FR')} F débités sur ${compteNom}`);
+    } else {
+      toast.success(`Demande ${decision === 'approuvee' ? 'approuvée' : decision === 'payee' ? 'marquée payée' : 'rejetée'}`);
+    }
     load();
   };
 
@@ -370,6 +431,23 @@ export default function DemandesRH() {
                     ))}
                   </SelectContent>
                 </Select>
+              </div>
+            )}
+
+            {/* Compte source à débiter à la validation (charges + avances) */}
+            {needsMontant(form.type) && isAdmin && comptes.length > 0 && (
+              <div>
+                <label className="mb-1.5 block text-sm font-medium">Compte source (sera débité à la validation "Payée")</label>
+                <Select value={form.compte_id || '__none__'} onValueChange={(v) => setForm({ ...form, compte_id: v === '__none__' ? '' : v })}>
+                  <SelectTrigger><SelectValue placeholder="Choisir au paiement..." /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">— Choisir au paiement —</SelectItem>
+                    {comptes.map((c) => (
+                      <SelectItem key={c.id} value={c.id}>{c.nom} (solde: {(c.solde || 0).toLocaleString('fr-FR')} F)</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className="mt-1 text-[10px] text-muted-foreground">À la validation "Payée", un mouvement financier sera créé et ce compte sera débité.</p>
               </div>
             )}
 
