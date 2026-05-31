@@ -90,20 +90,18 @@ export const INVESTISSEURS = {
     nom: 'Abakar Senoussi (Oumar)',
     investissement_initial: 3000000,
     frais_voyage_chine: 1965000,
-    total_investi: 4965000,
-    pourcentage_investissement: 66.51,
-    bonus_gestion: 5,
-    pourcentage_final: 70,
+    reinvestissement_marchandises: 2000000,
+    apport_supplementaire: 1000000,
+    total_investi: 7965000,
+    pourcentage_final: 76.11,
   },
   senouss: {
     nom: 'Senoussi Saleh',
     investissement_initial: 2500000,
     total_investi: 2500000,
-    pourcentage_investissement: 33.49,
-    bonus_gestion: 0,
-    pourcentage_final: 30,
+    pourcentage_final: 23.89,
   },
-  total_investissement: 7465000,
+  total_investissement: 10465000,
 };
 
 /**
