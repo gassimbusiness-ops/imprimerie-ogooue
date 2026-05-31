@@ -64,12 +64,19 @@ export default function Rapports() {
   const [showModifRequest, setShowModifRequest] = useState(null);
   const [modifMotif, setModifMotif] = useState('');
   const [filterStatut, setFilterStatut] = useState('all');
+  // Filtres avances : plage de dates + recherche mot-cle
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
 
   // Month navigation
   const [currentMonth, setCurrentMonth] = useState(() => {
     const now = new Date();
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   });
+
+  // Une plage de dates est active si dateFrom OU dateTo est defini
+  const usePlageActive = !!(dateFrom || dateTo);
 
   const load = async () => {
     setLoading(true);
@@ -84,15 +91,31 @@ export default function Rapports() {
 
   useEffect(() => { load(); }, []);
 
-  // Filter by month and status
+  // Filter by month/plage, status and keyword search
   const filtered = useMemo(() => {
+    const q = (searchTerm || '').trim().toLowerCase();
     return rapports.filter((r) => {
       if (filterStatut !== 'all' && r.statut !== filterStatut) return false;
-      if (r.date?.startsWith(currentMonth)) return true;
-      if (isEmploye) return true; // Show today's regardless
-      return false;
+
+      // Filtre dates : plage si definie, sinon mois actif
+      if (usePlageActive) {
+        if (dateFrom && r.date < dateFrom) return false;
+        if (dateTo && r.date > dateTo) return false;
+      } else if (!isEmploye && !r.date?.startsWith(currentMonth)) {
+        return false;
+      }
+
+      // Recherche mot-cle : operateur_nom, description des lignes, descriptions des depenses
+      if (q) {
+        const inOperateur = (r.operateur_nom || '').toLowerCase().includes(q);
+        const inLignes = (r.lignes || []).some((l) => (l.description || '').toLowerCase().includes(q));
+        const inDepenses = (r.depenses || []).some((d) => (d.description || '').toLowerCase().includes(q));
+        if (!inOperateur && !inLignes && !inDepenses) return false;
+      }
+
+      return true;
     });
-  }, [rapports, currentMonth, filterStatut, isEmploye]);
+  }, [rapports, currentMonth, filterStatut, isEmploye, dateFrom, dateTo, searchTerm, usePlageActive]);
 
   // Stats
   const stats = useMemo(() => {
@@ -300,9 +323,9 @@ export default function Rapports() {
         <>
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <Button variant="outline" size="icon" onClick={prevMonth}><ChevronLeft className="h-4 w-4" /></Button>
-              <span className="text-sm font-semibold capitalize min-w-[150px] text-center">{monthLabel}</span>
-              <Button variant="outline" size="icon" onClick={nextMonth}><ChevronRight className="h-4 w-4" /></Button>
+              <Button variant="outline" size="icon" onClick={prevMonth} disabled={usePlageActive}><ChevronLeft className="h-4 w-4" /></Button>
+              <span className={`text-sm font-semibold capitalize min-w-[150px] text-center ${usePlageActive ? 'text-muted-foreground line-through' : ''}`}>{monthLabel}</span>
+              <Button variant="outline" size="icon" onClick={nextMonth} disabled={usePlageActive}><ChevronRight className="h-4 w-4" /></Button>
             </div>
             <div className="flex items-center gap-2">
               <Select value={filterStatut} onValueChange={setFilterStatut}>
@@ -323,6 +346,42 @@ export default function Rapports() {
                 Analyser avec IA
               </Button>
             </div>
+          </div>
+
+          {/* Filtres avances : plage de dates + recherche mot-cle */}
+          <div className="flex flex-wrap items-end gap-2 rounded-lg border bg-muted/30 p-3">
+            <div className="flex items-center gap-2">
+              <Calendar className="h-4 w-4 text-muted-foreground" />
+              <span className="text-xs font-medium text-muted-foreground">Plage de dates :</span>
+            </div>
+            <div className="flex flex-col">
+              <label className="text-[10px] text-muted-foreground">Du</label>
+              <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="h-8 w-[140px]" />
+            </div>
+            <div className="flex flex-col">
+              <label className="text-[10px] text-muted-foreground">Au</label>
+              <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="h-8 w-[140px]" />
+            </div>
+            <div className="flex flex-col flex-1 min-w-[200px]">
+              <label className="text-[10px] text-muted-foreground">Recherche (opérateur, description, dépense)</label>
+              <Input
+                type="text"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder="Mot-clé..."
+                className="h-8"
+              />
+            </div>
+            {(dateFrom || dateTo || searchTerm) && (
+              <Button variant="ghost" size="sm" onClick={() => { setDateFrom(''); setDateTo(''); setSearchTerm(''); }} className="h-8 gap-1">
+                <X className="h-3.5 w-3.5" /> Réinitialiser
+              </Button>
+            )}
+            {usePlageActive && (
+              <Badge variant="outline" className="h-7 gap-1 border-blue-500/40 text-blue-700">
+                <Filter className="h-3 w-3" /> Plage active
+              </Badge>
+            )}
           </div>
 
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">

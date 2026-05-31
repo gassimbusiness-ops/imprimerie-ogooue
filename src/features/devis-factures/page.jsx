@@ -142,6 +142,25 @@ export default function DevisFactures() {
     }
   };
 
+  // Saisie libre du nom client : on tente le matching avec un client existant
+  // (insensible a la casse + trim). Si match exact, on auto-fill client_id et adresse.
+  // Sinon, on garde client_id vide (= "nouveau client", sera cree a la sauvegarde si facture).
+  const updateClientNom = (nom) => {
+    const trimmed = nom.trim();
+    const match = clients.find((c) => (c.nom || '').trim().toLowerCase() === trimmed.toLowerCase());
+    if (match) {
+      setForm((f) => ({
+        ...f,
+        client_nom: nom,
+        client_id: match.id,
+        client_adresse: f.client_adresse || match.adresse || '',
+      }));
+    } else {
+      // Pas de match : on conserve le nom saisi mais on retire l'id (= nouveau client)
+      setForm((f) => ({ ...f, client_nom: nom, client_id: '' }));
+    }
+  };
+
   const updateLigne = (idx, field, value) => {
     setForm((f) => {
       const lignes = [...f.lignes];
@@ -165,13 +184,42 @@ export default function DevisFactures() {
   };
 
   const handleSave = async () => {
-    if (!form.client_nom.trim()) { toast.error('Client requis'); return; }
+    const clientNom = form.client_nom.trim();
+    if (!clientNom) { toast.error('Client requis'); return; }
     if (!form.lignes.some((l) => l.description.trim())) { toast.error('Au moins une ligne'); return; }
+
+    // Auto-creation du client dans l'annuaire si c'est une FACTURE avec client libre
+    // (= client_id vide et nom non present dans la liste)
+    let clientId = form.client_id;
+    if (form.type === 'facture' && !clientId) {
+      // Re-verifier match avec annuaire actuel (cas ou l'utilisateur a tape un nom existant
+      // mais avec une casse differente sans declencher updateClientNom)
+      const existing = clients.find((c) => (c.nom || '').trim().toLowerCase() === clientNom.toLowerCase());
+      if (existing) {
+        clientId = existing.id;
+      } else {
+        try {
+          const newClient = await db.clients.create({
+            nom: clientNom,
+            type: 'particulier',
+            adresse: form.client_adresse || '',
+            email: '',
+            telephone: '',
+            notes: 'Créé automatiquement lors d\'une facturation',
+          });
+          clientId = newClient.id;
+          toast.success(`Client "${clientNom}" ajouté à l'annuaire`);
+        } catch (e) {
+          console.error('[devis-factures] Echec creation client auto:', e);
+          // On continue sans bloquer la creation de la facture
+        }
+      }
+    }
 
     const data = {
       numero: form.numero,
-      client_id: form.client_id,
-      client_nom: form.client_nom.trim(),
+      client_id: clientId,
+      client_nom: clientNom,
       client_adresse: form.client_adresse,
       objet: form.objet.trim(),
       lignes: form.lignes.filter((l) => l.description.trim()),
@@ -184,8 +232,8 @@ export default function DevisFactures() {
 
     const collection = form.type === 'devis' ? db.devis : db.factures;
     await collection.create(data);
-    if (form.type === 'facture' && form.client_id) {
-      notifyFactureDisponible(form.client_id, form.numero);
+    if (form.type === 'facture' && clientId) {
+      notifyFactureDisponible(clientId, form.numero);
     }
     toast.success(`${TYPES[form.type].label} créé`);
     setShowForm(false);
@@ -410,18 +458,36 @@ export default function DevisFactures() {
           <div className="space-y-4 pt-2">
             <div>
               <label className="mb-1.5 block text-sm font-medium">Client</label>
-              {clients.length > 0 ? (
-                <Select value={form.client_id} onValueChange={selectClient}>
-                  <SelectTrigger><SelectValue placeholder="Sélectionner un client..." /></SelectTrigger>
-                  <SelectContent>
-                    {clients.map((c) => (
-                      <SelectItem key={c.id} value={c.id}>{c.nom}</SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              ) : (
-                <Input value={form.client_nom} onChange={(e) => setForm({ ...form, client_nom: e.target.value })} placeholder="Nom du client" />
+              <Input
+                list="clients-autocomplete"
+                value={form.client_nom}
+                onChange={(e) => updateClientNom(e.target.value)}
+                placeholder={clients.length > 0 ? 'Tapez ou choisissez un client' : 'Nom du client'}
+                autoComplete="off"
+              />
+              {clients.length > 0 && (
+                <datalist id="clients-autocomplete">
+                  {clients.map((c) => <option key={c.id} value={c.nom} />)}
+                </datalist>
               )}
+              {form.type === 'facture' && form.client_nom.trim() && !form.client_id && (
+                <p className="mt-1 text-[10px] text-emerald-700">
+                  ✓ Nouveau client : sera ajouté automatiquement à l'annuaire à la création de la facture
+                </p>
+              )}
+              {form.client_id && (
+                <p className="mt-1 text-[10px] text-muted-foreground">
+                  Client de l'annuaire
+                </p>
+              )}
+              <div className="mt-2">
+                <Input
+                  value={form.client_adresse || ''}
+                  onChange={(e) => setForm({ ...form, client_adresse: e.target.value })}
+                  placeholder="Adresse (optionnel)"
+                  className="text-xs"
+                />
+              </div>
             </div>
             <div>
               <label className="mb-1.5 block text-sm font-medium">Objet</label>

@@ -50,6 +50,7 @@ export default function Travaux() {
   const [projets, setProjets] = useState([]);
   const [etapes, setEtapes] = useState([]);
   const [employes, setEmployes] = useState([]);
+  const [comptesBancaires, setComptesBancaires] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [view, setView] = useState('kanban');
@@ -64,11 +65,58 @@ export default function Travaux() {
   const [draggedProjet, setDraggedProjet] = useState(null);
 
   const load = async () => {
-    const [p, e, emp] = await Promise.all([db.projets_travaux.list(), db.etapes_travaux.list(), db.employes.list()]);
+    const [p, e, emp, cp] = await Promise.all([
+      db.projets_travaux.list(),
+      db.etapes_travaux.list(),
+      db.employes.list(),
+      db.comptes_bancaires.list(),
+    ]);
     setProjets(p.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || '')));
     setEtapes(e);
     setEmployes(emp.filter((em) => em.role !== 'client'));
+    setComptesBancaires(cp);
     setLoading(false);
+  };
+
+  // Mapping source_paiement (string) → compte bancaire (UUID) par matching de nom.
+  // Permet de rattacher un mouvement Travaux a un compte reel et de mettre a jour son solde.
+  const SOURCE_KEYWORDS = {
+    caisse: ['caisse', 'liquide'],
+    finam: ['finam'],
+    bgfi: ['bgfi'],
+    airtel_money: ['airtel'],
+    moov_money: ['moov'],
+  };
+  const findCompteBySource = (source) => {
+    const keywords = SOURCE_KEYWORDS[source] || [source];
+    return comptesBancaires.find((c) => {
+      const n = (c.nom || '').toLowerCase();
+      return keywords.some((k) => n.includes(k));
+    });
+  };
+
+  /**
+   * Cree un mouvement financier et met a jour le solde du compte bancaire associe.
+   * Centralise la logique pour eviter la duplication entre les 4 cas de handleSaveEtape.
+   */
+  const createMouvementAvecImpactSolde = async ({ type, montant, description, source, reference, categorie, date }) => {
+    const compte = findCompteBySource(source);
+    const mouvement = {
+      type,
+      montant,
+      description,
+      source,
+      compte_id: compte?.id || '',
+      date: date || new Date().toISOString().slice(0, 10),
+      reference,
+      categorie,
+    };
+    await db.mouvements_financiers.create(mouvement);
+    // Mise a jour du solde si compte trouve
+    if (compte) {
+      const delta = (type === 'sortie') ? -montant : montant; // entree = +, sortie = -
+      await db.comptes_bancaires.update(compte.id, { solde: (compte.solde || 0) + delta });
+    }
   };
 
   useEffect(() => { load(); }, []);
@@ -144,27 +192,25 @@ export default function Travaux() {
 
       await db.etapes_travaux.update(editEtape.id, data);
 
-      // Cas 1 : non_paye → paye — creer le mouvement sortie
+      // Cas 1 : non_paye → paye — creer le mouvement sortie (debite le compte source)
       if (!ancienPaye && nouveauPaye && depense > 0) {
-        await db.mouvements_financiers.create({
+        await createMouvementAvecImpactSolde({
           type: 'sortie',
           montant: depense,
           description: `Travaux: ${projetNom} — ${etapeForm.nom}`,
           source: etapeForm.source_paiement,
-          date: new Date().toISOString().slice(0, 10),
           reference: `PROJET-${editEtape.id}`,
           categorie: 'travaux',
         });
         toast.success(`Etape modifiee — sortie ${sourceLabel} de ${fmt(depense)} F enregistree`);
       }
-      // Cas 2 : paye → non_paye — contrepassation (annulation explicite)
+      // Cas 2 : paye → non_paye — contrepassation (credite le compte source)
       else if (ancienPaye && !nouveauPaye && ancienneDepense > 0) {
-        await db.mouvements_financiers.create({
+        await createMouvementAvecImpactSolde({
           type: 'entree',
           montant: ancienneDepense,
           description: `ANNULATION — Travaux: ${projetNom} — ${etapeForm.nom} (contrepassation)`,
           source: editEtape.source_paiement || 'caisse',
-          date: new Date().toISOString().slice(0, 10),
           reference: `ANNUL-PROJET-${editEtape.id}`,
           categorie: 'travaux_annulation',
         });
@@ -174,12 +220,11 @@ export default function Travaux() {
       else if (ancienPaye && nouveauPaye && depense !== ancienneDepense) {
         const diff = depense - ancienneDepense;
         if (diff !== 0) {
-          await db.mouvements_financiers.create({
+          await createMouvementAvecImpactSolde({
             type: diff > 0 ? 'sortie' : 'entree',
             montant: Math.abs(diff),
             description: `${diff > 0 ? 'Complement' : 'Correction'} — Travaux: ${projetNom} — ${etapeForm.nom}`,
             source: etapeForm.source_paiement,
-            date: new Date().toISOString().slice(0, 10),
             reference: `CORRECT-PROJET-${editEtape.id}`,
             categorie: 'travaux_correction',
           });
@@ -194,12 +239,11 @@ export default function Travaux() {
       const created = await db.etapes_travaux.create(data);
       // Si nouvelle etape directement marquee payee
       if (etapeForm.statut_paiement === 'paye' && depense > 0) {
-        await db.mouvements_financiers.create({
+        await createMouvementAvecImpactSolde({
           type: 'sortie',
           montant: depense,
           description: `Travaux: ${projetNom} — ${etapeForm.nom}`,
           source: etapeForm.source_paiement,
-          date: new Date().toISOString().slice(0, 10),
           reference: `PROJET-${created?.id || 'new'}`,
           categorie: 'travaux',
         });
