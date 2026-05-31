@@ -1,51 +1,62 @@
 /**
- * SingPay OAuth2 Authentication — côté serveur uniquement (Vercel Serverless Functions)
- * ⚠️ Ne JAMAIS importer ce fichier dans le frontend React
+ * SingPay Client — helpers cote serveur uniquement (Vercel Serverless Functions).
+ * /!\ NE JAMAIS importer ce fichier dans le frontend React (expose les secrets).
  *
- * OAuth2 client_credentials flow avec cache de token.
- * Doc SingPay : https://client.singpay.ga/doc/reference/index.html
+ * L'API SingPay n'utilise PAS un flow OAuth2 token Bearer.
+ * Les credentials voyagent dans CHAQUE requete via 3 headers :
+ *   - x-client-id     : Client ID OAuth 2.0
+ *   - x-client-secret : Client Secret OAuth 2.0
+ *   - x-wallet        : Wallet ID du portefeuille
+ *
+ * Base URL officielle : https://gateway.singpay.ga/v1
+ * Doc : https://client.singpay.ga/doc/reference/index.html
  */
 
-let cachedToken = null;
-let tokenExpiresAt = null;
+export const SINGPAY_BASE_URL = process.env.SINGPAY_BASE_URL || 'https://gateway.singpay.ga/v1';
 
-export async function getSingPayToken() {
-  // Réutiliser le token si encore valide (marge de 60 secondes)
-  if (cachedToken && tokenExpiresAt && Date.now() < tokenExpiresAt - 60000) {
-    return cachedToken;
-  }
-
+/**
+ * Construit les headers d'auth SingPay.
+ * Tous les endpoints (paiement, status, portefeuille) en ont besoin.
+ */
+export function getSingPayHeaders({ includeWallet = true } = {}) {
   const clientId = process.env.SINGPAY_CLIENT_ID;
   const clientSecret = process.env.SINGPAY_CLIENT_SECRET;
-  const baseUrl = process.env.SINGPAY_BASE_URL || 'https://client.singpay.ga';
+  const walletId = process.env.SINGPAY_WALLET_ID;
 
   if (!clientId || !clientSecret) {
-    throw new Error('SINGPAY_CLIENT_ID et SINGPAY_CLIENT_SECRET requis');
+    throw new Error('SINGPAY_CLIENT_ID et SINGPAY_CLIENT_SECRET requis (Vercel Env Vars)');
+  }
+  if (includeWallet && !walletId) {
+    throw new Error('SINGPAY_WALLET_ID requis (Vercel Env Vars)');
   }
 
-  const credentials = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
+  const headers = {
+    'Content-Type': 'application/json',
+    'x-client-id': clientId,
+    'x-client-secret': clientSecret,
+  };
+  if (includeWallet) headers['x-wallet'] = walletId;
+  return headers;
+}
 
-  const response = await fetch(`${baseUrl}/oauth/token`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-      'Authorization': `Basic ${credentials}`,
-    },
-    body: 'grant_type=client_credentials',
-  });
-
-  if (!response.ok) {
-    const error = await response.text();
-    console.error('[SingPay] Auth failed:', response.status, error);
-    throw new Error(`SingPay auth failed (${response.status}): ${error}`);
+/**
+ * Resout l'endpoint paiement selon l'operateur choisi par le client.
+ *  - 74 = Airtel Money (prefixe Gabon)
+ *  - 62 = Moov Money (prefixe Gabon)
+ *  - ext = page de paiement externe (multi-operateurs hostee par SingPay)
+ */
+export function getPaiementEndpoint(operateur) {
+  switch (operateur) {
+    case 'airtel':
+    case 'airtel_money':
+      return `${SINGPAY_BASE_URL}/74/paiement`;
+    case 'moov':
+    case 'moov_money':
+      return `${SINGPAY_BASE_URL}/62/paiement`;
+    case 'ext':
+    case 'external':
+      return `${SINGPAY_BASE_URL}/ext`;
+    default:
+      throw new Error(`Operateur SingPay invalide: ${operateur}. Valeurs: airtel | moov | ext`);
   }
-
-  const data = await response.json();
-
-  cachedToken = data.access_token;
-  // expires_in en secondes → timestamp ms
-  tokenExpiresAt = Date.now() + (data.expires_in * 1000);
-
-  console.log('[SingPay] Token obtenu, expire dans', data.expires_in, 'secondes');
-  return cachedToken;
 }

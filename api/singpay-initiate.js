@@ -3,8 +3,19 @@
  * POST /api/singpay-initiate
  *
  * Body: { commandeId, montant, telephone, operateur, nomClient }
+ *  - operateur : 'airtel' | 'moov' | 'ext'
+ *  - telephone : numero gabonais (8 chiffres, avec ou sans 241)
+ *  - montant   : F CFA (XAF)
+ *
+ * API officielle SingPay :
+ *   POST https://gateway.singpay.ga/v1/74/paiement   (Airtel)
+ *   POST https://gateway.singpay.ga/v1/62/paiement   (Moov)
+ *   POST https://gateway.singpay.ga/v1/ext            (Lien de paiement externe)
+ *
+ * Headers : x-client-id, x-client-secret, x-wallet
+ * Body    : { amount, reference, client_msisdn, portefeuille, isTransfer }
  */
-import { getSingPayToken } from '../src/lib/singpayAuth.js';
+import { getSingPayHeaders, getPaiementEndpoint, SINGPAY_BASE_URL } from '../src/lib/singpayAuth.js';
 import { createClient } from '@supabase/supabase-js';
 
 const supabase = createClient(
@@ -15,69 +26,89 @@ const supabase = createClient(
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  const { commandeId, montant, telephone, operateur, nomClient } = req.body;
+  const { commandeId, montant, telephone, operateur, nomClient } = req.body || {};
 
-  // Validation
-  if (!commandeId || !montant || !telephone || !operateur) {
-    return res.status(400).json({ error: 'Parametres manquants (commandeId, montant, telephone, operateur)' });
+  // ── Validation
+  if (!commandeId || !montant || !operateur) {
+    return res.status(400).json({ error: 'Parametres manquants (commandeId, montant, operateur)' });
+  }
+  if (!['airtel', 'moov', 'ext'].includes(operateur)) {
+    return res.status(400).json({ error: 'Operateur invalide. Valeurs : airtel | moov | ext' });
   }
 
-  if (!['airtel', 'moov'].includes(operateur)) {
-    return res.status(400).json({ error: 'Operateur invalide. Valeurs acceptees : airtel, moov' });
-  }
-
-  // Validation telephone gabonais (8 chiffres, avec ou sans indicatif 241)
-  const telClean = telephone.replace(/[\s\-\+]/g, '');
-  if (!/^(00241|241)?[0-9]{8}$/.test(telClean)) {
-    return res.status(400).json({ error: 'Numero de telephone invalide (format gabonais attendu)' });
+  // Telephone obligatoire pour airtel/moov, optionnel pour ext (saisi sur la page SingPay)
+  let telClean = '';
+  if (operateur === 'airtel' || operateur === 'moov') {
+    if (!telephone) return res.status(400).json({ error: 'Telephone requis pour airtel/moov' });
+    telClean = telephone.replace(/[\s\-+]/g, '');
+    // Format : on accepte 8 chiffres, ou 241XXXXXXXX, ou 00241XXXXXXXX → on normalise vers 241XXXXXXXX
+    if (!/^(00241|241)?[0-9]{8}$/.test(telClean)) {
+      return res.status(400).json({ error: 'Numero de telephone invalide (format gabonais attendu)' });
+    }
+    if (telClean.startsWith('00241')) telClean = telClean.slice(5);
+    if (telClean.startsWith('241')) telClean = telClean.slice(3);
+    // SingPay attend les 8 chiffres locaux sans indicatif (a verifier en test)
+    // Si jamais SingPay veut 241XXXXXXXX, decommenter :
+    // telClean = '241' + telClean;
   }
 
   try {
-    const token = await getSingPayToken();
-    const baseUrl = process.env.SINGPAY_BASE_URL || 'https://client.singpay.ga';
+    const walletId = process.env.SINGPAY_WALLET_ID;
     const callbackUrl = process.env.SINGPAY_CALLBACK_URL || 'https://imprimerie-ogooue-app.vercel.app/api/singpay-callback';
-
-    // Reference unique pour cette transaction
     const reference = `OGO-${commandeId.slice(0, 8)}-${Date.now()}`;
 
-    // Merchant ID par operateur (variables d'environnement)
-    const merchantId = operateur === 'airtel'
-      ? process.env.SINGPAY_AIRTEL_MERCHANT
-      : process.env.SINGPAY_MOOV_MERCHANT;
-
-    if (!merchantId) {
-      return res.status(500).json({ error: `Merchant ID non configure pour l'operateur ${operateur}` });
+    // ── Construction du body selon endpoint
+    let endpoint;
+    let body;
+    if (operateur === 'ext') {
+      // Page de paiement externe SingPay (le client choisit l'operateur sur la page hostee)
+      endpoint = `${SINGPAY_BASE_URL}/ext`;
+      body = {
+        portefeuille: walletId,
+        reference,
+        amount: Math.round(montant),
+        redirect_success: `https://imprimerie-ogooue-app.vercel.app/client/commandes?paiement=success&ref=${reference}`,
+        redirect_error: `https://imprimerie-ogooue-app.vercel.app/client/commandes?paiement=error&ref=${reference}`,
+        isTransfer: false,
+      };
+    } else {
+      // USSD push direct sur Airtel ou Moov
+      endpoint = getPaiementEndpoint(operateur);
+      body = {
+        amount: Math.round(montant),
+        reference,
+        client_msisdn: telClean,
+        portefeuille: walletId,
+        isTransfer: false,
+      };
     }
 
-    // Appel API SingPay — initiation paiement
-    const paymentResponse = await fetch(`${baseUrl}/api/payments`, {
+    // ── Appel SingPay
+    const paymentResponse = await fetch(endpoint, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`,
-      },
-      body: JSON.stringify({
-        wallet_id: process.env.SINGPAY_WALLET_ID,
-        merchant_id: merchantId,
-        amount: Math.round(montant),
-        phone_number: telClean,
-        operator: operateur,
-        reference: reference,
-        description: `Commande Imprimerie Ogooue #${commandeId.slice(0, 8)}`,
-        customer_name: nomClient || 'Client',
-        callback_url: callbackUrl,
-      }),
+      headers: getSingPayHeaders(),
+      body: JSON.stringify(body),
     });
 
-    const paymentData = await paymentResponse.json();
+    const paymentData = await paymentResponse.json().catch(() => ({}));
 
-    if (!paymentResponse.ok) {
+    if (!paymentResponse.ok || paymentData?.status?.success === false) {
       console.error('[SingPay] Initiation failed:', paymentResponse.status, paymentData);
-      throw new Error(paymentData.message || paymentData.error || 'Erreur SingPay');
+      return res.status(502).json({
+        error: paymentData?.status?.message || paymentData?.message || 'Erreur SingPay',
+        details: paymentData,
+      });
     }
 
-    // Sauvegarder la transaction dans Supabase (table app_data, collection paiements_singpay)
-    const transactionId = paymentData.transaction_id || paymentData.id || reference;
+    // ── Extraction des identifiants de transaction
+    // Reponse paiement USSD : { transaction: {...}, status: {code, message, success, result_code} }
+    // Reponse ext           : { link, exp }
+    const tx = paymentData.transaction || {};
+    const transactionId = tx._id || tx.id || reference;
+    const externalLink = paymentData.link || null;
+    const expiresAt = paymentData.exp || null;
+
+    // ── Persistance dans Supabase
     await supabase.from('app_data').insert({
       id: crypto.randomUUID(),
       collection: 'paiements_singpay',
@@ -86,12 +117,14 @@ export default async function handler(req, res) {
         commande_id: commandeId,
         singpay_transaction_id: transactionId,
         payment_reference: reference,
-        wallet_id: process.env.SINGPAY_WALLET_ID,
+        wallet_id: walletId,
         phone_number: telClean,
-        operateur: operateur,
+        operateur,
         amount: Math.round(montant),
         status: 'pending',
         nom_client: nomClient || 'Client',
+        external_link: externalLink,
+        expires_at: expiresAt,
         raw_response: paymentData,
         created_at: new Date().toISOString(),
       },
@@ -99,7 +132,7 @@ export default async function handler(req, res) {
       updated_at: new Date().toISOString(),
     });
 
-    // Mettre a jour la commande dans app_data
+    // ── Mise a jour de la commande
     const { data: cmdRow } = await supabase
       .from('app_data')
       .select('id, data')
@@ -115,6 +148,7 @@ export default async function handler(req, res) {
           operateur_paiement: operateur,
           telephone_paiement: telClean,
           singpay_reference: reference,
+          singpay_transaction_id: transactionId,
           updated_at: new Date().toISOString(),
         },
         updated_at: new Date().toISOString(),
@@ -125,7 +159,11 @@ export default async function handler(req, res) {
       success: true,
       reference,
       transactionId,
-      message: 'Paiement initie — confirmez sur votre telephone',
+      externalLink, // non-null si operateur='ext'
+      expiresAt,
+      message: operateur === 'ext'
+        ? 'Lien de paiement genere'
+        : 'Paiement initie — confirmez sur votre telephone via USSD',
     });
 
   } catch (err) {
