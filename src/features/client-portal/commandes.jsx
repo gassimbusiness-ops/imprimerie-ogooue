@@ -103,6 +103,36 @@ export default function ClientCommandes() {
 
   useEffect(() => { loadData(); const interval = setInterval(loadData, 30000); return () => clearInterval(interval); }, [user]);
 
+  // ── Detection du retour SingPay (redirect_success / redirect_error) ──
+  // SingPay redirige le client vers ?paiement=success ou ?paiement=error apres
+  // le paiement via lien externe (/ext). Afficher un feedback visuel + recharger.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const paiementParam = params.get('paiement');
+    const refParam = params.get('ref');
+    if (!paiementParam) return;
+
+    if (paiementParam === 'success') {
+      toast.success('Paiement reçu — votre commande passe en production', {
+        duration: 8000,
+        description: refParam ? `Référence : ${refParam}` : undefined,
+      });
+      // Recharger pour voir le nouveau statut
+      setTimeout(() => loadData(), 1500);
+    } else if (paiementParam === 'error') {
+      toast.error('Paiement non abouti', {
+        duration: 8000,
+        description: 'Le paiement a échoué ou a été annulé. Vous pouvez réessayer.',
+      });
+    }
+
+    // Nettoyer l'URL pour eviter de re-trigger au prochain render
+    const url = new URL(window.location.href);
+    url.searchParams.delete('paiement');
+    url.searchParams.delete('ref');
+    window.history.replaceState({}, '', url.toString());
+  }, []);
+
   // ── Ouvrir modal paiement Mobile Money ──
   const openPaiement = (cmd) => {
     setShowPaiement(cmd);
@@ -143,7 +173,13 @@ export default function ClientCommandes() {
       });
 
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || 'Erreur SingPay');
+      if (!response.ok) {
+        // Propager le detail SingPay si present pour debug
+        const detail = data.details?.status?.message || data.details?.message || '';
+        const msg = data.error || 'Erreur SingPay';
+        console.error('[SingPay frontend] Erreur initiation:', data);
+        throw new Error(detail ? `${msg} — ${detail}` : msg);
+      }
 
       // Mise a jour locale aussi (au cas ou l'API serverless ne le ferait pas)
       const auteur = `${user?.prenom || ''} ${user?.nom || ''}`.trim();
@@ -403,11 +439,14 @@ export default function ClientCommandes() {
                 <label className="block text-sm font-medium mb-1.5">Votre numero de telephone</label>
                 <Input
                   type="tel"
-                  placeholder="Ex: 060 XX XX XX"
+                  placeholder="Ex: 065537128 ou 075537128"
                   value={telephone}
                   onChange={(e) => setTelephone(e.target.value)}
                   className="text-lg"
                 />
+                <p className="text-[10px] text-muted-foreground mt-1">
+                  Format gabonais 9 chiffres commencant par 06 (Moov) ou 07 (Airtel)
+                </p>
               </div>
 
               <p className="text-[10px] text-muted-foreground">

@@ -37,19 +37,24 @@ export default async function handler(req, res) {
   }
 
   // Telephone obligatoire pour airtel/moov, optionnel pour ext (saisi sur la page SingPay)
+  // SingPay attend le format LOCAL avec 0 initial : 065537128 (9 chiffres)
+  // (vu dans la reponse status SingPay : client_msisdn = "065537128")
   let telClean = '';
   if (operateur === 'airtel' || operateur === 'moov') {
     if (!telephone) return res.status(400).json({ error: 'Telephone requis pour airtel/moov' });
+    // 1. Retirer espaces, tirets, +
     telClean = telephone.replace(/[\s\-+]/g, '');
-    // Format : on accepte 8 chiffres, ou 241XXXXXXXX, ou 00241XXXXXXXX → on normalise vers 241XXXXXXXX
-    if (!/^(00241|241)?[0-9]{8}$/.test(telClean)) {
-      return res.status(400).json({ error: 'Numero de telephone invalide (format gabonais attendu)' });
-    }
+    // 2. Retirer indicatif international si present
     if (telClean.startsWith('00241')) telClean = telClean.slice(5);
-    if (telClean.startsWith('241')) telClean = telClean.slice(3);
-    // SingPay attend les 8 chiffres locaux sans indicatif (a verifier en test)
-    // Si jamais SingPay veut 241XXXXXXXX, decommenter :
-    // telClean = '241' + telClean;
+    else if (telClean.startsWith('241')) telClean = telClean.slice(3);
+    // 3. Si format 8 chiffres (sans 0 initial), preprend le 0
+    if (/^[0-9]{8}$/.test(telClean)) telClean = '0' + telClean;
+    // 4. Validation finale : format gabonais 9 chiffres commencant par 0
+    if (!/^0[0-9]{8}$/.test(telClean)) {
+      return res.status(400).json({
+        error: 'Numero de telephone invalide. Format attendu : 06XXXXXXXX, 07XXXXXXXX ou avec indicatif 241XXXXXXXX',
+      });
+    }
   }
 
   try {
