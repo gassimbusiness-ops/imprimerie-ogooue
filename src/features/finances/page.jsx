@@ -332,8 +332,32 @@ export default function Finances() {
 
   const handleDelete = async (item) => {
     if (!confirm('Supprimer cet élément ?')) return;
+
+    // Si c'est un mouvement financier, annuler son impact sur le solde du compte
+    // (operation inverse de ce qui est fait a la creation, lignes 307-318)
+    if (activeTab === 'mouvements' && item.compte_id) {
+      const compte = comptes.find((c) => c.id === item.compte_id);
+      const montant = item.montant || 0;
+      if (compte) {
+        if (item.type === 'entree' || item.type === 'depot_hebdo') {
+          // Etait un credit : on debite pour annuler
+          await db.comptes_bancaires.update(compte.id, { solde: (compte.solde || 0) - montant });
+        } else if (item.type === 'sortie') {
+          // Etait un debit : on credite pour annuler
+          await db.comptes_bancaires.update(compte.id, { solde: (compte.solde || 0) + montant });
+        } else if (item.type === 'transfert') {
+          // Inverse du transfert : recrediter la source + redebiter la destination
+          await db.comptes_bancaires.update(compte.id, { solde: (compte.solde || 0) + montant });
+          const dest = comptes.find((c) => c.id === item.compte_dest_id);
+          if (dest) {
+            await db.comptes_bancaires.update(dest.id, { solde: (dest.solde || 0) - montant });
+          }
+        }
+      }
+    }
+
     await getCollection().delete(item.id);
-    await logAction('delete', 'finances', { entityId: item.id, entityLabel: item.nom || item.libelle || item.titre || '', details: `Suppression ${activeTab}` });
+    await logAction('delete', 'finances', { entityId: item.id, entityLabel: item.nom || item.libelle || item.titre || item.description || '', details: `Suppression ${activeTab}` });
     toast.success('Supprimé');
     load();
   };
