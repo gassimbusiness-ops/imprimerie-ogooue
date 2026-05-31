@@ -12,16 +12,23 @@
  * Doc : https://client.singpay.ga/doc/reference/index.html
  */
 
-export const SINGPAY_BASE_URL = process.env.SINGPAY_BASE_URL || 'https://gateway.singpay.ga/v1';
+// Sanitize : retire espaces de debut/fin + tout ce qui suit le premier espace
+// (resilient aux env vars copiees avec un commentaire entre parentheses, ex :
+//  "69bab43545318bccb8e8ab94 (wallet TEST OA3247)" devient "69bab43545318bccb8e8ab94")
+function clean(v) {
+  return (v || '').trim().split(/\s/)[0];
+}
+
+export const SINGPAY_BASE_URL = clean(process.env.SINGPAY_BASE_URL) || 'https://gateway.singpay.ga/v1';
 
 /**
  * Construit les headers d'auth SingPay.
  * Tous les endpoints (paiement, status, portefeuille) en ont besoin.
  */
 export function getSingPayHeaders({ includeWallet = true } = {}) {
-  const clientId = process.env.SINGPAY_CLIENT_ID;
-  const clientSecret = process.env.SINGPAY_CLIENT_SECRET;
-  const walletId = process.env.SINGPAY_WALLET_ID;
+  const clientId = clean(process.env.SINGPAY_CLIENT_ID);
+  const clientSecret = clean(process.env.SINGPAY_CLIENT_SECRET);
+  const walletId = clean(process.env.SINGPAY_WALLET_ID);
 
   if (!clientId || !clientSecret) {
     throw new Error('SINGPAY_CLIENT_ID et SINGPAY_CLIENT_SECRET requis (Vercel Env Vars)');
