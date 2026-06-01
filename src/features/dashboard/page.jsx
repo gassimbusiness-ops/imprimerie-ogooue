@@ -58,6 +58,9 @@ export default function Dashboard() {
   const [clients, setClients] = useState([]);
   const [produits, setProduits] = useState([]);
   const [comptes, setComptes] = useState([]);
+  const [dettes, setDettes] = useState([]);
+  const [charges, setCharges] = useState([]);
+  const [commandes, setCommandes] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -66,14 +69,77 @@ export default function Dashboard() {
       db.clients.list(),
       db.produits.list(),
       db.comptes_bancaires.list(),
-    ]).then(([r, c, p, cb]) => {
+      db.dettes.list(),
+      db.charges_fixes.list(),
+      db.commandes.list(),
+    ]).then(([r, c, p, cb, de, ch, cmd]) => {
       setRapports(r.sort((a, b) => b.date.localeCompare(a.date)));
       setClients(c);
       setProduits(p);
       setComptes(cb);
+      setDettes(de);
+      setCharges(ch);
+      setCommandes(cmd);
       setLoading(false);
     });
   }, []);
+
+  // ── Previsionnel de tresorerie 30/60/90 jours ──
+  // Tresorerie actuelle (comptes imprimerie) - sorties prevues (mensualites credit + charges fixes auto)
+  const prevision = useMemo(() => {
+    const COMPTES_EXCLUS = ['wise', 'mercury', 'paypal', 'stripe', 'airwallex'];
+    const tresorerieActuelle = comptes
+      .filter((c) => !COMPTES_EXCLUS.some((k) => (c.nom || '').toLowerCase().includes(k)))
+      .reduce((s, c) => s + (c.solde || 0), 0);
+
+    // Sortie mensuelle recurrente = mensualites credits actifs + charges fixes auto mensuelles
+    const mensualitesCredit = dettes
+      .filter((d) => d.prelevement_auto && d.statut !== 'solde' && (d.montant_restant || 0) > 0)
+      .reduce((s, d) => s + (d.mensualite_montant || 0), 0);
+    const chargesMensuelles = charges
+      .filter((c) => c.actif !== false && c.prelevement_auto)
+      .reduce((s, c) => {
+        const m = Number(c.montant) || 0;
+        if (c.periodicite === 'annuelle') return s + m / 12;
+        if (c.periodicite === 'trimestrielle') return s + m / 3;
+        return s + m;
+      }, 0);
+    const sortieMensuelle = mensualitesCredit + chargesMensuelles;
+
+    return {
+      actuelle: tresorerieActuelle,
+      sortieMensuelle,
+      j30: tresorerieActuelle - sortieMensuelle,
+      j60: tresorerieActuelle - sortieMensuelle * 2,
+      j90: tresorerieActuelle - sortieMensuelle * 3,
+    };
+  }, [comptes, dettes, charges]);
+
+  // ── CA semaine + Top produits ──
+  const ventesStats = useMemo(() => {
+    const now = new Date();
+    const weekStart = new Date(now); weekStart.setDate(now.getDate() - 7);
+    const weekStartStr = weekStart.toISOString().slice(0, 10);
+    const caSemaine = rapports
+      .filter((r) => r.date >= weekStartStr)
+      .reduce((s, r) => s + Object.values(r.categories || {}).reduce((a, v) => a + (v || 0), 0), 0);
+
+    // Top produits depuis les commandes (toutes lignes)
+    const compteur = {};
+    commandes.forEach((cmd) => {
+      (cmd.lignes || cmd.produits || []).forEach((l) => {
+        const nom = l.description || l.nom || l.designation || 'Article';
+        const qte = Number(l.quantite) || 1;
+        compteur[nom] = (compteur[nom] || 0) + qte;
+      });
+    });
+    const topProduits = Object.entries(compteur)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([nom, qte]) => ({ nom, qte }));
+
+    return { caSemaine, topProduits };
+  }, [rapports, commandes]);
 
   const stats = useMemo(() => {
     if (!rapports.length) return null;
@@ -186,6 +252,72 @@ export default function Dashboard() {
             iconBg="bg-violet-500/10"
             iconColor="text-violet-600"
           />
+        </div>
+      )}
+
+      {/* Previsionnel tresorerie + Top produits (admin/manager) */}
+      {!isEmploye && (
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+          <Card className="lg:col-span-2 border-l-4 border-l-blue-500">
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <TrendingUp className="h-4 w-4 text-blue-600" /> Prévisionnel de trésorerie
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+                <div className="rounded-lg bg-muted/50 p-3">
+                  <p className="text-[10px] uppercase text-muted-foreground">Aujourd'hui</p>
+                  <p className="text-lg font-bold">{fmt(prevision.actuelle)} F</p>
+                </div>
+                <div className="rounded-lg bg-muted/50 p-3">
+                  <p className="text-[10px] uppercase text-muted-foreground">Dans 30 j</p>
+                  <p className={`text-lg font-bold ${prevision.j30 < 0 ? 'text-red-600' : ''}`}>{fmt(prevision.j30)} F</p>
+                </div>
+                <div className="rounded-lg bg-muted/50 p-3">
+                  <p className="text-[10px] uppercase text-muted-foreground">Dans 60 j</p>
+                  <p className={`text-lg font-bold ${prevision.j60 < 0 ? 'text-red-600' : ''}`}>{fmt(prevision.j60)} F</p>
+                </div>
+                <div className="rounded-lg bg-muted/50 p-3">
+                  <p className="text-[10px] uppercase text-muted-foreground">Dans 90 j</p>
+                  <p className={`text-lg font-bold ${prevision.j90 < 0 ? 'text-red-600' : ''}`}>{fmt(prevision.j90)} F</p>
+                </div>
+              </div>
+              <p className="mt-2 text-[11px] text-muted-foreground">
+                Sortie récurrente estimée : <span className="font-semibold text-red-600">−{fmt(prevision.sortieMensuelle)} F/mois</span>
+                {' '}(mensualités crédits + charges fixes auto). Hors recettes futures.
+              </p>
+              {prevision.j90 < 0 && (
+                <p className="mt-1 text-[11px] font-semibold text-red-600">⚠️ Trésorerie projetée négative à 90 jours — anticiper des rentrées.</p>
+              )}
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Package className="h-4 w-4 text-emerald-600" /> Top produits
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="mb-2 text-[11px] text-muted-foreground">CA 7 derniers jours : <span className="font-bold text-emerald-600">{fmt(ventesStats.caSemaine)} F</span></p>
+              {ventesStats.topProduits.length === 0 ? (
+                <p className="text-sm text-muted-foreground py-4 text-center">Aucune vente</p>
+              ) : (
+                <div className="space-y-1.5">
+                  {ventesStats.topProduits.map((p, i) => (
+                    <div key={p.nom} className="flex items-center justify-between text-sm">
+                      <span className="flex items-center gap-2 min-w-0">
+                        <span className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-[10px] font-bold text-emerald-700">{i + 1}</span>
+                        <span className="truncate">{p.nom}</span>
+                      </span>
+                      <span className="font-semibold shrink-0">{p.qte}×</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </div>
       )}
 
