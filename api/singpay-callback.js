@@ -128,6 +128,60 @@ export default async function handler(req, res) {
         updated_at: new Date().toISOString(),
       }).eq('id', cmdRow.id);
 
+      // ── Reconciliation tresorerie : crediter le compte encaisseur (FINAM par
+      //    defaut, ou le compte Mobile Money correspondant) + creer un mouvement.
+      //    Idempotent via reference 'singpay:<reference>'.
+      try {
+        const montantPaye = Number(amount || paiement.amount) || 0;
+        const refMvt = `singpay:${paiement.payment_reference || transactionId}`;
+        const { data: mvtsExist } = await supabase
+          .from('app_data')
+          .select('id, data')
+          .eq('collection', 'mouvements_financiers');
+        const dejaCredite = (mvtsExist || []).some((m) => m.data?.reference === refMvt);
+
+        if (!dejaCredite && montantPaye > 0) {
+          // Trouver le compte encaisseur : FINAM en priorite, sinon 1er compte 'caisse/liquide'
+          const { data: comptes } = await supabase
+            .from('app_data')
+            .select('id, data')
+            .eq('collection', 'comptes_bancaires');
+          const findCompte = (kw) => (comptes || []).find((c) => (c.data?.nom || '').toLowerCase().includes(kw));
+          const compteRow = findCompte('finam') || findCompte('caisse') || findCompte('liquide') || (comptes || [])[0];
+
+          if (compteRow) {
+            // Crediter le solde
+            await supabase.from('app_data').update({
+              data: { ...compteRow.data, solde: (compteRow.data.solde || 0) + montantPaye },
+              updated_at: new Date().toISOString(),
+            }).eq('id', compteRow.id);
+
+            // Creer le mouvement entree
+            await supabase.from('app_data').insert({
+              id: crypto.randomUUID(),
+              collection: 'mouvements_financiers',
+              data: {
+                id: crypto.randomUUID(),
+                type: 'entree',
+                montant: montantPaye,
+                description: `Paiement Mobile Money — ${paiement.nom_client || 'Client'}${cmdRow.data.numero ? ` — ${cmdRow.data.numero}` : ''}`,
+                compte_id: compteRow.id,
+                date: new Date().toISOString().slice(0, 10),
+                reference: refMvt,
+                categorie: 'encaissement_singpay',
+                source: 'singpay',
+                pointe: true,
+                created_at: new Date().toISOString(),
+              },
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
+            });
+          }
+        }
+      } catch (recErr) {
+        console.error('[SingPay Callback] Reconciliation tresorerie echouee:', recErr.message);
+      }
+
       // Notification admin
       await supabase.from('app_data').insert({
         id: crypto.randomUUID(),
