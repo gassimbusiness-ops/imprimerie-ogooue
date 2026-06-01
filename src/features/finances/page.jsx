@@ -17,7 +17,7 @@ import {
 import {
   Landmark, Plus, Edit2, Trash2, CreditCard, Users2, TrendingUp,
   Receipt, CircleDollarSign, ArrowUpRight, ArrowDownLeft, ArrowLeftRight,
-  Calendar, Building2, Globe, Wallet, Banknote, RefreshCw,
+  Calendar, Building2, Globe, Wallet, Banknote, RefreshCw, AlertTriangle,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -303,17 +303,45 @@ export default function Finances() {
       }
     }
 
-    // Mouvement: update account balance
-    if (activeTab === 'mouvements' && !editItem) {
-      const compte = comptes.find((c) => c.id === data.compte_id);
+    // Mouvement: mise a jour du solde des comptes.
+    // - Creation : on applique l'effet du nouveau mouvement.
+    // - Modification : on ANNULE d'abord l'effet de l'ancien mouvement (editItem),
+    //   puis on applique l'effet du nouveau. Ainsi changer le montant/type/compte
+    //   reajuste correctement les soldes (ferme le trou laisse par le fix c5e53bd).
+    if (activeTab === 'mouvements') {
+      // Deltas par compte, accumules pour ne faire qu'un update par compte
+      const deltas = {}; // { compteId: montantDelta }
+      const addDelta = (id, d) => { if (id) deltas[id] = (deltas[id] || 0) + d; };
+
+      // 1) Annuler l'ancien mouvement (en edition uniquement)
+      if (editItem) {
+        const m = Number(editItem.montant) || 0;
+        if (editItem.type === 'entree' || editItem.type === 'depot_hebdo') {
+          addDelta(editItem.compte_id, -m);
+        } else if (editItem.type === 'sortie') {
+          addDelta(editItem.compte_id, +m);
+        } else if (editItem.type === 'transfert') {
+          addDelta(editItem.compte_id, +m);
+          addDelta(editItem.compte_dest_id, -m);
+        }
+      }
+
+      // 2) Appliquer le nouveau mouvement
+      const m2 = Number(data.montant) || 0;
       if (data.type === 'entree' || data.type === 'depot_hebdo') {
-        if (compte) await db.comptes_bancaires.update(compte.id, { solde: (compte.solde || 0) + data.montant });
+        addDelta(data.compte_id, +m2);
       } else if (data.type === 'sortie') {
-        if (compte) await db.comptes_bancaires.update(compte.id, { solde: (compte.solde || 0) - data.montant });
+        addDelta(data.compte_id, -m2);
       } else if (data.type === 'transfert') {
-        if (compte) await db.comptes_bancaires.update(compte.id, { solde: (compte.solde || 0) - data.montant });
-        const dest = comptes.find((c) => c.id === data.compte_dest_id);
-        if (dest) await db.comptes_bancaires.update(dest.id, { solde: (dest.solde || 0) + data.montant });
+        addDelta(data.compte_id, -m2);
+        addDelta(data.compte_dest_id, +m2);
+      }
+
+      // 3) Persister les deltas
+      for (const [compteId, delta] of Object.entries(deltas)) {
+        if (delta === 0) continue;
+        const compte = comptes.find((c) => c.id === compteId);
+        if (compte) await db.comptes_bancaires.update(compte.id, { solde: (compte.solde || 0) + delta });
       }
     }
 
@@ -445,6 +473,19 @@ export default function Finances() {
 
       {/* ═══════════ COMPTES BANCAIRES ═══════════ */}
       {activeTab === 'comptes' && (
+        <>
+        {/* Alerte soldes negatifs */}
+        {comptes.some((c) => (c.solde || 0) < 0) && (
+          <div className="mb-4 flex items-start gap-2 rounded-lg border border-red-300 bg-red-50 p-3">
+            <AlertTriangle className="h-5 w-5 text-red-600 shrink-0 mt-0.5" />
+            <div className="text-sm">
+              <p className="font-semibold text-red-700">Attention : solde négatif détecté</p>
+              <p className="text-red-600 text-xs mt-0.5">
+                {comptes.filter((c) => (c.solde || 0) < 0).map((c) => `${c.nom} (${fmt(c.solde)} F)`).join(', ')}
+              </p>
+            </div>
+          </div>
+        )}
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {comptes.length === 0 ? (
             <p className="col-span-full py-12 text-center text-sm text-muted-foreground">Aucun compte bancaire — cliquez &quot;Créer comptes par défaut&quot;</p>
@@ -475,7 +516,14 @@ export default function Finances() {
                     )}
                   </div>
                   <div className="mt-4">
-                    <p className="text-2xl font-bold">{fmt(c.solde)} <span className="text-sm font-normal text-muted-foreground">{c.devise === 'XAF' ? 'FCFA' : c.devise}</span></p>
+                    <p className={`text-2xl font-bold ${(c.solde || 0) < 0 ? 'text-red-600' : ''}`}>
+                      {fmt(c.solde)} <span className="text-sm font-normal text-muted-foreground">{c.devise === 'XAF' ? 'FCFA' : c.devise}</span>
+                    </p>
+                    {(c.solde || 0) < 0 && (
+                      <Badge className="mt-1 gap-1 bg-red-100 text-red-700 text-[10px]">
+                        <AlertTriangle className="h-3 w-3" /> Solde négatif
+                      </Badge>
+                    )}
                   </div>
                   {c.numero_compte && <p className="mt-1 text-[10px] text-muted-foreground">N° {c.numero_compte}</p>}
                   {c.notes && <p className="mt-1 text-[10px] text-muted-foreground">{c.notes}</p>}
@@ -484,6 +532,7 @@ export default function Finances() {
             );
           })}
         </div>
+        </>
       )}
 
       {/* ═══════════ MOUVEMENTS FINANCIERS ═══════════ */}
