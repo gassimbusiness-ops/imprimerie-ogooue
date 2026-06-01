@@ -256,8 +256,9 @@ function PrixBuilder({ value, onChange }) {
 /* ══════════════════════════════════════════════
    Image Uploader (form)
    ══════════════════════════════════════════════ */
-function ImageUploader({ images, onChange, maxImages = 5 }) {
+function ImageUploader({ images, onChange, maxImages = 5, productName = '', productCategorie = '', productDescription = '' }) {
   const fileRef = useRef(null);
+  const [generating, setGenerating] = useState(false);
 
   const handleFiles = async (e) => {
     const files = Array.from(e.target.files || []);
@@ -269,6 +270,39 @@ function ImageUploader({ images, onChange, maxImages = 5 }) {
     const compressed = await Promise.all(toProcess.map((f) => compressImage(f)));
     onChange([...(images || []), ...compressed]);
     if (fileRef.current) fileRef.current.value = '';
+  };
+
+  // Generation d'une image produit via IA (DALL-E) + conversion en base64 pour
+  // stockage perenne (l'URL DALL-E expire ~1h)
+  const handleGenerateAI = async () => {
+    if (!productName.trim()) { toast.error('Renseignez d\'abord le nom du produit'); return; }
+    if ((images?.length || 0) >= maxImages) { toast.error(`Maximum ${maxImages} images`); return; }
+    setGenerating(true);
+    try {
+      const desc = [productName, productCategorie, productDescription].filter(Boolean).join(', ');
+      const res = await fetch('/api/generate-image', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: desc, style: 'product', size: '1024x1024' }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.url) throw new Error(data.error || 'Échec génération');
+      // Recuperer l'image et la convertir en base64
+      const imgRes = await fetch(data.url);
+      const blob = await imgRes.blob();
+      const base64 = await new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => resolve(reader.result);
+        reader.readAsDataURL(blob);
+      });
+      onChange([...(images || []), base64]);
+      toast.success('Image générée et ajoutée');
+    } catch (err) {
+      console.error('[Catalogue IA] Erreur:', err);
+      toast.error(`Génération échouée : ${err.message}`);
+    } finally {
+      setGenerating(false);
+    }
   };
 
   const remove = (idx) => {
@@ -310,6 +344,18 @@ function ImageUploader({ images, onChange, maxImages = 5 }) {
           >
             <Upload className="h-5 w-5" />
             <span className="text-[9px]">Ajouter</span>
+          </button>
+        )}
+        {(images || []).length < maxImages && (
+          <button
+            type="button"
+            onClick={handleGenerateAI}
+            disabled={generating}
+            className="w-20 h-20 rounded-lg border-2 border-dashed border-violet-300 flex flex-col items-center justify-center gap-1 text-violet-600 hover:border-violet-500 hover:bg-violet-50 transition-colors disabled:opacity-50"
+            title="Générer une image du produit avec l'IA"
+          >
+            {generating ? <Loader2 className="h-5 w-5 animate-spin" /> : <Sparkles className="h-5 w-5" />}
+            <span className="text-[9px]">{generating ? '...' : 'Générer IA'}</span>
           </button>
         )}
       </div>
@@ -627,7 +673,7 @@ function ProductForm({ open, onClose, editItem, onSave }) {
           <TagsInput value={form.options_personnalisables} onChange={(t) => upd('options_personnalisables', t)} label="Options personnalisables" placeholder="Logo, Texte, Couleur, Format..." />
 
           {/* Images */}
-          <ImageUploader images={form.images} onChange={(imgs) => upd('images', imgs)} />
+          <ImageUploader images={form.images} onChange={(imgs) => upd('images', imgs)} productName={form.nom} productCategorie={form.categorie} productDescription={form.description} />
 
           {/* Prix par quantité */}
           <PrixBuilder value={form.prix} onChange={(p) => upd('prix', p)} />

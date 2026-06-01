@@ -15,9 +15,16 @@ export default async function handler(req, res) {
   if (!apiKey) return res.status(500).json({ error: 'Clé API OpenAI non configurée' });
 
   try {
-    const { prompt, size = '1024x1024', quality = 'standard' } = req.body;
+    const { prompt, size = '1024x1024', quality = 'standard', style = 'marketing' } = req.body;
 
     if (!prompt) return res.status(400).json({ error: 'Prompt requis' });
+
+    // Le prefixe depend du style demande :
+    // - 'product' : photo produit propre sur fond neutre (pour fiche catalogue)
+    // - 'marketing' (defaut) : visuel marketing pour print shop
+    const fullPrompt = style === 'product'
+      ? `Professional product photography of ${prompt}. Clean studio lighting, neutral white or light background, centered, e-commerce catalogue style, sharp focus, high quality, no text, no watermark.`
+      : `Professional marketing visual for a print shop in Gabon, Africa. ${prompt}. High quality, commercial style, vibrant colors suitable for African market.`;
 
     const response = await fetch('https://api.openai.com/v1/images/generations', {
       method: 'POST',
@@ -27,7 +34,7 @@ export default async function handler(req, res) {
       },
       body: JSON.stringify({
         model: 'dall-e-3',
-        prompt: `Professional marketing visual for a print shop in Gabon, Africa. ${prompt}. High quality, commercial style, vibrant colors suitable for African market.`,
+        prompt: fullPrompt,
         n: 1,
         size,
         quality,
