@@ -98,55 +98,95 @@ export default function Paiements() {
     }
   };
 
+  const [submitting, setSubmitting] = useState(false);
+
   const handleSubmit = async () => {
     if (!form.telephone.trim() || !form.montant) {
       toast.error('Téléphone et montant requis');
       return;
     }
+    setSubmitting(true);
 
     const ref = `PAY-${String(paiements.length + 1).padStart(4, '0')}`;
     const provider = PROVIDERS.find((p) => p.id === form.provider);
-    const data = {
-      reference: ref,
-      client_nom: form.client_nom.trim(),
-      telephone: form.telephone.trim(),
-      montant: parseFloat(form.montant),
-      provider: form.provider,
-      provider_nom: provider?.name || form.provider,
-      reference_commande: form.reference_commande.trim(),
-      motif: form.motif.trim() || 'Paiement commande',
-      statut: 'en_attente',
-      transaction_id: `TXN${Date.now()}`,
-    };
+    // operateur SingPay : 'airtel' ou 'moov'
+    const operateur = form.provider === 'airtel_money' ? 'airtel' : 'moov';
 
-    await db.paiements_mobile.create(data);
-    await logAction('create', 'paiements', {
-      entityLabel: ref,
-      details: `Paiement ${provider?.name}: ${fmt(data.montant)} F → ${data.telephone}`,
-      metadata: data,
-    });
-    toast.success(`Paiement ${ref} initié — En attente de confirmation`);
-    setShowForm(false);
-    load();
-
-    // Simulate confirmation after 3 seconds
-    setTimeout(async () => {
-      const all = await db.paiements_mobile.list();
-      const found = all.find((p) => p.reference === ref);
-      if (found && found.statut === 'en_attente') {
-        const success = Math.random() > 0.15; // 85% success rate
-        await db.paiements_mobile.update(found.id, {
-          statut: success ? 'confirme' : 'echoue',
-          confirmed_at: new Date().toISOString(),
-        });
-        if (success) {
-          toast.success(`${ref} confirmé par ${provider?.name}`);
-        } else {
-          toast.error(`${ref} échoué — Fonds insuffisants`);
-        }
-        load();
+    try {
+      // Appel reel SingPay via la serverless function (paiement au comptoir)
+      const response = await fetch('/api/singpay-initiate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          commandeId: form.reference_commande.trim() || `comptoir-${Date.now()}`,
+          montant: parseFloat(form.montant),
+          telephone: form.telephone.trim(),
+          operateur,
+          nomClient: form.client_nom.trim() || 'Client comptoir',
+        }),
+      });
+      const result = await response.json();
+      if (!response.ok) {
+        const detail = result.detail || result.error || 'Erreur SingPay';
+        throw new Error(detail);
       }
-    }, 3000);
+
+      const data = {
+        reference: ref,
+        singpay_reference: result.reference,
+        client_nom: form.client_nom.trim(),
+        telephone: form.telephone.trim(),
+        montant: parseFloat(form.montant),
+        provider: form.provider,
+        provider_nom: provider?.name || form.provider,
+        reference_commande: form.reference_commande.trim(),
+        motif: form.motif.trim() || 'Paiement au comptoir',
+        statut: 'en_attente',
+        transaction_id: result.transactionId,
+      };
+      await db.paiements_mobile.create(data);
+      await logAction('create', 'paiements', {
+        entityLabel: ref,
+        details: `Paiement comptoir ${provider?.name}: ${fmt(data.montant)} F → ${data.telephone}`,
+        metadata: data,
+      });
+      toast.success(`Demande envoyée — le client confirme sur son téléphone (${data.telephone})`);
+      setShowForm(false);
+      load();
+
+      // Polling du statut reel SingPay toutes les 5s pendant 3 min
+      const sgRef = result.reference;
+      let elapsed = 0;
+      const interval = setInterval(async () => {
+        elapsed += 5;
+        try {
+          const sres = await fetch(`/api/singpay-status?reference=${encodeURIComponent(sgRef)}`);
+          const sdata = await sres.json();
+          if (sdata.status === 'paid') {
+            clearInterval(interval);
+            const all = await db.paiements_mobile.list();
+            const found = all.find((p) => p.reference === ref);
+            if (found) await db.paiements_mobile.update(found.id, { statut: 'confirme', confirmed_at: new Date().toISOString() });
+            toast.success(`${ref} confirmé — ${fmt(data.montant)} F encaissés`);
+            load();
+          } else if (['failed', 'expired', 'cancelled'].includes(sdata.status)) {
+            clearInterval(interval);
+            const all = await db.paiements_mobile.list();
+            const found = all.find((p) => p.reference === ref);
+            if (found) await db.paiements_mobile.update(found.id, { statut: 'echoue', confirmed_at: new Date().toISOString() });
+            toast.error(`${ref} échoué (${sdata.result || sdata.status})`);
+            load();
+          }
+        } catch { /* continue polling */ }
+        if (elapsed >= 180) clearInterval(interval);
+      }, 5000);
+
+    } catch (err) {
+      console.error('[Paiement comptoir] Erreur:', err);
+      toast.error(`Échec : ${err.message}`);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   if (loading) {
@@ -163,19 +203,19 @@ export default function Paiements() {
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="text-2xl font-bold tracking-tight">Paiements Mobile Money</h2>
-          <p className="text-muted-foreground">Airtel Money & Moov Money — Mode simulation</p>
+          <p className="text-muted-foreground">Encaissement au comptoir — Airtel Money & Moov Money via SingPay</p>
         </div>
         <Button className="gap-2" onClick={openForm}>
-          <Plus className="h-4 w-4" /> Nouveau paiement
+          <Plus className="h-4 w-4" /> Encaisser un paiement
         </Button>
       </div>
 
-      {/* Simulation banner */}
-      <div className="flex items-center gap-3 rounded-lg border border-dashed border-orange-300 bg-orange-50 p-3">
-        <Zap className="h-5 w-5 shrink-0 text-orange-500" />
-        <p className="text-sm text-orange-700">
-          <span className="font-semibold">Mode simulation</span> — Les paiements sont simulés localement.
-          En production, connecter l'API Bizao/PaySika pour les transactions réelles.
+      {/* SingPay banner */}
+      <div className="flex items-center gap-3 rounded-lg border border-emerald-300 bg-emerald-50 p-3">
+        <Zap className="h-5 w-5 shrink-0 text-emerald-500" />
+        <p className="text-sm text-emerald-700">
+          <span className="font-semibold">Paiement réel via SingPay</span> — Saisissez le numéro du client présent,
+          il reçoit une demande de paiement (USSD push) sur son téléphone et confirme avec son code PIN.
         </p>
       </div>
 
@@ -396,9 +436,9 @@ export default function Paiements() {
               </div>
             )}
 
-            <Button className="w-full gap-2" onClick={handleSubmit}>
+            <Button className="w-full gap-2" onClick={handleSubmit} disabled={submitting}>
               <ArrowUpRight className="h-4 w-4" />
-              Initier le paiement
+              {submitting ? 'Envoi de la demande...' : 'Envoyer la demande de paiement'}
             </Button>
           </div>
         </DialogContent>

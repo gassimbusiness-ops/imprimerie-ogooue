@@ -221,6 +221,36 @@ export function exportDocument(doc, lignes, type = 'facture') {
 }
 
 /**
+ * Reçu de paiement (apres confirmation Mobile Money / SingPay)
+ * @param {Object} info - { reference, client_nom, montant, operateur, date, commande_numero, telephone }
+ */
+export function exportRecuPaiement(info = {}) {
+  const title = `Reçu de paiement N° ${info.reference || ''}`;
+  const html = `
+    <div style="text-align:center;margin-bottom:16px;">
+      <h2 style="margin-bottom:4px;">REÇU DE PAIEMENT</h2>
+      <p style="font-size:11px;color:#16a34a;font-weight:600;">✓ Paiement confirmé</p>
+    </div>
+    <table style="width:auto;border:none;margin:0 auto 16px;">
+      <tr><td style="border:none;padding:3px 16px 3px 0;font-weight:600;">Référence:</td><td style="border:none;padding:3px 0;">${info.reference || '—'}</td></tr>
+      <tr><td style="border:none;padding:3px 16px 3px 0;font-weight:600;">Client:</td><td style="border:none;padding:3px 0;">${info.client_nom || '—'}</td></tr>
+      ${info.commande_numero ? `<tr><td style="border:none;padding:3px 16px 3px 0;font-weight:600;">Commande:</td><td style="border:none;padding:3px 0;">${info.commande_numero}</td></tr>` : ''}
+      <tr><td style="border:none;padding:3px 16px 3px 0;font-weight:600;">Moyen:</td><td style="border:none;padding:3px 0;">${info.operateur || 'Mobile Money'}</td></tr>
+      ${info.telephone ? `<tr><td style="border:none;padding:3px 16px 3px 0;font-weight:600;">Téléphone:</td><td style="border:none;padding:3px 0;">${info.telephone}</td></tr>` : ''}
+      <tr><td style="border:none;padding:3px 16px 3px 0;font-weight:600;">Date:</td><td style="border:none;padding:3px 0;">${info.date || new Date().toISOString().slice(0, 10)}</td></tr>
+    </table>
+    <div style="text-align:center;border:2px solid #16a34a;border-radius:8px;padding:16px;margin:0 auto;max-width:300px;">
+      <p style="font-size:11px;color:#6b7280;margin-bottom:4px;">Montant payé</p>
+      <p style="font-size:28px;font-weight:800;color:#16a34a;">${fmt(info.montant)} FCFA</p>
+    </div>
+    <p style="text-align:center;font-size:9px;color:#6b7280;margin-top:24px;">
+      Merci de votre confiance — Imprimerie Ogooué.<br/>
+      Ce reçu atteste du paiement effectué via ${info.operateur || 'Mobile Money'}.
+    </p>`;
+  printHTML(title, html);
+}
+
+/**
  * Export bilan financier en PDF
  */
 export function exportBilanPDF(data, periode) {

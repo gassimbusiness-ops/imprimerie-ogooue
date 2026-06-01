@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Package, Clock, CheckCircle, Truck, Printer, XCircle, CreditCard, Download, Smartphone, Loader2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { notifyNouvelleCommande } from '@/services/notifications';
-import { exportDocument } from '@/services/export-pdf';
+import { exportDocument, exportRecuPaiement } from '@/services/export-pdf';
 import { toast } from 'sonner';
 
 function fmt(n) { return new Intl.NumberFormat('fr-FR').format(Math.round(n || 0)); }
@@ -213,6 +213,16 @@ export default function ClientCommandes() {
             pollingRef.current = null;
             setPaiementEtape('success');
             toast.success('Paiement confirme ! Commande en production.');
+            // Reçu de paiement auto
+            exportRecuPaiement({
+              reference: data.reference,
+              client_nom: cmd.client_nom || `${user?.prenom || ''} ${user?.nom || ''}`.trim(),
+              montant,
+              operateur: operateur === 'airtel' ? 'Airtel Money' : 'Moov Money',
+              date: new Date().toISOString().slice(0, 10),
+              commande_numero: cmd.numero,
+              telephone,
+            });
             setTimeout(() => { setShowPaiement(null); loadData(); }, 2500);
           } else if (['failed', 'expired', 'cancelled'].includes(statusData.status)) {
             clearInterval(interval);
