@@ -286,15 +286,20 @@ function ImageUploader({ images, onChange, maxImages = 5, productName = '', prod
         body: JSON.stringify({ prompt: desc, style: 'product', size: '1024x1024' }),
       });
       const data = await res.json();
-      if (!res.ok || !data.url) throw new Error(data.error || 'Échec génération');
-      // Recuperer l'image et la convertir en base64
-      const imgRes = await fetch(data.url);
-      const blob = await imgRes.blob();
-      const base64 = await new Promise((resolve) => {
-        const reader = new FileReader();
-        reader.onloadend = () => resolve(reader.result);
-        reader.readAsDataURL(blob);
-      });
+      if (!res.ok) throw new Error(data.error || 'Échec génération');
+
+      let base64 = data.imageBase64;
+      // Fallback si l'API renvoie une URL (au lieu du base64) : on la convertit
+      if (!base64 && data.url) {
+        const imgRes = await fetch(data.url);
+        const blob = await imgRes.blob();
+        base64 = await new Promise((resolve) => {
+          const reader = new FileReader();
+          reader.onloadend = () => resolve(reader.result);
+          reader.readAsDataURL(blob);
+        });
+      }
+      if (!base64) throw new Error('Aucune image reçue');
       onChange([...(images || []), base64]);
       toast.success('Image générée et ajoutée');
     } catch (err) {
