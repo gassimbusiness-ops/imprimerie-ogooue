@@ -14,7 +14,7 @@ import {
 import {
   Users, UserCheck, Clock, AlertTriangle, Star, ClipboardList, TrendingUp,
   Plus, Edit3, Check, X, Award, Calendar, BarChart3, ChevronDown, ChevronUp,
-  Ban, CheckCircle, MessageSquare, Brain, Loader2, Shield, Activity,
+  Ban, CheckCircle, MessageSquare, Brain, Loader2, Shield, Activity, Wallet, Package,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { askAI } from '@/services/ai';
@@ -25,6 +25,7 @@ const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ef4444', '#06b6d4'
 
 const TABS = [
   { id: 'dashboard', label: 'Dashboard RH', icon: BarChart3 },
+  { id: 'paie', label: 'Paie & Activité', icon: Wallet },
   { id: 'performance', label: 'Performance', icon: Star },
   { id: 'demandes', label: 'Demandes RH', icon: ClipboardList },
   { id: 'analyse_ia', label: 'Analyse IA', icon: Brain },
@@ -59,6 +60,7 @@ export default function PerformanceRH() {
   const [pointages, setPointages] = useState([]);
   const [demandesRH, setDemandesRH] = useState([]);
   const [taches, setTaches] = useState([]);
+  const [commandes, setCommandes] = useState([]);
 
   // IA Analysis
   const [iaLoading, setIaLoading] = useState(false);
@@ -77,24 +79,65 @@ export default function PerformanceRH() {
   });
 
   const load = async () => {
-    const [emp, perf, pt, drh, tch] = await Promise.all([
+    const [emp, perf, pt, drh, tch, cmd] = await Promise.all([
       db.employes.list(),
       db.performances_employes.list(),
       db.pointages.list(),
       db.demandes_rh.list(),
       db.taches.list(),
+      db.commandes.list(),
     ]);
     setEmployes(emp.filter((e) => e.role !== 'client'));
     setPerformances(perf);
     setPointages(pt);
     setDemandesRH(drh);
     setTaches(tch);
+    setCommandes(cmd);
     setLoading(false);
   };
 
   useEffect(() => { load(); }, []);
 
   const currentMonth = new Date().toISOString().slice(0, 7);
+
+  // ═══ Paie semi-auto + Activite par employe (mois courant) ═══
+  const paieData = useMemo(() => {
+    return employes.map((e) => {
+      const empId = e.id;
+      // Jours travailles (pointages avec arrivee ce mois)
+      const monthPts = pointages.filter((p) => p.employe_id === empId && (p.date || '').slice(0, 7) === currentMonth && p.heure_arrivee);
+      const joursTravailles = monthPts.length;
+
+      // Avances ce mois (demandes type avance, approuvee ou payee)
+      const avances = demandesRH
+        .filter((d) => (d.employe_id === empId || d.user_id === empId) && d.type === 'avance' && ['approuvee', 'payee'].includes(d.statut) && (d.created_at || '').slice(0, 7) === currentMonth)
+        .reduce((s, d) => s + (Number(d.montant) || 0), 0);
+
+      const salaireBase = Number(e.salaire_base) || 0;
+      // Proratisation simple : base / 26 jours ouvres * jours travailles (si pointage utilise)
+      const salaireProratise = joursTravailles > 0 ? Math.round((salaireBase / 26) * Math.min(joursTravailles, 26)) : salaireBase;
+      const netAPayer = Math.max(0, salaireProratise - avances);
+
+      // Activite : commandes assignees / livrees + CA genere
+      const empCmd = commandes.filter((c) => c.assignee_id === empId);
+      const cmdLivrees = empCmd.filter((c) => (c.statut || '').toLowerCase().includes('livr'));
+      const caGenere = cmdLivrees.reduce((s, c) => s + (c.montant_total || c.total || 0), 0);
+
+      return {
+        id: empId,
+        nom: `${e.prenom || ''} ${e.nom || ''}`.trim(),
+        poste: e.poste || '',
+        salaireBase,
+        joursTravailles,
+        avances,
+        salaireProratise,
+        netAPayer,
+        nbCommandes: empCmd.length,
+        nbLivrees: cmdLivrees.length,
+        caGenere,
+      };
+    }).sort((a, b) => b.netAPayer - a.netAPayer);
+  }, [employes, pointages, demandesRH, commandes, currentMonth]);
 
   // ═══ Dashboard data ═══
   const dashData = useMemo(() => {
@@ -500,6 +543,68 @@ export default function PerformanceRH() {
             </CardContent>
           </Card>
         </>
+      )}
+
+      {/* ═══════════════ TAB PAIE & ACTIVITÉ ═══════════════ */}
+      {tab === 'paie' && (
+        <div className="space-y-4">
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <div>
+              <h3 className="text-lg font-bold">Paie & Activité — {new Date(currentMonth + '-01').toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' })}</h3>
+              <p className="text-xs text-muted-foreground">Calcul semi-automatique : salaire proratisé selon jours pointés − avances. Renseignez le salaire de base dans la fiche employé.</p>
+            </div>
+            <div className="flex gap-3">
+              <div className="rounded-lg bg-emerald-50 px-3 py-2 text-center">
+                <p className="text-[10px] uppercase text-muted-foreground">Total net à payer</p>
+                <p className="text-lg font-bold text-emerald-700">{fmt(paieData.reduce((s, p) => s + p.netAPayer, 0))} F</p>
+              </div>
+              <div className="rounded-lg bg-amber-50 px-3 py-2 text-center">
+                <p className="text-[10px] uppercase text-muted-foreground">Total avances</p>
+                <p className="text-lg font-bold text-amber-700">{fmt(paieData.reduce((s, p) => s + p.avances, 0))} F</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="rounded-lg border overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead className="bg-muted/50 text-left">
+                <tr>
+                  <th className="p-3 font-semibold">Employé</th>
+                  <th className="p-3 font-semibold text-right">Salaire base</th>
+                  <th className="p-3 font-semibold text-center">Jours</th>
+                  <th className="p-3 font-semibold text-right">Proratisé</th>
+                  <th className="p-3 font-semibold text-right">Avances</th>
+                  <th className="p-3 font-semibold text-right">Net à payer</th>
+                  <th className="p-3 font-semibold text-center">Cmd / Livrées</th>
+                  <th className="p-3 font-semibold text-right">CA généré</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y">
+                {paieData.length === 0 ? (
+                  <tr><td colSpan={8} className="p-6 text-center text-muted-foreground">Aucun employé</td></tr>
+                ) : paieData.map((p) => (
+                  <tr key={p.id} className="hover:bg-muted/30">
+                    <td className="p-3">
+                      <p className="font-medium">{p.nom}</p>
+                      <p className="text-[10px] text-muted-foreground">{p.poste}</p>
+                    </td>
+                    <td className="p-3 text-right">{p.salaireBase ? `${fmt(p.salaireBase)} F` : <span className="text-[10px] text-amber-600">à définir</span>}</td>
+                    <td className="p-3 text-center">{p.joursTravailles}</td>
+                    <td className="p-3 text-right">{fmt(p.salaireProratise)} F</td>
+                    <td className="p-3 text-right text-amber-700">{p.avances ? `−${fmt(p.avances)} F` : '—'}</td>
+                    <td className="p-3 text-right font-bold text-emerald-700">{fmt(p.netAPayer)} F</td>
+                    <td className="p-3 text-center text-xs">{p.nbCommandes} / {p.nbLivrees}</td>
+                    <td className="p-3 text-right">{fmt(p.caGenere)} F</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="text-[10px] text-muted-foreground">
+            Proratisation : salaire de base ÷ 26 jours ouvrés × jours pointés (max 26). Les avances approuvées/payées du mois sont déduites.
+            Ce calcul est une aide — vérifiez avant tout versement réel.
+          </p>
+        </div>
       )}
 
       {/* ═══════════════ TAB PERFORMANCE ═══════════════ */}

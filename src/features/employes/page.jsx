@@ -61,7 +61,7 @@ export default function Employes() {
   const [showForm, setShowForm] = useState(false);
   const [editItem, setEditItem] = useState(null);
   const [form, setForm] = useState({
-    prenom: '', nom: '', email: '', telephone: '', poste: '', role: 'employe', photo: '',
+    prenom: '', nom: '', email: '', telephone: '', poste: '', role: 'employe', photo: '', salaire_base: '',
   });
   const fileRef = useRef(null);
 
@@ -84,7 +84,7 @@ export default function Employes() {
 
   const openAdd = () => {
     setEditItem(null);
-    setForm({ prenom: '', nom: '', email: '', telephone: '', poste: '', role: 'employe', photo: '' });
+    setForm({ prenom: '', nom: '', email: '', telephone: '', poste: '', role: 'employe', photo: '', salaire_base: '' });
     setShowForm(true);
   };
 
@@ -98,6 +98,7 @@ export default function Employes() {
       poste: emp.poste || '',
       role: emp.role || 'employe',
       photo: emp.photo || '',
+      salaire_base: emp.salaire_base || '',
     });
     setShowForm(true);
   };
@@ -130,6 +131,7 @@ export default function Employes() {
       poste: form.poste,
       role: form.role,
       photo: form.photo,
+      salaire_base: Number(form.salaire_base) || 0,
     };
 
     if (editItem) {
@@ -305,6 +307,12 @@ export default function Employes() {
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+
+            <div>
+              <label className="mb-1.5 block text-sm font-medium">Salaire mensuel de base (FCFA)</label>
+              <Input type="number" value={form.salaire_base} onChange={(e) => setForm({ ...form, salaire_base: e.target.value })} placeholder="Ex: 150000" />
+              <p className="mt-1 text-[10px] text-muted-foreground">Sert au calcul de paie semi-automatique (module Performance & Dashboard RH).</p>
             </div>
 
             {isAdmin && (
