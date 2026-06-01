@@ -17,7 +17,7 @@ import {
   Crown, TrendingUp, Landmark, DollarSign, Users, Plus, ArrowDownCircle,
   Building2, Wallet, CreditCard, PiggyBank, Shield, History,
   Edit3, AlertTriangle, FileText, Filter, Search, ChevronDown,
-  ChevronUp, Eye, Download, Pencil, Calculator,
+  ChevronUp, Eye, Download, Pencil, Calculator, Edit2, Trash2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -117,6 +117,7 @@ export default function Gouvernance() {
   const [newInvForm, setNewInvForm] = useState({ nom: '', prenom: '', montant: '', role: 'associe', notes: '' });
   const [apportForm, setApportForm] = useState({ associe: 'oumar', type: 'apport_capital', montant: '', description: '', date: new Date().toISOString().slice(0, 10) });
   const [rembForm, setRembForm] = useState({ montant: '', date: new Date().toISOString().slice(0, 10), description: '' });
+  const [editRembId, setEditRembId] = useState(null); // id du remboursement en cours d'edition (null = creation)
   const [modifForm, setModifForm] = useState({
     typeOperation: 'ajout_capital',
     montantVariation: '',
@@ -345,15 +346,56 @@ export default function Gouvernance() {
     load();
   };
 
+  // Recalcule et persiste le montant_restant de la dette Oumar a partir de la
+  // liste de remboursements fournie (source de verite = somme des remboursements).
+  const syncMontantRestant = async (rembList) => {
+    const dette = dettes.find((d) => d.associe === 'oumar');
+    if (!dette) return;
+    const initial = dette.montant_initial || 2300000;
+    const totalRemb = rembList.reduce((s, r) => s + (Number(r.montant) || 0), 0);
+    await db.dettes_associes.update(dette.id, { montant_restant: initial - totalRemb });
+  };
+
   const handleAddRemboursement = async () => {
     if (!rembForm.montant || Number(rembForm.montant) <= 0) { toast.error('Montant requis'); return; }
-    if (Number(rembForm.montant) > detteInfo.restant) { toast.error('Montant supérieur au solde dû'); return; }
-    await db.remboursements_associes.create({ ...rembForm, montant: Number(rembForm.montant), associe: 'oumar' });
-    const dette = dettes.find((d) => d.associe === 'oumar');
-    if (dette) await db.dettes_associes.update(dette.id, { montant_restant: detteInfo.restant - Number(rembForm.montant) });
-    await logAction('create', 'gouvernance', { details: `Remboursement ${fmt(rembForm.montant)} F dette Oumar` });
-    toast.success('Remboursement enregistré');
+    const montant = Number(rembForm.montant);
+
+    if (editRembId) {
+      // EDITION : on calcule le solde disponible HORS ce remboursement
+      const autres = remboursements.filter((r) => r.id !== editRembId);
+      const restantSansCe = detteInfo.initial - autres.reduce((s, r) => s + (Number(r.montant) || 0), 0);
+      if (montant > restantSansCe) { toast.error('Montant supérieur au solde dû'); return; }
+      await db.remboursements_associes.update(editRembId, { ...rembForm, montant });
+      const nouvelleListe = remboursements.map((r) => (r.id === editRembId ? { ...r, montant } : r));
+      await syncMontantRestant(nouvelleListe);
+      await logAction('update', 'gouvernance', { entityId: editRembId, details: `Modification remboursement → ${fmt(montant)} F dette Oumar` });
+      toast.success('Remboursement modifié');
+    } else {
+      // CREATION
+      if (montant > detteInfo.restant) { toast.error('Montant supérieur au solde dû'); return; }
+      const created = await db.remboursements_associes.create({ ...rembForm, montant, associe: 'oumar' });
+      await syncMontantRestant([...remboursements, { ...created, montant }]);
+      await logAction('create', 'gouvernance', { details: `Remboursement ${fmt(montant)} F dette Oumar` });
+      toast.success('Remboursement enregistré');
+    }
     setShowRemboursementForm(false);
+    setEditRembId(null);
+    load();
+  };
+
+  const handleEditRemboursement = (r) => {
+    setEditRembId(r.id);
+    setRembForm({ montant: String(r.montant || ''), date: r.date || new Date().toISOString().slice(0, 10), description: r.description || '' });
+    setShowRemboursementForm(true);
+  };
+
+  const handleDeleteRemboursement = async (r) => {
+    if (!confirm(`Supprimer ce remboursement de ${fmt(r.montant)} F du ${r.date} ?`)) return;
+    await db.remboursements_associes.delete(r.id);
+    const nouvelleListe = remboursements.filter((x) => x.id !== r.id);
+    await syncMontantRestant(nouvelleListe);
+    await logAction('delete', 'gouvernance', { entityId: r.id, details: `Suppression remboursement ${fmt(r.montant)} F dette Oumar` });
+    toast.success('Remboursement supprimé');
     load();
   };
 
@@ -846,7 +888,7 @@ export default function Gouvernance() {
                     Compte Courant d'Associé — Oumar
                   </CardTitle>
                   {isAdmin && (
-                    <Button size="sm" className="gap-1" onClick={() => { setRembForm({ montant: '', date: new Date().toISOString().slice(0, 10), description: '' }); setShowRemboursementForm(true); }}>
+                    <Button size="sm" className="gap-1" onClick={() => { setEditRembId(null); setRembForm({ montant: '', date: new Date().toISOString().slice(0, 10), description: '' }); setShowRemboursementForm(true); }}>
                       <ArrowDownCircle className="h-3.5 w-3.5" /> Remboursement
                     </Button>
                   )}
@@ -879,9 +921,19 @@ export default function Gouvernance() {
                     <div className="mt-3 space-y-1.5">
                       <p className="text-xs font-semibold text-muted-foreground flex items-center gap-1"><History className="h-3 w-3" /> Historique</p>
                       {remboursements.sort((a, b) => b.date?.localeCompare(a.date)).map((r) => (
-                        <div key={r.id} className="flex items-center justify-between rounded-lg bg-muted/50 px-3 py-2 text-sm">
-                          <span className="text-muted-foreground">{r.date} — {r.description || 'Remboursement'}</span>
-                          <span className="font-semibold text-emerald-600">+{fmt(r.montant)} F</span>
+                        <div key={r.id} className="flex items-center justify-between gap-2 rounded-lg bg-muted/50 px-3 py-2 text-sm">
+                          <span className="text-muted-foreground flex-1 min-w-0 truncate">{r.date} — {r.description || 'Remboursement'}</span>
+                          <span className="font-semibold text-emerald-600 shrink-0">+{fmt(r.montant)} F</span>
+                          {isAdmin && (
+                            <div className="flex gap-0.5 shrink-0">
+                              <button onClick={() => handleEditRemboursement(r)} className="rounded p-1 hover:bg-muted" title="Modifier">
+                                <Edit2 className="h-3.5 w-3.5 text-muted-foreground" />
+                              </button>
+                              <button onClick={() => handleDeleteRemboursement(r)} className="rounded p-1 hover:bg-red-50" title="Supprimer">
+                                <Trash2 className="h-3.5 w-3.5 text-red-500" />
+                              </button>
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -1423,9 +1475,9 @@ export default function Gouvernance() {
       </Dialog>
 
       {/* Remboursement Dialog */}
-      <Dialog open={showRemboursementForm} onOpenChange={setShowRemboursementForm}>
+      <Dialog open={showRemboursementForm} onOpenChange={(o) => { setShowRemboursementForm(o); if (!o) setEditRembId(null); }}>
         <DialogContent className="max-w-md">
-          <DialogHeader><DialogTitle>Enregistrer un Remboursement</DialogTitle></DialogHeader>
+          <DialogHeader><DialogTitle>{editRembId ? 'Modifier le Remboursement' : 'Enregistrer un Remboursement'}</DialogTitle></DialogHeader>
           <div className="space-y-4 pt-2">
             <div className="rounded-lg bg-red-50 p-3 text-sm">
               <p>Solde restant : <span className="font-bold text-red-600">{fmt(detteInfo.restant)} F</span></p>
@@ -1442,7 +1494,7 @@ export default function Gouvernance() {
               <label className="mb-1.5 block text-sm font-medium">Description</label>
               <Input value={rembForm.description} onChange={(e) => setRembForm({ ...rembForm, description: e.target.value })} placeholder="Ex: Versement espèces..." />
             </div>
-            <Button className="w-full" onClick={handleAddRemboursement}>Valider le remboursement</Button>
+            <Button className="w-full" onClick={handleAddRemboursement}>{editRembId ? 'Enregistrer les modifications' : 'Valider le remboursement'}</Button>
           </div>
         </DialogContent>
       </Dialog>
