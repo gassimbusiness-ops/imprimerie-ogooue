@@ -84,11 +84,11 @@ const NAV_GROUPS = [
     items: [
       { name: 'Clients', href: '/clients', icon: UserCheck, module: 'clients' },
       { name: 'Tarifs Clients', href: '/tarifs-clients', icon: Tag, module: 'clients' },
-      { name: 'Prospection', href: '/prospection', icon: Target, module: 'clients' },
+      { name: 'Prospection', href: '/prospection', icon: Target, module: 'marketing' },
       { name: 'Messagerie', href: '/messagerie', icon: MessageCircle, module: 'clients' },
-      { name: 'Événements', href: '/evenements', icon: CalendarDays, module: 'clients' },
-      { name: 'Marketing', href: '/marketing', icon: Megaphone, module: 'clients' },
-      { name: 'Notifications SMS', href: '/notifications', icon: MessageSquare, module: 'clients' },
+      { name: 'Événements', href: '/evenements', icon: CalendarDays, module: 'marketing' },
+      { name: 'Marketing', href: '/marketing', icon: Megaphone, module: 'marketing' },
+      { name: 'Notifications SMS', href: '/notifications', icon: MessageSquare, module: 'marketing' },
     ],
   },
   {

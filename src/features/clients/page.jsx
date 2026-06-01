@@ -447,9 +447,11 @@ export default function Clients() {
               {editItem && canDelete && (
                 <Button
                   variant="destructive"
+                  className="gap-2"
                   onClick={() => { handleDelete(editItem); setShowForm(false); }}
                 >
                   <Trash2 className="h-4 w-4" />
+                  Supprimer
                 </Button>
               )}
             </div>

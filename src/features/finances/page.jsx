@@ -325,6 +325,14 @@ export default function Finances() {
       const created = await coll.create(data);
       await logAction('create', 'finances', { entityId: created.id, entityLabel: data.nom || data.libelle || data.titre || data.description || '', details: `Ajout ${activeTab}` });
       toast.success('Ajouté');
+      // Si on cree un mouvement, on cale le filtre sur le mois du mouvement
+      // pour qu'il soit immediatement visible (evite de devoir cliquer "Tout afficher")
+      if (activeTab === 'mouvements' && data.date) {
+        setFilterMonth(data.date.slice(0, 7));
+        setMvDateFrom('');
+        setMvDateTo('');
+        setMvShowAll(false);
+      }
     }
     setShowForm(false);
     load();

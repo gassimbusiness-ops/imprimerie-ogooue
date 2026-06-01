@@ -143,25 +143,25 @@ export default function App() {
           <Route path="statistiques" element={<RequirePermission module="statistiques"><Statistiques /></RequirePermission>} />
           <Route path="cloture-caisse" element={<RequirePermission module="statistiques"><ClotureCaisse /></RequirePermission>} />
           <Route path="paiements" element={<RequirePermission module="devis_factures"><Paiements /></RequirePermission>} />
-          <Route path="notifications" element={<RequirePermission module="clients"><Notifications /></RequirePermission>} />
+          <Route path="notifications" element={<RequirePermission module="marketing"><Notifications /></RequirePermission>} />
           <Route path="audit" element={<RequirePermission module="parametres"><AuditLog /></RequirePermission>} />
           <Route path="parametres" element={<RequirePermission module="parametres"><Parametres /></RequirePermission>} />
           {/* New modules */}
           <Route path="taches" element={<RequirePermission module="commandes"><Taches /></RequirePermission>} />
           <Route path="catalogue" element={<RequirePermission module="catalogue"><Catalogue /></RequirePermission>} />
-          <Route path="prospection" element={<RequirePermission module="clients"><Prospection /></RequirePermission>} />
+          <Route path="prospection" element={<RequirePermission module="marketing"><Prospection /></RequirePermission>} />
           <Route path="bilans" element={<RequirePermission module="statistiques"><Bilans /></RequirePermission>} />
           <Route path="finances" element={<RequirePermission module="finances"><Finances /></RequirePermission>} />
           <Route path="objectifs" element={<RequirePermission module="statistiques"><Objectifs /></RequirePermission>} />
           <Route path="demandes-rh" element={<RequirePermission module="employes"><DemandesRH /></RequirePermission>} />
           <Route path="travaux" element={<RequirePermission module="statistiques"><Travaux /></RequirePermission>} />
-          <Route path="evenements" element={<RequirePermission module="clients"><Evenements /></RequirePermission>} />
+          <Route path="evenements" element={<RequirePermission module="marketing"><Evenements /></RequirePermission>} />
           <Route path="messagerie" element={<RequirePermission module="clients"><Messagerie /></RequirePermission>} />
           <Route path="tarifs-clients" element={<RequirePermission module="clients"><TarifsClients /></RequirePermission>} />
           <Route path="gouvernance" element={<RequirePermission module="gouvernance"><Gouvernance /></RequirePermission>} />
           <Route path="rapports-analyses" element={<RequirePermission module="statistiques"><RapportsAnalyses /></RequirePermission>} />
           <Route path="performance-rh" element={<RequirePermission module="employes"><PerformanceRH /></RequirePermission>} />
-          <Route path="marketing" element={<RequirePermission module="clients"><Marketing /></RequirePermission>} />
+          <Route path="marketing" element={<RequirePermission module="marketing"><Marketing /></RequirePermission>} />
           <Route path="mockup-ia" element={<RequirePermission module="catalogue"><MockupIA /></RequirePermission>} />
           <Route path="admin-import" element={<RequirePermission module="parametres"><AdminImport /></RequirePermission>} />
           <Route path="zakat" element={<RequirePermission module="gouvernance"><ZakatPage /></RequirePermission>} />

@@ -162,7 +162,17 @@ export default function Commandes() {
     const [c, cl, em] = await Promise.all([db.commandes.list(), db.clients.list(), db.employes.list()]);
     setCommandes(c.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || '')));
     setClients(cl);
-    setEmployes(em.filter((e) => ['employe', 'manager', 'admin'].includes(e.role)));
+    // Dedoublonnage : la base peut contenir plusieurs enregistrements pour la meme
+    // personne (seed multiple). On garde un seul par (prenom+nom+role) normalise.
+    const staff = em.filter((e) => ['employe', 'manager', 'admin'].includes(e.role));
+    const seen = new Set();
+    const uniqueStaff = staff.filter((e) => {
+      const key = `${(e.prenom || '').trim().toLowerCase()}|${(e.nom || '').trim().toLowerCase()}|${e.role}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+    setEmployes(uniqueStaff);
     setLoading(false);
   }, []);
 
