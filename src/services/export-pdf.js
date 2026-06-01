@@ -674,6 +674,70 @@ export function exportRapportCompletPDF({ mois, ventes = {}, topProduits = [], f
 }
 
 /**
+ * Grand livre comptable : journal des mouvements d'un compte (ou tous) sur une periode.
+ * @param {Object} opts - { mouvements, comptes, compteId|null, dateFrom, dateTo, soldeInitial }
+ */
+export function exportGrandLivrePDF({ mouvements = [], comptes = [], compteId = null, dateFrom = '', dateTo = '', soldeInitial = 0 }) {
+  const compteNom = (id) => comptes.find((c) => c.id === id)?.nom || '—';
+  const filtres = mouvements
+    .filter((m) => !compteId || m.compte_id === compteId)
+    .filter((m) => {
+      const d = (m.date || m.created_at || '').slice(0, 10);
+      if (dateFrom && d < dateFrom) return false;
+      if (dateTo && d > dateTo) return false;
+      return true;
+    })
+    .sort((a, b) => (a.date || a.created_at || '').localeCompare(b.date || b.created_at || ''));
+
+  const titreCompte = compteId ? compteNom(compteId) : 'Tous les comptes';
+  let solde = Number(soldeInitial) || 0;
+  let totalEntrees = 0;
+  let totalSorties = 0;
+  let rows = '';
+  filtres.forEach((m) => {
+    const montant = Number(m.montant) || 0;
+    const estEntree = m.type === 'entree' || m.type === 'depot_hebdo' || (m.type === 'transfert' && m.compte_dest_id === compteId);
+    if (estEntree) { solde += montant; totalEntrees += montant; }
+    else { solde -= montant; totalSorties += montant; }
+    rows += `<tr>
+      <td>${(m.date || m.created_at || '').slice(0, 10)}</td>
+      <td>${m.description || m.categorie || '—'}</td>
+      <td>${m.reference || ''}</td>
+      <td class="text-right" style="color:#16a34a;">${estEntree ? fmt(montant) + ' F' : ''}</td>
+      <td class="text-right" style="color:#dc2626;">${!estEntree ? fmt(montant) + ' F' : ''}</td>
+      <td class="text-right font-bold">${fmt(solde)} F</td>
+    </tr>`;
+  });
+
+  const periodeLabel = `${dateFrom || 'début'} → ${dateTo || "aujourd'hui"}`;
+  const html = `
+    <div style="margin-bottom:12px;">
+      <h2 style="margin-bottom:2px;">GRAND LIVRE — ${titreCompte}</h2>
+      <p style="font-size:11px;color:#6b7280;">Période : ${periodeLabel}</p>
+    </div>
+    <table>
+      <thead><tr>
+        <th>Date</th><th>Libellé</th><th>Réf.</th>
+        <th class="text-right">Entrée</th><th class="text-right">Sortie</th><th class="text-right">Solde</th>
+      </tr></thead>
+      <tbody>
+        <tr><td colspan="5" style="font-weight:600;">Solde initial</td><td class="text-right font-bold">${fmt(soldeInitial)} F</td></tr>
+        ${rows}
+      </tbody>
+      <tfoot>
+        <tr class="total-row">
+          <td colspan="3" class="text-right">TOTAUX</td>
+          <td class="text-right" style="color:#16a34a;">${fmt(totalEntrees)} F</td>
+          <td class="text-right" style="color:#dc2626;">${fmt(totalSorties)} F</td>
+          <td class="text-right">${fmt(solde)} F</td>
+        </tr>
+      </tfoot>
+    </table>
+    <p style="font-size:9px;color:#6b7280;margin-top:16px;">${filtres.length} mouvement(s) — Imprimerie Ogooué</p>`;
+  printHTML(`Grand livre — ${titreCompte}`, html);
+}
+
+/**
  * Export CSV générique
  */
 export function exportCSV(data, columns, filename = 'export.csv') {

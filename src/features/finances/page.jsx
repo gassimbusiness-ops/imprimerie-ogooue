@@ -4,6 +4,7 @@ import { logAction } from '@/services/audit';
 import { useAuth } from '@/services/auth';
 import { executerPrelevementsDus } from '@/services/credit-mensualites';
 import { executerChargesDues } from '@/services/charges-fixes-prelevement';
+import { exportGrandLivrePDF } from '@/services/export-pdf';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -18,6 +19,7 @@ import {
   Landmark, Plus, Edit2, Trash2, CreditCard, Users2, TrendingUp,
   Receipt, CircleDollarSign, ArrowUpRight, ArrowDownLeft, ArrowLeftRight,
   Calendar, Building2, Globe, Wallet, Banknote, RefreshCw, AlertTriangle,
+  Download, CheckCircle2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -366,6 +368,13 @@ export default function Finances() {
     load();
   };
 
+  // Rapprochement bancaire : marquer/demarquer un mouvement comme "pointe"
+  // (= verifie face au releve bancaire reel)
+  const handleTogglePointe = async (m) => {
+    await db.mouvements_financiers.update(m.id, { pointe: !m.pointe });
+    load();
+  };
+
   const handleDelete = async (item) => {
     if (!confirm('Supprimer cet élément ?')) return;
 
@@ -587,6 +596,20 @@ export default function Finances() {
             <Badge variant="outline" className="h-7">
               {mouvementsFiltres.length} / {mouvements.length} mouvements
             </Badge>
+            <Badge variant="outline" className="h-7 gap-1 border-emerald-400 text-emerald-700">
+              {mouvementsFiltres.filter((m) => m.pointe).length} pointés
+            </Badge>
+            {(isAdmin || isManager) && (
+              <Button variant="outline" size="sm" className="h-8 gap-1" onClick={() => exportGrandLivrePDF({
+                mouvements, comptes,
+                compteId: null,
+                dateFrom: mvDateFrom || (mvShowAll ? '' : `${filterMonth}-01`),
+                dateTo: mvDateTo || '',
+                soldeInitial: 0,
+              })}>
+                <Download className="h-3.5 w-3.5" /> Grand livre
+              </Button>
+            )}
           </div>
 
           <Card><CardContent className="p-0">
@@ -596,7 +619,16 @@ export default function Finances() {
                   const mt = MOVEMENT_TYPES.find((t) => t.value === m.type);
                   const MtIcon = mt?.icon || ArrowLeftRight;
                   return (
-                    <div key={m.id} className="flex items-center gap-4 px-4 py-3 hover:bg-muted/50">
+                    <div key={m.id} className={`flex items-center gap-4 px-4 py-3 hover:bg-muted/50 ${m.pointe ? 'bg-emerald-50/50' : ''}`}>
+                      {(isAdmin || isManager) && (
+                        <button
+                          onClick={() => handleTogglePointe(m)}
+                          className={`shrink-0 rounded-full p-0.5 ${m.pointe ? 'text-emerald-600' : 'text-muted-foreground/30 hover:text-muted-foreground'}`}
+                          title={m.pointe ? 'Pointé (rapproché). Cliquer pour dépointer.' : 'Marquer comme pointé (rapprochement bancaire)'}
+                        >
+                          <CheckCircle2 className="h-5 w-5" />
+                        </button>
+                      )}
                       <div className={`flex h-9 w-9 items-center justify-center rounded-lg shrink-0 ${m.type === 'entree' || m.type === 'depot_hebdo' ? 'bg-emerald-500/10' : m.type === 'sortie' ? 'bg-red-500/10' : 'bg-blue-500/10'}`}>
                         <MtIcon className={`h-4 w-4 ${mt?.color || 'text-muted-foreground'}`} />
                       </div>
