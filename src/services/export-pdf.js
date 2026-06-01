@@ -11,7 +11,7 @@
  * @param {Object} options - Options supplémentaires
  */
 export function printHTML(title, htmlContent, options = {}) {
-  const { orientation = 'portrait', companyName = 'IMPRIMERIE OGOOUÉ' } = options;
+  const { orientation = 'portrait', companyName = 'IMPRIMERIE OGOOUÉ', raw = false } = options;
 
   const css = `
     <style>
@@ -68,7 +68,9 @@ export function printHTML(title, htmlContent, options = {}) {
     }
   } catch {}
 
-  const fullHTML = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title>${css}</head><body>
+  // Mode raw : on imprime exactement htmlContent sans le header/footer generique
+  // (utilise pour la facture/devis qui ont leur propre mise en page complete)
+  const bodyHTML = raw ? htmlContent : `
     <div class="header">
       <div class="header-left">
         <h1>${companyName}</h1>
@@ -97,8 +99,9 @@ export function printHTML(title, htmlContent, options = {}) {
       RCCM : RG/FCV 2023A0407 · NIF : 256598U<br/>
       Carrefour Fina en face de Finam — Moanda, Haut-Ogooué, Gabon<br/>
       Tél : 060 44 46 34 / 074 42 41 42 · Email : imprimerieogooue@gmail.com
-    </div>
-  </body></html>`;
+    </div>`;
+
+  const fullHTML = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title>${css}</head><body>${bodyHTML}</body></html>`;
 
   const iframe = document.createElement('iframe');
   iframe.style.position = 'fixed';
@@ -172,52 +175,142 @@ export function exportRapportsMensuels(rapports, mois, stats = {}) {
 }
 
 /**
- * Export facture / devis en PDF
+ * Convertit un nombre entier en toutes lettres (français).
+ */
+function nombreEnLettres(n) {
+  n = Math.round(Math.abs(Number(n) || 0));
+  if (n === 0) return 'zéro';
+  const unites = ['', 'un', 'deux', 'trois', 'quatre', 'cinq', 'six', 'sept', 'huit', 'neuf', 'dix', 'onze', 'douze', 'treize', 'quatorze', 'quinze', 'seize', 'dix-sept', 'dix-huit', 'dix-neuf'];
+  const dizaines = ['', '', 'vingt', 'trente', 'quarante', 'cinquante', 'soixante', 'soixante', 'quatre-vingt', 'quatre-vingt'];
+
+  function centaines(num) {
+    let s = '';
+    const c = Math.floor(num / 100);
+    const reste = num % 100;
+    if (c > 0) s += (c > 1 ? unites[c] + ' cent' : 'cent') + (reste === 0 && c > 1 ? 's' : '') + (reste > 0 ? ' ' : '');
+    if (reste > 0) {
+      if (reste < 20) s += unites[reste];
+      else {
+        const d = Math.floor(reste / 10);
+        const u = reste % 10;
+        if (d === 7 || d === 9) {
+          s += dizaines[d] + '-' + unites[10 + u];
+        } else {
+          s += dizaines[d];
+          if (u === 1 && d !== 8) s += ' et un';
+          else if (u > 0) s += '-' + unites[u];
+          else if (d === 8) s += 's';
+        }
+      }
+    }
+    return s.trim();
+  }
+
+  let mots = '';
+  const millions = Math.floor(n / 1000000);
+  const milliers = Math.floor((n % 1000000) / 1000);
+  const reste = n % 1000;
+  if (millions > 0) mots += (millions > 1 ? centaines(millions) + ' millions ' : 'un million ');
+  if (milliers > 0) mots += (milliers > 1 ? centaines(milliers) + ' mille ' : 'mille ');
+  if (reste > 0) mots += centaines(reste);
+  return mots.trim();
+}
+
+/**
+ * Export facture / devis / bon de livraison en PDF — design fidele au modele
+ * officiel Imprimerie Ogooué (logo, tagline, encadre client, tableau, montant
+ * en lettres, cachet, pied de page legal).
  */
 export function exportDocument(doc, lignes, type = 'facture') {
-  const title = type === 'facture' ? `Facture N° ${doc.numero || doc.id?.slice(0, 8)}` : `Devis N° ${doc.numero || doc.id?.slice(0, 8)}`;
+  const numero = doc.numero || doc.id?.slice(0, 8) || '';
+  const title = type === 'facture' ? `Facture ${numero}` : type === 'bon_livraison' ? `Bon de livraison ${numero}` : `Devis ${numero}`;
   const total = lignes.reduce((s, l) => s + ((l.quantite || 1) * (l.prix_unitaire || 0)), 0);
+  const dateDoc = doc.date || doc.created_at?.slice(0, 10) || new Date().toISOString().slice(0, 10);
+  const dateFr = (() => { try { return new Date(dateDoc + 'T00:00:00').toLocaleDateString('fr-FR'); } catch { return dateDoc; } })();
+  const docLabelGauche = type === 'facture' ? 'BON DE LIVRAISON' : type === 'devis' ? 'DEVIS' : 'BON DE LIVRAISON';
+  const numFacture = `FACTURE N°${numero}/GA/${new Date(dateDoc).getFullYear() || new Date().getFullYear()}`;
+  const origin = (typeof window !== 'undefined' && window.location?.origin) ? window.location.origin : '';
 
-  let html = `<h2>${title}</h2>
-    <table style="width:auto;border:none;margin-bottom:12px;">
-      <tr><td style="border:none;padding:2px 16px 2px 0;font-weight:600;">Client:</td><td style="border:none;padding:2px 0;">${doc.client_nom || '—'}</td></tr>
-      <tr><td style="border:none;padding:2px 16px 2px 0;font-weight:600;">Date:</td><td style="border:none;padding:2px 0;">${doc.date || doc.created_at?.slice(0, 10) || '—'}</td></tr>
-      ${doc.echeance ? `<tr><td style="border:none;padding:2px 16px 2px 0;font-weight:600;">Échéance:</td><td style="border:none;padding:2px 0;">${doc.echeance}</td></tr>` : ''}
-      <tr><td style="border:none;padding:2px 16px 2px 0;font-weight:600;">Statut:</td><td style="border:none;padding:2px 0;">${doc.statut || '—'}</td></tr>
-    </table>
-
-    <table>
-      <thead><tr>
-        <th>Désignation</th><th class="text-center">Qté</th><th class="text-right">P.U.</th><th class="text-right">Total</th>
-      </tr></thead>
-      <tbody>`;
-
+  let rows = '';
   lignes.forEach((l) => {
     const lineTotal = (l.quantite || 1) * (l.prix_unitaire || 0);
-    html += `<tr>
-      <td>${l.designation || l.description || '—'}</td>
-      <td class="text-center">${l.quantite || 1}</td>
-      <td class="text-right">${fmt(l.prix_unitaire)} F</td>
-      <td class="text-right font-bold">${fmt(lineTotal)} F</td>
+    rows += `<tr>
+      <td style="padding:7px 10px;border:1px solid #94a3b8;">${l.designation || l.description || '—'}</td>
+      <td style="padding:7px 10px;border:1px solid #94a3b8;text-align:center;">${l.quantite || 1}</td>
+      <td style="padding:7px 10px;border:1px solid #94a3b8;text-align:right;">${fmt(l.prix_unitaire)}</td>
+      <td style="padding:7px 10px;border:1px solid #94a3b8;text-align:right;">${fmt(lineTotal)}</td>
     </tr>`;
   });
 
-  html += `</tbody>
-    <tfoot>
-      <tr class="total-row">
-        <td colspan="3" class="text-right">TOTAL ${type === 'facture' ? 'TTC' : 'HT'}</td>
-        <td class="text-right">${fmt(total)} F</td>
-      </tr>
-    </tfoot></table>
+  const html = `
+    <div style="font-family:'Segoe UI',system-ui,sans-serif;color:#1a1a2e;">
+      <!-- En-tete : logo + tagline -->
+      <div style="display:flex;align-items:center;gap:18px;margin-bottom:6px;">
+        <img src="${origin}/logo.png" alt="Logo" style="height:78px;width:auto;object-fit:contain;" onerror="this.style.display='none'"/>
+        <div style="flex:1;text-align:center;">
+          <p style="font-weight:800;font-size:13px;color:#1e3a5f;margin:0;">Conception graphique &bull; Supports de communication multiformats</p>
+          <p style="font-weight:800;font-size:13px;color:#1e3a5f;margin:2px 0;">Objets publicitaires &bull; personnalisation sur mesure</p>
+          <p style="font-size:9.5px;color:#374151;margin:2px 0;">Adresse : Carrefour Fina, Moanda, Gabon &nbsp; Tél : (+241) 60 44 46 34</p>
+        </div>
+      </div>
+      <div style="border-bottom:2px solid #1e3a5f;margin-bottom:22px;"></div>
 
-    <div style="margin-top:24px;">
-      <h3>Conditions</h3>
-      <p style="font-size:9px;color:#6b7280;">
-        ${type === 'facture' ? 'Paiement à réception de la facture. Tout retard de paiement entraînera des pénalités.' : 'Devis valable 30 jours. TVA non applicable (régime de franchise).'}
-      </p>
+      <!-- Titre document -->
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;">
+        <p style="font-weight:700;font-size:12px;">${docLabelGauche}</p>
+        <p style="font-weight:700;font-size:12px;">${numFacture}</p>
+      </div>
+      <p style="font-size:11px;margin-bottom:14px;">Livré le ${dateFr}</p>
+
+      <!-- Client encadre -->
+      <div style="border:1.5px solid #2563eb;border-radius:4px;padding:8px 12px;display:inline-block;margin-bottom:12px;">
+        <span style="font-weight:700;font-size:12px;">CLIENT : ${(doc.client_nom || '—').toUpperCase()}</span>
+      </div>
+      ${doc.client_adresse ? `<p style="font-size:10px;color:#374151;margin-bottom:6px;">${doc.client_adresse}</p>` : ''}
+
+      <!-- Objet -->
+      <p style="font-size:11px;margin-bottom:14px;"><span style="text-decoration:underline;">Objet</span> : ${doc.objet || 'Impression support publicitaire'}</p>
+
+      <!-- Tableau -->
+      <table style="width:100%;border-collapse:collapse;font-size:11px;margin-bottom:8px;">
+        <thead>
+          <tr style="background:#f1f5f9;">
+            <th style="padding:7px 10px;border:1px solid #94a3b8;text-align:center;font-weight:700;">DESIGNATION</th>
+            <th style="padding:7px 10px;border:1px solid #94a3b8;text-align:center;font-weight:700;width:60px;">QTE</th>
+            <th style="padding:7px 10px;border:1px solid #94a3b8;text-align:center;font-weight:700;width:90px;">P. U</th>
+            <th style="padding:7px 10px;border:1px solid #94a3b8;text-align:center;font-weight:700;width:110px;">P. TOTAL</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+        <tfoot>
+          <tr>
+            <td colspan="3" style="padding:8px 10px;border:1px solid #94a3b8;text-align:center;font-weight:700;">TOTAL GENERAL</td>
+            <td style="padding:8px 10px;border:1px solid #94a3b8;text-align:right;font-weight:800;">${fmt(total)} FCFA</td>
+          </tr>
+        </tfoot>
+      </table>
+
+      <!-- Montant en lettres -->
+      <p style="font-size:11px;margin:14px 0 28px;">Arrêté la présente ${type === 'devis' ? 'proforma' : 'facture'} à la somme de <span style="text-transform:capitalize;">${nombreEnLettres(total)}</span> Francs CFA.</p>
+
+      <!-- Signatures -->
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-top:20px;">
+        <div style="text-decoration:underline;font-weight:700;font-size:12px;">Reçu par :</div>
+        <div style="text-align:center;">
+          <p style="text-decoration:underline;font-weight:700;font-size:12px;margin-bottom:50px;">Le Responsable</p>
+        </div>
+      </div>
+
+      <!-- Pied de page legal -->
+      <div style="margin-top:36px;border-top:1px solid #cbd5e1;padding-top:8px;text-align:center;font-size:8.5px;color:#475569;line-height:1.6;">
+        <p style="font-weight:700;">RCCM : RG/FCV 2023A0407 &nbsp; NIF : 256598U</p>
+        <p>Compte BGFI : 40003 04500 31113254001 66 &nbsp; Compte Finam : 40003 04100 41001779011 12</p>
+        <p>Siège social : Carrefour Fina en face de Finam Moanda – Gabon</p>
+        <p>Tél : 060 44 46 34 / 074 42 41 42 &nbsp; Email : imprimerieogooue@gmail.com</p>
+      </div>
     </div>`;
 
-  printHTML(title, html);
+  printHTML(title, html, { raw: true });
 }
 
 /**
