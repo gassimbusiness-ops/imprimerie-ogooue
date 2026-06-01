@@ -221,6 +221,46 @@ export function exportDocument(doc, lignes, type = 'facture') {
 }
 
 /**
+ * Bon de travail atelier (pour la production d'une commande)
+ * @param {Object} cmd - commande { numero, client_nom, client_tel, date_echeance, lignes/produits, description, note_interne, assignee_nom }
+ */
+export function exportBonTravail(cmd = {}) {
+  const title = `Bon de travail — ${cmd.numero || cmd.id?.slice(0, 8) || ''}`;
+  const lignes = cmd.lignes || cmd.produits || [];
+  let rows = '';
+  lignes.forEach((l) => {
+    rows += `<tr>
+      <td>${l.description || l.nom || l.designation || '—'}</td>
+      <td class="text-center" style="font-size:16px;font-weight:700;">${l.quantite || 1}</td>
+      <td style="min-width:120px;">&nbsp;</td>
+    </tr>`;
+  });
+  const html = `
+    <div style="margin-bottom:12px;">
+      <h2 style="margin-bottom:2px;">BON DE TRAVAIL</h2>
+      <p style="font-size:11px;color:#6b7280;">Commande ${cmd.numero || ''} — usage interne atelier</p>
+    </div>
+    <table style="width:auto;border:none;margin-bottom:12px;">
+      <tr><td style="border:none;padding:2px 16px 2px 0;font-weight:600;">Client:</td><td style="border:none;padding:2px 0;">${cmd.client_nom || '—'}</td></tr>
+      ${cmd.client_tel ? `<tr><td style="border:none;padding:2px 16px 2px 0;font-weight:600;">Téléphone:</td><td style="border:none;padding:2px 0;">${cmd.client_tel}</td></tr>` : ''}
+      <tr><td style="border:none;padding:2px 16px 2px 0;font-weight:600;">Échéance:</td><td style="border:none;padding:2px 0;font-weight:700;color:#dc2626;">${cmd.date_echeance || 'Non définie'}</td></tr>
+      ${cmd.assignee_nom ? `<tr><td style="border:none;padding:2px 16px 2px 0;font-weight:600;">Opérateur:</td><td style="border:none;padding:2px 0;">${cmd.assignee_nom}</td></tr>` : ''}
+    </table>
+    <table>
+      <thead><tr><th>Produit / Travail</th><th class="text-center">Qté</th><th>Fait ✓</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    ${cmd.description ? `<div style="margin-top:12px;"><h3>Description</h3><p style="font-size:11px;">${cmd.description}</p></div>` : ''}
+    ${cmd.note_interne ? `<div style="margin-top:8px;"><h3>Note interne</h3><p style="font-size:11px;">${cmd.note_interne}</p></div>` : ''}
+    <div style="margin-top:32px;display:flex;justify-content:space-between;">
+      <div style="font-size:10px;">Démarré le : _______________</div>
+      <div style="font-size:10px;">Terminé le : _______________</div>
+      <div style="font-size:10px;">Visa : _______________</div>
+    </div>`;
+  printHTML(title, html);
+}
+
+/**
  * Reçu de paiement (apres confirmation Mobile Money / SingPay)
  * @param {Object} info - { reference, client_nom, montant, operateur, date, commande_numero, telephone }
  */

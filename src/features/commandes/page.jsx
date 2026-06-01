@@ -58,6 +58,7 @@ import {
 import { syncClientFromCommande } from '@/services/sync-clients';
 import { syncCommandeToRapport } from '@/services/sync-commande-rapport';
 import { syncStockFromCommande } from '@/services/sync-stock-commande';
+import { exportBonTravail } from '@/services/export-pdf';
 
 // ── Statuts enrichis BLOC 5 ──
 const STATUTS = [
@@ -86,6 +87,15 @@ function normalizeStatut(val) {
 
 function fmt(n) {
   return new Intl.NumberFormat('fr-FR').format(Math.round(n || 0));
+}
+
+// Une commande est en retard si son echeance est passee et qu'elle n'est ni livree ni annulee
+function isCommandeEnRetard(cmd) {
+  if (!cmd.date_echeance) return false;
+  const statut = (cmd.statut || '').toLowerCase();
+  if (statut.includes('livr') || statut.includes('annul')) return false;
+  const today = new Date().toISOString().slice(0, 10);
+  return cmd.date_echeance < today;
 }
 
 function getStatut(val) {
@@ -784,8 +794,13 @@ export default function Commandes() {
                           </span>
                         </div>
                       )}
-                      <div className="mt-1 flex flex-wrap gap-3 text-xs text-muted-foreground">
+                      <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
                         {cmd.date_echeance && <span>Échéance : {new Date(cmd.date_echeance + 'T00:00:00').toLocaleDateString('fr-FR')}</span>}
+                        {isCommandeEnRetard(cmd) && (
+                          <Badge className="gap-1 bg-red-100 text-red-700 text-[10px]">
+                            <Clock className="h-3 w-3" /> En retard
+                          </Badge>
+                        )}
                         <span>Créée le {new Date(cmd.created_at).toLocaleDateString('fr-FR')}</span>
                       </div>
 
@@ -1073,6 +1088,13 @@ export default function Commandes() {
                 {canChangeStatut && (commentaireClient !== (showDetail.commentaire_client || '') || noteInterne !== (showDetail.note_interne || '')) && (
                   <Button variant="outline" className="w-full gap-1.5 text-sm" onClick={() => handleSaveComments(showDetail)}>
                     💾 Enregistrer les commentaires
+                  </Button>
+                )}
+
+                {/* Bon de travail atelier (PDF) */}
+                {canChangeStatut && (
+                  <Button variant="outline" className="w-full gap-1.5 text-sm" onClick={() => exportBonTravail(showDetail)}>
+                    <FileText className="h-4 w-4" /> Imprimer le bon de travail
                   </Button>
                 )}
 
