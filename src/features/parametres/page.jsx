@@ -17,6 +17,7 @@ import {
   Settings, Building2, Camera, Save, Phone, Mail, MapPin, Globe,
   Users, Shield, Key, Plus, Edit2, Trash2, UserPlus, Lock,
   Eye, EyeOff, AlertTriangle, Palette, Image, Type, ToggleLeft,
+  Database, Download, Loader2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -191,6 +192,82 @@ export default function Parametres() {
     loadUsers();
   };
 
+  // ── Données & Maintenance ──
+  const [exporting, setExporting] = useState(false);
+  const [deduping, setDeduping] = useState(false);
+
+  // Export complet de toutes les collections en un fichier JSON (sauvegarde)
+  const handleExportAll = async () => {
+    setExporting(true);
+    try {
+      const collections = [
+        'employes', 'clients', 'commandes', 'devis', 'factures', 'produits',
+        'rapports', 'stocks', 'comptes_bancaires', 'mouvements_financiers',
+        'charges_fixes', 'dettes', 'dettes_associes', 'remboursements_associes',
+        'apports_associes', 'investisseurs', 'actionnaires', 'investissements',
+        'pointages', 'demandes_rh', 'performances_employes', 'taches',
+        'projets_travaux', 'etapes_travaux', 'paiements_mobile', 'paiements_singpay',
+        'notifications_app', 'gouvernance_parametres', 'tarifs_clients', 'evenements',
+      ];
+      const dump = { _exported_at: new Date().toISOString(), _app: 'imprimerie-ogooue' };
+      for (const col of collections) {
+        try { dump[col] = await db[col].list(); } catch { dump[col] = []; }
+      }
+      const blob = new Blob([JSON.stringify(dump, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `sauvegarde-ogooue-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+      await logAction('export', 'parametres', { details: 'Export complet des données (sauvegarde)' });
+      toast.success('Sauvegarde téléchargée');
+    } catch (e) {
+      console.error('[Export] Erreur:', e);
+      toast.error('Échec de l\'export');
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  // Dedoublonnage des employes : garde l'enregistrement le plus complet par (prenom+nom+role)
+  const handleDedupeEmployes = async () => {
+    if (!confirm('Détecter et supprimer les employés en double ?\nLe plus complet de chaque groupe est conservé.')) return;
+    setDeduping(true);
+    try {
+      const all = await db.employes.list();
+      const groupes = {};
+      all.forEach((e) => {
+        const key = `${(e.prenom || '').trim().toLowerCase()}|${(e.nom || '').trim().toLowerCase()}|${e.role || ''}`;
+        (groupes[key] = groupes[key] || []).push(e);
+      });
+      let supprimes = 0;
+      const score = (e) => Object.values(e).filter((v) => v !== '' && v != null).length;
+      for (const key of Object.keys(groupes)) {
+        const grp = groupes[key];
+        if (grp.length <= 1) continue;
+        // Garder celui avec le plus de champs remplis
+        grp.sort((a, b) => score(b) - score(a));
+        const aGarder = grp[0];
+        for (let i = 1; i < grp.length; i++) {
+          // Ne pas supprimer le compte de l'utilisateur courant
+          if (grp[i].id === user?.id) continue;
+          await db.employes.delete(grp[i].id);
+          supprimes++;
+        }
+        void aGarder;
+      }
+      await logAction('update', 'parametres', { details: `Dédoublonnage employés : ${supprimes} doublon(s) supprimé(s)` });
+      toast.success(supprimes > 0 ? `${supprimes} doublon(s) supprimé(s)` : 'Aucun doublon détecté');
+      loadUsers();
+    } catch (e) {
+      console.error('[Dedupe] Erreur:', e);
+      toast.error('Échec du dédoublonnage');
+    } finally {
+      setDeduping(false);
+    }
+  };
+
   const handleChangePassword = async () => {
     if (changePwdForm.newPwd !== changePwdForm.confirmPwd) {
       toast.error('Les mots de passe ne correspondent pas'); return;
@@ -214,6 +291,7 @@ export default function Parametres() {
     { id: 'entreprise', label: 'Entreprise', icon: Building2 },
     ...(isAdmin ? [{ id: 'utilisateurs', label: 'Utilisateurs', icon: Users }] : []),
     ...(isAdmin ? [{ id: 'interface_client', label: 'Interface Client', icon: Palette }] : []),
+    ...(isAdmin ? [{ id: 'donnees', label: 'Données & Maintenance', icon: Database }] : []),
     { id: 'securite', label: 'Sécurité', icon: Shield },
   ];
 
@@ -470,6 +548,40 @@ export default function Parametres() {
                   <Save className="h-4 w-4" /> Enregistrer la bannière
                 </Button>
               </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* ======= DONNÉES & MAINTENANCE TAB ======= */}
+      {activeTab === 'donnees' && isAdmin && (
+        <div className="space-y-6">
+          <Card>
+            <CardHeader><CardTitle className="flex items-center gap-2 text-base"><Download className="h-4 w-4" /> Sauvegarde des données</CardTitle></CardHeader>
+            <CardContent className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                Téléchargez une copie complète de toutes les données de l'application (clients, commandes, finances, etc.)
+                au format JSON. Conservez ce fichier en lieu sûr — il permet de restaurer vos données en cas de problème.
+                Recommandé : une sauvegarde par semaine.
+              </p>
+              <Button className="gap-2" onClick={handleExportAll} disabled={exporting}>
+                {exporting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                {exporting ? 'Export en cours...' : 'Exporter toutes les données'}
+              </Button>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader><CardTitle className="flex items-center gap-2 text-base"><Users className="h-4 w-4" /> Nettoyage des doublons</CardTitle></CardHeader>
+            <CardContent className="space-y-3">
+              <p className="text-sm text-muted-foreground">
+                Détecte et supprime les employés enregistrés plusieurs fois (même prénom, nom et rôle).
+                L'enregistrement le plus complet de chaque groupe est conservé. Votre propre compte n'est jamais supprimé.
+              </p>
+              <Button variant="outline" className="gap-2" onClick={handleDedupeEmployes} disabled={deduping}>
+                {deduping ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                {deduping ? 'Nettoyage...' : 'Nettoyer les employés en double'}
+              </Button>
             </CardContent>
           </Card>
         </div>

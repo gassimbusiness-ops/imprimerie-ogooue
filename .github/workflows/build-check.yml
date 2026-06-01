@@ -1,0 +1,34 @@
+name: Build Check
+
+# Verifie que l'application compile a chaque push et pull request sur main.
+# Evite de deployer du code casse en production.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout du code
+        uses: actions/checkout@v4
+
+      - name: Installer Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Installer les dependances
+        run: npm ci
+
+      - name: Verifier le build (vite build)
+        run: npm run build
+        env:
+          # Valeurs placeholder : le build n'a pas besoin des vraies cles,
+          # les variables runtime sont injectees par Vercel en production.
+          VITE_SUPABASE_URL: https://placeholder.supabase.co
+          VITE_SUPABASE_ANON_KEY: placeholder
