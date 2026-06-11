@@ -5,6 +5,7 @@ import { useAuth } from '@/services/auth';
 import { executerPrelevementsDus } from '@/services/credit-mensualites';
 import { executerChargesDues } from '@/services/charges-fixes-prelevement';
 import { exportGrandLivrePDF } from '@/services/export-pdf';
+import { tresorerieImprimerie, chargeMensuelle } from '@/services/finance-calc';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -182,15 +183,10 @@ export default function Finances() {
 
   // ── KPIs ──
   const totalSoldeComptes = comptes.reduce((s, c) => s + (c.solde || 0), 0);
-  // Tresorerie Imprimerie uniquement (whitelist + blacklist)
-  const COMPTES_IMPRIMERIE = ['finam', 'bgfi', 'airtel', 'moov', 'caisse', 'liquide'];
-  const COMPTES_EXCLUS = ['wise', 'mercury', 'paypal', 'stripe', 'airwallex'];
-  const tresorerieImprimerie = comptes.filter((c) => {
-    const nom = (c.nom || '').toLowerCase();
-    if (COMPTES_EXCLUS.some((k) => nom.includes(k))) return false;
-    return COMPTES_IMPRIMERIE.some((k) => nom.includes(k)) || c.appartient_imprimerie === true;
-  }).reduce((s, c) => s + (c.solde || 0), 0);
-  const totalCharges = charges.filter((c) => c.actif !== false).reduce((s, c) => s + (c.montant || 0), 0);
+  // Tresorerie Imprimerie (helper centralisé, identique partout)
+  const tresorerieImpr = tresorerieImprimerie(comptes).total;
+  // Charges actives normalisées en mensuel (périodicités hétérogènes comparables)
+  const totalCharges = charges.filter((c) => c.actif !== false).reduce((s, c) => s + chargeMensuelle(c), 0);
   const totalDettes = dettes.reduce((s, d) => s + (d.montant_restant || d.montant_initial || 0), 0);
   const totalInvest = investissements.reduce((s, i) => s + (i.montant || 0), 0);
   const totalParts = actionnaires.reduce((s, a) => s + (a.pourcentage || 0), 0);
@@ -433,8 +429,8 @@ export default function Finances() {
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <Card className="border-l-4 border-l-emerald-500"><CardContent className="p-4">
           <p className="text-xs text-muted-foreground">Tresorerie Imprimerie</p>
-          <p className="text-xl font-bold text-emerald-700">{fmt(tresorerieImprimerie)} F</p>
-          {totalSoldeComptes !== tresorerieImprimerie && (
+          <p className="text-xl font-bold text-emerald-700">{fmt(tresorerieImpr)} F</p>
+          {totalSoldeComptes !== tresorerieImpr && (
             <p className="text-[10px] text-muted-foreground mt-0.5">Tous comptes : {fmt(totalSoldeComptes)} F</p>
           )}
         </CardContent></Card>

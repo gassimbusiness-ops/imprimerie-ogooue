@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { db } from '@/services/db';
 import { logAction } from '@/services/audit';
 import { useAuth } from '@/services/auth';
+import { valeurStockConsommables, valeurMachines, tresorerieImprimerie, chargeAnnuelle } from '@/services/finance-calc';
 import { FINANCIAL_SUMMARY, MACHINES, INVENTAIRE_STOCK } from '@/utils/seed-data';
 import { printHTML } from '@/services/export-pdf';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -170,47 +171,24 @@ export default function Gouvernance() {
       const savedResultat = (params || []).find((p) => p.type === 'resultat_annuel');
       setResultatStatut(savedResultat || null);
 
-      // ── Valuation depuis données REELLES Supabase ──
-      // Stock réel = somme (prix_unitaire × quantite) depuis module Stocks
-      const stockReel = (produits || []).reduce((s, p) => {
-        const prix = p.prix_unitaire || p.prix_vente || 0;
-        const qte = p.quantite ?? p.stock ?? 0;
-        return s + (prix * qte);
-      }, 0);
-
-      // Machines réelles (type_article = 'machine') depuis module Stocks
-      const machinesReel = (produits || []).reduce((s, p) => {
-        if (p.type_article === 'machine') return s + (p.valeur_stock_achat || (p.prix_unitaire || 0) * (p.quantite ?? 1));
-        return s;
-      }, 0);
-
-      // Trésorerie réelle depuis comptes bancaires Imprimerie uniquement
-      // Whitelist : FINAM, BGFI, Airtel Money, Moov Money, Caisse/Liquide
-      // Blacklist : Wise, Mercury, PayPal, Stripe, Airwallex (comptes internationaux)
-      const COMPTES_IMPRIMERIE = ['finam', 'bgfi', 'airtel', 'moov', 'caisse', 'liquide'];
-      const COMPTES_EXCLUS = ['wise', 'mercury', 'paypal', 'stripe', 'airwallex'];
-      const comptesImprimerie = (comptes || []).filter((c) => {
-        const nom = (c.nom || '').toLowerCase();
-        if (COMPTES_EXCLUS.some((k) => nom.includes(k))) return false;
-        return COMPTES_IMPRIMERIE.some((k) => nom.includes(k)) || c.appartient_imprimerie === true;
-      });
-      const tresorerieCompte = comptesImprimerie
-        .filter((c) => !(c.nom || '').toLowerCase().includes('caisse') && !(c.nom || '').toLowerCase().includes('liquide'))
-        .reduce((s, c) => s + (c.solde || 0), 0);
-      const tresorerieCaisse = comptesImprimerie
-        .filter((c) => (c.nom || '').toLowerCase().includes('caisse') || (c.nom || '').toLowerCase().includes('liquide'))
-        .reduce((s, c) => s + (c.solde || 0), 0);
+      // ── Valuation depuis données REELLES Supabase (helper centralisé) ──
+      // valeurStockConsommables : consommables au COÛT, machines exclues (plus de
+      // double-comptage). valeurMachines : machines au coût. tresorerieImprimerie :
+      // whitelist+blacklist unique partagée avec tous les autres écrans.
+      const stockReel = valeurStockConsommables(produits);
+      const machinesReel = valeurMachines(produits);
+      const tr = tresorerieImprimerie(comptes);
 
       // Utiliser données réelles si disponibles, sinon fallback sur params sauvegardés ou seed
       const savedParams = (params || []).find((p) => p.type === 'valuation');
       const hasRealStock = (produits || []).length > 0;
-      const hasRealComptes = comptesImprimerie.length > 0;
+      const hasRealComptes = tr.comptes.length > 0;
 
       setValuationParams({
         inventaire: hasRealStock ? stockReel : (savedParams?.inventaire ?? DEFAULT_VALUATION.inventaire),
         machines: hasRealStock ? machinesReel : (savedParams?.machines ?? DEFAULT_VALUATION.machines),
-        tresorerie_compte: hasRealComptes ? tresorerieCompte : (savedParams?.tresorerie_compte ?? DEFAULT_VALUATION.tresorerie_compte),
-        tresorerie_caisse: hasRealComptes ? tresorerieCaisse : (savedParams?.tresorerie_caisse ?? DEFAULT_VALUATION.tresorerie_caisse),
+        tresorerie_compte: hasRealComptes ? tr.compte : (savedParams?.tresorerie_compte ?? DEFAULT_VALUATION.tresorerie_compte),
+        tresorerie_caisse: hasRealComptes ? tr.caisse : (savedParams?.tresorerie_caisse ?? DEFAULT_VALUATION.tresorerie_caisse),
       });
     } catch (err) {
       console.error('Gouvernance load error:', err);
@@ -260,7 +238,7 @@ export default function Gouvernance() {
     const machines = valuationParams.machines;
     const tresorerie = valuationParams.tresorerie_compte + valuationParams.tresorerie_caisse;
     const actifs = inventaire + machines + tresorerie;
-    const passifs = detteInfo.restant;
+    const passifs = Math.max(0, detteInfo.restant); // jamais négatif (cohérent Associé/Zakat)
     return { inventaire, machines, tresorerie, actifs, passifs, valeur_nette: actifs - passifs };
   }, [detteInfo, valuationParams]);
 
@@ -292,15 +270,8 @@ export default function Gouvernance() {
 
     // Charges fixes annuelles depuis db.charges_fixes (source dediee)
     // Chaque charge fixe a un montant (mensuel ou annuel) — on somme sur l'annee
-    const totalChargesFixes = chargesFixes.reduce((s, cf) => {
-      const montant = cf.montant || 0;
-      // Si la charge a une periodicite mensuelle, multiplier par 12
-      // Sinon (annuel ou pas precise), prendre le montant tel quel
-      const periodicite = (cf.periodicite || cf.frequence || 'mensuel').toLowerCase();
-      if (periodicite === 'mensuel' || periodicite === 'mensuelle') return s + (montant * 12);
-      if (periodicite === 'trimestriel' || periodicite === 'trimestrielle') return s + (montant * 4);
-      return s + montant; // annuel par defaut
-    }, 0);
+    // Charges fixes annualisées (helper centralisé — même logique partout)
+    const totalChargesFixes = chargesFixes.reduce((s, cf) => s + chargeAnnuelle(cf), 0);
 
     const beneficeNet = caAnnuel - depensesOp - totalChargesFixes;
     const remGestion = beneficeNet > 0 ? beneficeNet * 0.20 : 0;
@@ -859,7 +830,7 @@ export default function Gouvernance() {
                     <div key={label} className="flex items-center justify-between py-1.5 border-b last:border-0">
                       <span className="text-sm flex items-center gap-2">{icon} {label}</span>
                       <div className="flex items-center gap-1.5">
-                        <span className={`text-sm font-semibold ${neg ? 'text-red-600' : ''}`}>{neg ? '-' : ''}{fmt(Math.abs(val))} F</span>
+                        <span className={`text-sm font-semibold ${(neg || val < 0) ? 'text-red-600' : ''}`}>{(neg || val < 0) ? '-' : ''}{fmt(Math.abs(val))} F</span>
                         {isAdmin && editKey && (
                           <button
                             onClick={() => openEditField(editKey, label, editKey === 'tresorerie_compte' ? valuationParams.tresorerie_compte : editKey === 'tresorerie_caisse' ? valuationParams.tresorerie_caisse : val)}

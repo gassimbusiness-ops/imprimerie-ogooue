@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { db } from '@/services/db';
+import { tresorerieImprimerie, chargeMensuelle } from '@/services/finance-calc';
 import { useAuth } from '@/services/auth';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -87,10 +88,8 @@ export default function Dashboard() {
   // ── Previsionnel de tresorerie 30/60/90 jours ──
   // Tresorerie actuelle (comptes imprimerie) - sorties prevues (mensualites credit + charges fixes auto)
   const prevision = useMemo(() => {
-    const COMPTES_EXCLUS = ['wise', 'mercury', 'paypal', 'stripe', 'airwallex'];
-    const tresorerieActuelle = comptes
-      .filter((c) => !COMPTES_EXCLUS.some((k) => (c.nom || '').toLowerCase().includes(k)))
-      .reduce((s, c) => s + (c.solde || 0), 0);
+    // Trésorerie Imprimerie : MÊME règle que Finances/Gouvernance (helper centralisé)
+    const tresorerieActuelle = tresorerieImprimerie(comptes).total;
 
     // Sortie mensuelle recurrente = mensualites credits actifs + charges fixes auto mensuelles
     const mensualitesCredit = dettes
@@ -98,12 +97,7 @@ export default function Dashboard() {
       .reduce((s, d) => s + (d.mensualite_montant || 0), 0);
     const chargesMensuelles = charges
       .filter((c) => c.actif !== false && c.prelevement_auto)
-      .reduce((s, c) => {
-        const m = Number(c.montant) || 0;
-        if (c.periodicite === 'annuelle') return s + m / 12;
-        if (c.periodicite === 'trimestrielle') return s + m / 3;
-        return s + m;
-      }, 0);
+      .reduce((s, c) => s + chargeMensuelle(c), 0);
     const sortieMensuelle = mensualitesCredit + chargesMensuelles;
 
     return {

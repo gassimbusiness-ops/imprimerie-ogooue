@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { db, getSettings } from '@/services/db';
 import { useAuth } from '@/services/auth';
+import { valeurStockConsommables, valeurMachines, tresorerieImprimerie } from '@/services/finance-calc';
 import { FINANCIAL_SUMMARY, MACHINES, INVENTAIRE_STOCK } from '@/utils/seed-data';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -260,42 +261,21 @@ export default function AssocieDashboard() {
           chargesFixes: chFixes || [],
         });
 
-        // Valuation depuis donnees REELLES Supabase
+        // Valuation depuis donnees REELLES Supabase (helper centralisé, identique à Gouvernance)
         const allProduits = inv || [];
-        const stockReel = allProduits.reduce((s2, p) => {
-          const prix = p.prix_unitaire || p.prix_vente || 0;
-          const qte = p.quantite ?? p.stock ?? 0;
-          return s2 + (prix * qte);
-        }, 0);
-        const machinesReel = allProduits.reduce((s2, p) => {
-          if (p.type_article === 'machine') return s2 + (p.valeur_stock_achat || (p.prix_unitaire || 0) * (p.quantite ?? 1));
-          return s2;
-        }, 0);
-
-        // Whitelist comptes locaux, blacklist comptes internationaux
-        const COMPTES_IMPRIMERIE = ['finam', 'bgfi', 'airtel', 'moov', 'caisse', 'liquide'];
-        const COMPTES_EXCLUS = ['wise', 'mercury', 'paypal', 'stripe', 'airwallex'];
-        const comptesImprimerie = (comptes || []).filter((c) => {
-          const nom = (c.nom || '').toLowerCase();
-          if (COMPTES_EXCLUS.some((k) => nom.includes(k))) return false;
-          return COMPTES_IMPRIMERIE.some((k) => nom.includes(k)) || c.appartient_imprimerie === true;
-        });
-        const tresorerieCompte = comptesImprimerie
-          .filter((c) => !(c.nom || '').toLowerCase().includes('caisse') && !(c.nom || '').toLowerCase().includes('liquide'))
-          .reduce((s2, c) => s2 + (c.solde || 0), 0);
-        const tresorerieCaisse = comptesImprimerie
-          .filter((c) => (c.nom || '').toLowerCase().includes('caisse') || (c.nom || '').toLowerCase().includes('liquide'))
-          .reduce((s2, c) => s2 + (c.solde || 0), 0);
+        const stockReel = valeurStockConsommables(allProduits);
+        const machinesReel = valeurMachines(allProduits);
+        const tr = tresorerieImprimerie(comptes);
 
         const savedParams = (params || []).find((p) => p.type === 'valuation');
         const hasRealStock = allProduits.length > 0;
-        const hasRealComptes = comptesImprimerie.length > 0;
+        const hasRealComptes = tr.comptes.length > 0;
 
         setValuationParams({
           inventaire: hasRealStock ? stockReel : (savedParams?.inventaire ?? DEFAULT_VALUATION.inventaire),
           machines: hasRealStock ? machinesReel : (savedParams?.machines ?? DEFAULT_VALUATION.machines),
-          tresorerie_compte: hasRealComptes ? tresorerieCompte : (savedParams?.tresorerie_compte ?? DEFAULT_VALUATION.tresorerie_compte),
-          tresorerie_caisse: hasRealComptes ? tresorerieCaisse : (savedParams?.tresorerie_caisse ?? DEFAULT_VALUATION.tresorerie_caisse),
+          tresorerie_compte: hasRealComptes ? tr.compte : (savedParams?.tresorerie_compte ?? DEFAULT_VALUATION.tresorerie_compte),
+          tresorerie_caisse: hasRealComptes ? tr.caisse : (savedParams?.tresorerie_caisse ?? DEFAULT_VALUATION.tresorerie_caisse),
         });
         setSettings(s);
       } catch (err) {
