@@ -125,6 +125,20 @@ export function printHTML(title, htmlContent, options = {}) {
 }
 
 /**
+ * Échappe les caractères HTML dangereux pour empêcher l'injection XSS dans les
+ * PDF (un nom client / description contenant <img onerror=...> exécuterait du JS).
+ */
+function esc(v) {
+  if (v == null) return '';
+  return String(v)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/**
  * Formate un nombre en FCFA
  */
 function fmt(n) { return new Intl.NumberFormat('fr-FR').format(Math.round(n || 0)); }
@@ -235,7 +249,7 @@ export function exportDocument(doc, lignes, type = 'facture') {
   lignes.forEach((l) => {
     const lineTotal = (l.quantite || 1) * (l.prix_unitaire || 0);
     rows += `<tr>
-      <td style="padding:7px 10px;border:1px solid #94a3b8;">${l.designation || l.description || '—'}</td>
+      <td style="padding:7px 10px;border:1px solid #94a3b8;">${esc(l.designation || l.description || '—')}</td>
       <td style="padding:7px 10px;border:1px solid #94a3b8;text-align:center;">${l.quantite || 1}</td>
       <td style="padding:7px 10px;border:1px solid #94a3b8;text-align:right;">${fmt(l.prix_unitaire)}</td>
       <td style="padding:7px 10px;border:1px solid #94a3b8;text-align:right;">${fmt(lineTotal)}</td>
@@ -264,12 +278,12 @@ export function exportDocument(doc, lignes, type = 'facture') {
 
       <!-- Client encadre -->
       <div style="border:1.5px solid #2563eb;border-radius:4px;padding:8px 12px;display:inline-block;margin-bottom:12px;">
-        <span style="font-weight:700;font-size:12px;">CLIENT : ${(doc.client_nom || '—').toUpperCase()}</span>
+        <span style="font-weight:700;font-size:12px;">CLIENT : ${esc((doc.client_nom || '—').toUpperCase())}</span>
       </div>
-      ${doc.client_adresse ? `<p style="font-size:10px;color:#374151;margin-bottom:6px;">${doc.client_adresse}</p>` : ''}
+      ${doc.client_adresse ? `<p style="font-size:10px;color:#374151;margin-bottom:6px;">${esc(doc.client_adresse)}</p>` : ''}
 
       <!-- Objet -->
-      <p style="font-size:11px;margin-bottom:14px;"><span style="text-decoration:underline;">Objet</span> : ${doc.objet || 'Impression support publicitaire'}</p>
+      <p style="font-size:11px;margin-bottom:14px;"><span style="text-decoration:underline;">Objet</span> : ${esc(doc.objet || 'Impression support publicitaire')}</p>
 
       <!-- Tableau -->
       <table style="width:100%;border-collapse:collapse;font-size:11px;margin-bottom:8px;">
@@ -323,7 +337,7 @@ export function exportBonTravail(cmd = {}) {
   let rows = '';
   lignes.forEach((l) => {
     rows += `<tr>
-      <td>${l.description || l.nom || l.designation || '—'}</td>
+      <td>${esc(l.description || l.nom || l.designation || '—')}</td>
       <td class="text-center" style="font-size:16px;font-weight:700;">${l.quantite || 1}</td>
       <td style="min-width:120px;">&nbsp;</td>
     </tr>`;
@@ -334,17 +348,17 @@ export function exportBonTravail(cmd = {}) {
       <p style="font-size:11px;color:#6b7280;">Commande ${cmd.numero || ''} — usage interne atelier</p>
     </div>
     <table style="width:auto;border:none;margin-bottom:12px;">
-      <tr><td style="border:none;padding:2px 16px 2px 0;font-weight:600;">Client:</td><td style="border:none;padding:2px 0;">${cmd.client_nom || '—'}</td></tr>
-      ${cmd.client_tel ? `<tr><td style="border:none;padding:2px 16px 2px 0;font-weight:600;">Téléphone:</td><td style="border:none;padding:2px 0;">${cmd.client_tel}</td></tr>` : ''}
+      <tr><td style="border:none;padding:2px 16px 2px 0;font-weight:600;">Client:</td><td style="border:none;padding:2px 0;">${esc(cmd.client_nom || '—')}</td></tr>
+      ${cmd.client_tel ? `<tr><td style="border:none;padding:2px 16px 2px 0;font-weight:600;">Téléphone:</td><td style="border:none;padding:2px 0;">${esc(cmd.client_tel)}</td></tr>` : ''}
       <tr><td style="border:none;padding:2px 16px 2px 0;font-weight:600;">Échéance:</td><td style="border:none;padding:2px 0;font-weight:700;color:#dc2626;">${cmd.date_echeance || 'Non définie'}</td></tr>
-      ${cmd.assignee_nom ? `<tr><td style="border:none;padding:2px 16px 2px 0;font-weight:600;">Opérateur:</td><td style="border:none;padding:2px 0;">${cmd.assignee_nom}</td></tr>` : ''}
+      ${cmd.assignee_nom ? `<tr><td style="border:none;padding:2px 16px 2px 0;font-weight:600;">Opérateur:</td><td style="border:none;padding:2px 0;">${esc(cmd.assignee_nom)}</td></tr>` : ''}
     </table>
     <table>
       <thead><tr><th>Produit / Travail</th><th class="text-center">Qté</th><th>Fait ✓</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
-    ${cmd.description ? `<div style="margin-top:12px;"><h3>Description</h3><p style="font-size:11px;">${cmd.description}</p></div>` : ''}
-    ${cmd.note_interne ? `<div style="margin-top:8px;"><h3>Note interne</h3><p style="font-size:11px;">${cmd.note_interne}</p></div>` : ''}
+    ${cmd.description ? `<div style="margin-top:12px;"><h3>Description</h3><p style="font-size:11px;">${esc(cmd.description)}</p></div>` : ''}
+    ${cmd.note_interne ? `<div style="margin-top:8px;"><h3>Note interne</h3><p style="font-size:11px;">${esc(cmd.note_interne)}</p></div>` : ''}
     <div style="margin-top:32px;display:flex;justify-content:space-between;">
       <div style="font-size:10px;">Démarré le : _______________</div>
       <div style="font-size:10px;">Terminé le : _______________</div>
@@ -365,11 +379,11 @@ export function exportRecuPaiement(info = {}) {
       <p style="font-size:11px;color:#16a34a;font-weight:600;">✓ Paiement confirmé</p>
     </div>
     <table style="width:auto;border:none;margin:0 auto 16px;">
-      <tr><td style="border:none;padding:3px 16px 3px 0;font-weight:600;">Référence:</td><td style="border:none;padding:3px 0;">${info.reference || '—'}</td></tr>
-      <tr><td style="border:none;padding:3px 16px 3px 0;font-weight:600;">Client:</td><td style="border:none;padding:3px 0;">${info.client_nom || '—'}</td></tr>
-      ${info.commande_numero ? `<tr><td style="border:none;padding:3px 16px 3px 0;font-weight:600;">Commande:</td><td style="border:none;padding:3px 0;">${info.commande_numero}</td></tr>` : ''}
-      <tr><td style="border:none;padding:3px 16px 3px 0;font-weight:600;">Moyen:</td><td style="border:none;padding:3px 0;">${info.operateur || 'Mobile Money'}</td></tr>
-      ${info.telephone ? `<tr><td style="border:none;padding:3px 16px 3px 0;font-weight:600;">Téléphone:</td><td style="border:none;padding:3px 0;">${info.telephone}</td></tr>` : ''}
+      <tr><td style="border:none;padding:3px 16px 3px 0;font-weight:600;">Référence:</td><td style="border:none;padding:3px 0;">${esc(info.reference || '—')}</td></tr>
+      <tr><td style="border:none;padding:3px 16px 3px 0;font-weight:600;">Client:</td><td style="border:none;padding:3px 0;">${esc(info.client_nom || '—')}</td></tr>
+      ${info.commande_numero ? `<tr><td style="border:none;padding:3px 16px 3px 0;font-weight:600;">Commande:</td><td style="border:none;padding:3px 0;">${esc(info.commande_numero)}</td></tr>` : ''}
+      <tr><td style="border:none;padding:3px 16px 3px 0;font-weight:600;">Moyen:</td><td style="border:none;padding:3px 0;">${esc(info.operateur || 'Mobile Money')}</td></tr>
+      ${info.telephone ? `<tr><td style="border:none;padding:3px 16px 3px 0;font-weight:600;">Téléphone:</td><td style="border:none;padding:3px 0;">${esc(info.telephone)}</td></tr>` : ''}
       <tr><td style="border:none;padding:3px 16px 3px 0;font-weight:600;">Date:</td><td style="border:none;padding:3px 0;">${info.date || new Date().toISOString().slice(0, 10)}</td></tr>
     </table>
     <div style="text-align:center;border:2px solid #16a34a;border-radius:8px;padding:16px;margin:0 auto;max-width:300px;">

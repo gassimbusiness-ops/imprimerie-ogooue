@@ -18,6 +18,7 @@
  * Possibles wrappers : { transaction: {...}, status: {...} } ou objet direct.
  */
 import { createClient } from '@supabase/supabase-js';
+import { getSingPayHeaders, SINGPAY_BASE_URL } from '../src/lib/singpayAuth.js';
 
 const supabase = createClient(
   process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL,
@@ -85,6 +86,33 @@ export default async function handler(req, res) {
     // ── Idempotence : eviter le double traitement
     if (paiement.status === 'paid' && mappedStatus === 'paid') {
       return res.status(200).json({ success: true, message: 'Deja traite' });
+    }
+
+    // ── SÉCURITÉ : ne JAMAIS faire confiance au body du callback pour un "paid".
+    // Un attaquant pourrait POST {reference, result:'Success'} pour marquer une
+    // commande payée. On re-vérifie le statut RÉEL auprès de l'API SingPay avant
+    // de créditer quoi que ce soit. Si SingPay ne confirme pas "Success", on rejette.
+    let verifiedStatus = mappedStatus;
+    if (mappedStatus === 'paid') {
+      try {
+        const ref = paiement.payment_reference || reference;
+        const lookupUrl = `${SINGPAY_BASE_URL}/transaction/api/search/by-reference/${encodeURIComponent(ref)}`;
+        const r = await fetch(lookupUrl, { method: 'GET', headers: getSingPayHeaders() });
+        if (r.ok) {
+          const data = await r.json();
+          const tx = data.transaction || data;
+          verifiedStatus = mapResultToStatus(tx.result, tx.status);
+        } else {
+          console.error('[SingPay Callback] Re-verif HTTP', r.status, '— credit refusé par sécurité');
+          verifiedStatus = 'pending'; // on ne crédite pas sans confirmation
+        }
+      } catch (verifErr) {
+        console.error('[SingPay Callback] Re-verif échouée — credit refusé:', verifErr.message);
+        verifiedStatus = 'pending';
+      }
+      if (verifiedStatus !== 'paid') {
+        return res.status(202).json({ success: false, message: 'Paiement non confirmé par SingPay — ignoré' });
+      }
     }
 
     // ── Maj du paiement
