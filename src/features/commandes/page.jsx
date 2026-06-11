@@ -261,7 +261,8 @@ export default function Commandes() {
 
   const openAdd = () => {
     setEditItem(null);
-    const num = `CMD-${String(commandes.length + 1).padStart(4, '0')}`;
+    // Numéro unique anti-collision (length+1 provoquait des doublons)
+    const num = `CMD-${Date.now().toString(36).toUpperCase().slice(-6)}`;
     setForm({
       numero: num,
       client_id: '',
@@ -356,9 +357,16 @@ export default function Commandes() {
       auteur,
     }];
 
+    // Idempotence livraison : si la commande a DEJA ete traitee en livraison
+    // (flag persistant OU statut deja livree), on ne re-declenche PAS les effets
+    // (facture, points, CA, stock) — evite doublons sur une simple correction de statut.
+    const dejaLivree = cmd.livraison_traitee === true || normalizeStatut(cmd.statut) === 'livree';
+    const declencheLivraison = newStatut === 'livree' && !dejaLivree;
+
     await db.commandes.update(cmd.id, {
       statut: newStatut,
       historique_statuts: historique,
+      ...(declencheLivraison ? { livraison_traitee: true } : {}),
     });
 
     // Envoyer notification au client via le service unifié
@@ -369,11 +377,14 @@ export default function Commandes() {
       else if (newStatut === 'livree') notifyCommandeLivree(cmd.client_id);
     }
 
-    // À la livraison : sync rapport + créditer points fidélité + déduction stock
-    if (newStatut === 'livree') {
+    // À la livraison (1re fois seulement) : sync rapport + points fidélité + déduction stock
+    if (declencheLivraison) {
       syncCommandeToRapport(cmd).catch((err) => console.error('Sync rapport error:', err));
       crediterPointsFidelite(cmd).catch((err) => console.error('Fidelite error:', err));
       syncStockFromCommande(cmd).catch((err) => console.error('Sync stock error:', err));
+      // Encaissement : créditer la trésorerie (sauf si déjà payé en ligne via SingPay,
+      // qui a son propre crédit idempotent 'singpay:<ref>')
+      encaisserCommande(cmd).catch((err) => console.error('Encaissement error:', err));
       // Cloturer la tache associee si elle existe
       try {
         const allTaches = await db.taches.list();
@@ -386,11 +397,15 @@ export default function Commandes() {
       }
     }
 
-    // Auto-generation facture a la livraison
-    if (newStatut === 'livree') {
+    // Auto-generation facture a la livraison (1re fois seulement)
+    if (declencheLivraison) {
       try {
         const allFactures = await db.factures.list();
-        const num = `OG-${new Date().getFullYear()}-${String(allFactures.length + 1).padStart(4, '0')}`;
+        // Garde anti-doublon : ne pas recreer si une facture existe deja pour cette commande
+        const factureExistante = allFactures.find((f) => f.commande_id === cmd.id);
+        if (factureExistante) throw { _skip: true };
+        // Numéro unique anti-collision (length+1 provoquait des doublons)
+        const num = `OG-${new Date().getFullYear()}-${Date.now().toString(36).toUpperCase().slice(-6)}`;
         const lignes = (cmd.lignes || cmd.produits || []).map((l) => ({
           description: l.description || l.nom || l.designation || 'Article',
           quantite: l.quantite || 1,
@@ -432,7 +447,7 @@ export default function Commandes() {
           }
         } catch {}
       } catch (err) {
-        console.error('Erreur generation facture auto:', err);
+        if (!err?._skip) console.error('Erreur generation facture auto:', err);
       }
     }
 
@@ -441,6 +456,45 @@ export default function Commandes() {
     // Refresh detail
     const updated = await db.commandes.getById(cmd.id);
     if (updated) setShowDetail(updated);
+  };
+
+  // ── Encaissement : créditer la trésorerie à la livraison ──
+  // Crée un mouvement d'entrée sur le compte encaisseur (Caisse par défaut, ou le
+  // compte de l'opérateur de paiement Mobile Money) + crédite le solde.
+  // Idempotent via reference 'commande:<id>'. Skip si déjà encaissé via SingPay.
+  const encaisserCommande = async (cmd) => {
+    const montant = cmd.montant_total || cmd.total || 0;
+    if (montant <= 0) return;
+    const mouvements = await db.mouvements_financiers.list();
+    const refCmd = `commande:${cmd.id}`;
+    const refSingpay = cmd.singpay_reference ? `singpay:${cmd.singpay_reference}` : null;
+    // Déjà encaissé (par cette commande OU par le callback SingPay) ?
+    if (mouvements.some((m) => m.reference === refCmd || (refSingpay && m.reference === refSingpay) || (m.categorie === 'encaissement_singpay' && m.description?.includes(cmd.numero)))) return;
+
+    const comptes = await db.comptes_bancaires.list();
+    const findCompte = (kw) => comptes.find((c) => (c.nom || '').toLowerCase().includes(kw));
+    // Compte selon l'opérateur de paiement, sinon Caisse/Liquide, sinon FINAM
+    let compte = null;
+    const op = (cmd.operateur_paiement || '').toLowerCase();
+    if (op.includes('finam')) compte = findCompte('finam');
+    else if (op.includes('bgfi')) compte = findCompte('bgfi');
+    else if (op.includes('airtel')) compte = findCompte('airtel');
+    else if (op.includes('moov')) compte = findCompte('moov');
+    compte = compte || findCompte('caisse') || findCompte('liquide') || findCompte('finam') || comptes[0];
+    if (!compte) return;
+
+    await db.mouvements_financiers.create({
+      type: 'entree',
+      montant,
+      description: `Encaissement commande ${cmd.numero || ''} — ${cmd.client_nom || 'Client'}`,
+      compte_id: compte.id,
+      date: new Date().toISOString().slice(0, 10),
+      reference: refCmd,
+      categorie: 'encaissement_commande',
+      source: 'commande',
+      pointe: true,
+    });
+    await db.comptes_bancaires.update(compte.id, { solde: (compte.solde || 0) + montant });
   };
 
   // ── Valider la commande (sans points — les points sont crédités à la livraison) ──

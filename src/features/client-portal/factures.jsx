@@ -31,8 +31,10 @@ export default function ClientFactures() {
       ).map((d) => ({ ...d, _type: 'devis' }));
 
       const myFactures = facturesAll.filter((f) =>
-        (f.client_id && f.client_id === clientId) ||
-        (f.client_nom || '').toLowerCase().includes(clientName)
+        ((f.client_id && f.client_id === clientId) ||
+        (f.client_nom || '').toLowerCase().includes(clientName)) &&
+        // Ne jamais exposer les brouillons au client (uniquement factures emises/payees)
+        f.statut !== 'brouillon'
       ).map((f) => ({ ...f, _type: 'facture' }));
 
       const all = [...myFactures, ...myDevis]

@@ -62,9 +62,10 @@ export default function ClientDashboard() {
       const clientName = `${user?.prenom || ''} ${user?.nom || ''}`.trim().toLowerCase();
       const clientId = user?.id;
 
-      const [cmds, devisAll, convs, allMsgs, fidAll, settings] = await Promise.all([
+      const [cmds, devisAll, facturesAll, convs, allMsgs, fidAll, settings] = await Promise.all([
         db.commandes.list(),
         db.devis.list(),
+        db.factures.list(),
         db.conversations.list(),
         db.messages_conv.list(),
         db.fidelite_clients.list(),
@@ -77,7 +78,12 @@ export default function ClientDashboard() {
         .slice(0, 5);
       setCommandes(myCommandes);
 
-      setFactures(devisAll.filter((f) => (f.client_nom || '').toLowerCase().includes(clientName)).slice(0, 3));
+      // Factures réelles du client (collection factures), brouillons exclus
+      const mesFactures = facturesAll.filter((f) =>
+        ((f.client_id && f.client_id === clientId) || (f.client_nom || '').toLowerCase().includes(clientName)) &&
+        f.statut !== 'brouillon'
+      );
+      setFactures(mesFactures);
 
       const myConv = convs.find((c) =>
         c.client_email === user?.email ||
@@ -283,19 +289,19 @@ export default function ClientDashboard() {
         </Card>
       )}
 
-      {/* ── Devis en attente ── */}
+      {/* ── Dernières factures ── */}
       {factures.length > 0 && (
         <Card>
           <CardContent className="p-4">
             <div className="flex items-center justify-between mb-3">
               <h2 className="font-semibold flex items-center gap-2">
                 <FileText className="h-4 w-4 text-muted-foreground" />
-                Derniers devis
+                Dernières factures
               </h2>
               <Link to="/client/factures" className="text-sm text-primary hover:underline">Voir tout →</Link>
             </div>
             <div className="space-y-2">
-              {factures.map((f) => (
+              {factures.slice(0, 3).map((f) => (
                 <div key={f.id} className="flex items-center justify-between rounded-lg border p-3">
                   <div>
                     <p className="font-medium text-sm">{f.numero || 'DEV'}</p>

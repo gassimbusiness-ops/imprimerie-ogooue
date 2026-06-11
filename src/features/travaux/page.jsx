@@ -255,8 +255,42 @@ export default function Travaux() {
     setShowEtapeForm(false); load();
   };
 
-  const handleDeleteProjet = async (p) => { if (!confirm(`Supprimer "${p.nom}" ?`)) return; await db.projets_travaux.delete(p.id); toast.success('Supprime'); load(); };
-  const handleDeleteEtape = async (e) => { if (!confirm(`Supprimer "${e.nom}" ?`)) return; await db.etapes_travaux.delete(e.id); toast.success('Supprime'); load(); };
+  // Contre-passe le paiement d'une étape (si payée) : recrédite le compte source.
+  const contrepasserEtapePayee = async (e, projetNom = '') => {
+    if (e.statut_paiement !== 'paye') return;
+    const depense = Number(e.depense) || 0;
+    if (depense <= 0) return;
+    await createMouvementAvecImpactSolde({
+      type: 'entree',
+      montant: depense,
+      description: `ANNULATION (suppression) — Travaux: ${projetNom} — ${e.nom}`,
+      source: e.source_paiement || 'caisse',
+      reference: `ANNUL-DELETE-${e.id}`,
+      categorie: 'travaux_annulation',
+    });
+  };
+
+  const handleDeleteEtape = async (e) => {
+    if (!confirm(`Supprimer "${e.nom}" ?`)) return;
+    const projet = projets.find((p) => p.id === e.projet_id);
+    await contrepasserEtapePayee(e, projet?.nom || '');
+    await db.etapes_travaux.delete(e.id);
+    toast.success('Supprime');
+    load();
+  };
+
+  const handleDeleteProjet = async (p) => {
+    if (!confirm(`Supprimer "${p.nom}" ?`)) return;
+    // Contre-passer toutes les étapes payées du projet avant suppression
+    const etapesProjet = etapes.filter((e) => e.projet_id === p.id);
+    for (const e of etapesProjet) {
+      await contrepasserEtapePayee(e, p.nom);
+      await db.etapes_travaux.delete(e.id);
+    }
+    await db.projets_travaux.delete(p.id);
+    toast.success('Supprime');
+    load();
+  };
 
   // Drag & drop handlers for Kanban
   const handleDragStart = (e, projet) => {

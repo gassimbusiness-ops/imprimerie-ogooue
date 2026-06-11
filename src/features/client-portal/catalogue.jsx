@@ -114,7 +114,10 @@ export default function ClientCatalogue() {
     const clientNom = `${user?.prenom || ''} ${user?.nom || ''}`.trim() || 'Client Portail';
     const desc = panier.map((p) => `${p.qte}x ${p.nom}`).join(', ');
     const nbArticles = panier.reduce((s, p) => s + p.qte, 0);
+    // Numéro unique anti-collision : CMD-<base36 du timestamp> (lisible, sans doublon)
+    const numero = `CMD-${Date.now().toString(36).toUpperCase().slice(-6)}`;
     const cmd = await db.commandes.create({
+      numero,
       client_nom: clientNom,
       client_id: user?.id,
       client_tel: user?.telephone || '',
