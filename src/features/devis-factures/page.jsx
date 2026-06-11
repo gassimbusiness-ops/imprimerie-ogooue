@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { db, getSettings } from '@/services/db';
 import { useAuth } from '@/services/auth';
 import { notifyFactureDisponible } from '@/services/notifications';
+import { exportDocument } from '@/services/export-pdf';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -282,51 +283,11 @@ export default function DevisFactures() {
     load();
   };
 
+  // Genere le PDF facture/devis au design officiel Imprimerie Ogooué
+  // (delegue a exportDocument du service export-pdf — meme rendu partout)
   const handlePrint = async (doc) => {
-    const w = window.open('', '_blank', 'width=800,height=1000');
-    const lines = (doc.lignes || []).map((l) =>
-      `<tr><td style="padding:8px;border-bottom:1px solid #eee">${l.description}</td>
-       <td style="padding:8px;border-bottom:1px solid #eee;text-align:center">${l.quantite}</td>
-       <td style="padding:8px;border-bottom:1px solid #eee;text-align:right">${fmt(l.prix_unitaire)} F</td>
-       <td style="padding:8px;border-bottom:1px solid #eee;text-align:right">${fmt((l.quantite || 0) * (l.prix_unitaire || 0))} F</td></tr>`,
-    ).join('');
-    const settings = await getSettings();
-    const companyName = settings.nom_entreprise || 'Imprimerie Ogooué';
-    const companyAddr = settings.adresse || 'Carrefour Fina en face de Finam — Moanda, Gabon';
-    const companyTel = settings.telephone || '';
-    const logoUrl = settings.logo || '/logo.png';
-
-    w.document.write(`<!DOCTYPE html><html><head><title>${doc.numero}</title>
-      <style>body{font-family:Arial,sans-serif;max-width:800px;margin:40px auto;color:#333}
-      table{width:100%;border-collapse:collapse;margin-top:20px}
-      th{background:#f8f9fa;padding:10px 8px;text-align:left;font-size:13px;border-bottom:2px solid #dee2e6}
-      .total{text-align:right;font-size:18px;font-weight:bold;margin-top:20px;padding-top:10px;border-top:2px solid #333}
-      .header{display:flex;align-items:center;gap:16px;margin-bottom:4px}
-      .header img{width:70px;height:70px;object-fit:contain}
-      .header h1{color:#0ea5e9;margin:0;font-size:22px}
-      .header p{color:#666;margin:2px 0;font-size:13px}
-      @media print{body{margin:20px}}</style></head><body>
-      <div class="header">
-        <img src="${logoUrl}" alt="Logo" />
-        <div>
-          <h1>${companyName}</h1>
-          <p>${companyAddr}</p>
-          ${companyTel ? `<p>Tél: ${companyTel}</p>` : ''}
-        </div>
-      </div>
-      <hr style="margin:16px 0;border:none;border-top:2px solid #0ea5e9">
-      <div style="display:flex;justify-content:space-between">
-        <div><strong>${TYPES[doc._type].label} N° ${doc.numero}</strong><br>Date: ${doc.date || '-'}</div>
-        <div style="text-align:right"><strong>${doc.client_nom}</strong><br>${doc.client_adresse || ''}</div>
-      </div>
-      ${doc.objet ? `<p style="margin-top:16px"><strong>Objet :</strong> ${doc.objet}</p>` : ''}
-      <table><thead><tr><th>Description</th><th style="text-align:center;width:60px">Qté</th><th style="text-align:right;width:100px">P.U.</th><th style="text-align:right;width:120px">Total</th></tr></thead>
-      <tbody>${lines}</tbody></table>
-      ${doc.remise ? `<p style="text-align:right;color:#666">Remise: -${fmt(doc.remise)} F</p>` : ''}
-      <p class="total">Total : ${fmt(doc.total_ttc)} F CFA</p>
-      ${doc.notes ? `<p style="margin-top:20px;padding:12px;background:#f8f9fa;border-radius:8px;font-size:13px">${doc.notes}</p>` : ''}
-      <script>setTimeout(()=>window.print(),500)</script></body></html>`);
-    w.document.close();
+    const type = doc._type === 'devis' ? 'devis' : 'facture';
+    exportDocument(doc, doc.lignes || [], type);
   };
 
   if (loading) {

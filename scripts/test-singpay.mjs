@@ -106,9 +106,7 @@ async function ext(amount) {
 async function status(reference) {
   const url = `${BASE}/transaction/api/search/by-reference/${encodeURIComponent(reference)}`;
   console.log('GET', url);
-  const headers = { ...HEADERS() };
-  delete headers['x-wallet']; // pas requis pour status
-  const r = await fetch(url, { headers });
+  const r = await fetch(url, { headers: HEADERS() });
   const data = await r.json().catch(() => null);
   console.log('Status:', r.status);
   console.log('Body:', JSON.stringify(data, null, 2));
