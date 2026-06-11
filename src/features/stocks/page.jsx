@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { db } from '@/services/db';
 import { useAuth } from '@/services/auth';
+import { valeurStockTotal, valeurMachines } from '@/services/finance-calc';
 import { logAction } from '@/services/audit';
 import { notifyStockAlerte } from '@/services/notifications';
 import { exportInventairePDF, exportCSV } from '@/services/export-pdf';
@@ -310,14 +311,10 @@ export default function Stocks() {
       const type = p.type_article || 'consommable';
       return qty <= 0 && !p.masque && type === 'consommable';
     }).length;
-    const totalValue = produits.reduce((s, p) => {
-      // Use pre-calculated valeur_stock_achat if available (imported data), else compute
-      if (p.valeur_stock_achat) return s + p.valeur_stock_achat;
-      const qty = p.quantite ?? p.stock ?? 0;
-      const prix = p.prix_unitaire ?? p.prix_vente ?? 0;
-      return s + prix * qty;
-    }, 0);
-    return { total, alertes, rupture, totalValue };
+    // Valorisation au COÛT via le helper partagé (cohérent avec Gouvernance/Zakat)
+    const totalValue = valeurStockTotal(produits);
+    const machinesValue = valeurMachines(produits);
+    return { total, alertes, rupture, totalValue, machinesValue };
   }, [produits]);
 
   // CRUD
@@ -491,8 +488,8 @@ export default function Stocks() {
           { label: 'Alertes stock', value: stats.alertes, icon: AlertTriangle, color: stats.alertes > 0 ? 'bg-amber-500/10 text-amber-600' : 'bg-emerald-500/10 text-emerald-600' },
           { label: 'En rupture', value: stats.rupture, icon: PackageMinus, color: stats.rupture > 0 ? 'bg-red-500/10 text-red-600' : 'bg-emerald-500/10 text-emerald-600' },
           // Masquer la valeur totale pour les employés (donnée financière sensible)
-          ...(user?.role !== 'employe' ? [{ label: 'Valeur totale', value: `${fmt(stats.totalValue)} F`, icon: DollarSign, color: 'bg-blue-500/10 text-blue-600', isText: true }] : []),
-        ].map(({ label, value, icon: Icon, color, isText }) => (
+          ...(user?.role !== 'employe' ? [{ label: 'Valeur totale', value: `${fmt(stats.totalValue)} F`, icon: DollarSign, color: 'bg-blue-500/10 text-blue-600', isText: true, sub: stats.machinesValue > 0 ? `dont machines : ${fmt(stats.machinesValue)} F` : null }] : []),
+        ].map(({ label, value, icon: Icon, color, isText, sub }) => (
           <Card key={label}>
             <CardContent className="p-3">
               <div className="flex items-center gap-2">
@@ -500,6 +497,7 @@ export default function Stocks() {
                 <div>
                   <p className="text-[10px] text-muted-foreground">{label}</p>
                   <p className={`${isText ? 'text-sm' : 'text-base'} font-bold`}>{value}</p>
+                  {sub && <p className="text-[9px] text-muted-foreground">{sub}</p>}
                 </div>
               </div>
             </CardContent>
