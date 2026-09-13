@@ -1,4 +1,5 @@
-/**
+
+import { apiFetch } from '@/services/api-client';/**
  * Service IA — Interface client vers le proxy serverless Anthropic.
  * Toutes les fonctionnalités IA de l'app passent par ce service.
  */
@@ -14,7 +15,7 @@ const AI_ENDPOINT = '/api/ai';
  */
 export async function askAI(system, userMessage, maxTokens = 300) {
   try {
-    const res = await fetch(AI_ENDPOINT, {
+    const res = await apiFetch(AI_ENDPOINT, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -46,7 +47,7 @@ export async function askAI(system, userMessage, maxTokens = 300) {
  */
 export async function chatAI(system, messages, maxTokens = 300) {
   try {
-    const res = await fetch(AI_ENDPOINT, {
+    const res = await apiFetch(AI_ENDPOINT, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ system, messages, max_tokens: maxTokens }),

@@ -21,6 +21,7 @@ import {
 import { toast } from 'sonner';
 import { AIButton } from '@/components/ui/ai-button';
 import { askAI, AI_PROMPTS } from '@/services/ai';
+import { apiFetch } from '@/services/api-client';
 
 /* ─── Helpers ─── */
 function fmt(n) { return new Intl.NumberFormat('fr-FR').format(Math.round(n || 0)); }
@@ -280,7 +281,7 @@ function ImageUploader({ images, onChange, maxImages = 5, productName = '', prod
     setGenerating(true);
     try {
       const desc = [productName, productCategorie, productDescription].filter(Boolean).join(', ');
-      const res = await fetch('/api/generate-image', {
+      const res = await apiFetch('/api/generate-image', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt: desc, style: 'product', size: '1024x1024' }),
@@ -832,7 +833,7 @@ export default function Catalogue() {
     setImageGenUrl(null);
     setImageGenLoading(true);
     try {
-      const res = await fetch('/api/generate-image', {
+      const res = await apiFetch('/api/generate-image', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

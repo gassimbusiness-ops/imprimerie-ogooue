@@ -2,20 +2,37 @@
  * Vercel Serverless Function — Proxy vers l'API Anthropic.
  * Protège la clé API côté serveur (pas d'exposition côté client).
  */
+import { exigerSession } from './_lib/session.js';
+import { limiteDepassee } from './_lib/limite.js';
+
 export default async function handler(req, res) {
   // CORS headers
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Origin', process.env.APP_ORIGIN || '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  const apiKey = process.env.ANTHROPIC_API_KEY || process.env.VITE_ANTHROPIC_API_KEY;
+  // ── Verrou ajoute le 13/09/2026 ──────────────────────────────────────────
+  // Cet endpoint etait ouvert a Internet : CORS '*', aucune authentification,
+  // aucun plafond. N'importe qui connaissant l'URL disposait d'un proxy IA
+  // facture sur le compte de l'entreprise. Verifie par requete depuis une
+  // machine tierce non authentifiee.
+  if (limiteDepassee(req, { max: 30, fenetreMs: 60_000 })) {
+    return res.status(429).json({ error: 'Trop de requetes. Reessayez dans une minute.' });
+  }
+  if (!exigerSession(req, res)) return;
+  // ─────────────────────────────────────────────────────────────────────────
+
+  // Jamais de repli sur VITE_* : ce prefixe destine la variable au bundle navigateur.
+  const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return res.status(500).json({ error: 'Clé API Anthropic non configurée' });
 
   try {
     const { system, messages, max_tokens = 300 } = req.body;
+    // Plafond dur : max_tokens venait entierement du client, sans borne.
+    const plafond = Math.min(Number(max_tokens) || 300, 2000);
 
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -26,7 +43,7 @@ export default async function handler(req, res) {
       },
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
-        max_tokens,
+        max_tokens: plafond,
         system: system || '',
         messages: messages || [],
       }),

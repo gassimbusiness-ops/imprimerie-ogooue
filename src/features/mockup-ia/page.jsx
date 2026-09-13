@@ -11,6 +11,7 @@ import {
   Image, FileText, Eye, Palette, CheckCircle2,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { apiFetch } from '@/services/api-client';
 
 // ─── Product types by category ───
 const PRODUCT_TYPES = [
@@ -125,7 +126,7 @@ export default function MockupIA() {
       const views = ['face', 'side', 'perspective'];
       const results = await Promise.allSettled(
         views.map((view) =>
-          fetch('/api/generate-mockup', {
+          apiFetch('/api/generate-mockup', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({

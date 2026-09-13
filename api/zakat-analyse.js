@@ -3,8 +3,22 @@
  * POST /api/zakat-analyse
  * Utilise Claude (Anthropic) pour fournir des conseils Zakat personnalisés.
  */
+import { exigerSession } from './_lib/session.js';
+import { limiteDepassee } from './_lib/limite.js';
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+
+  // ── Verrou ajoute le 13/09/2026 ──────────────────────────────────────────
+  // Cet endpoint etait ouvert a Internet : CORS '*', aucune authentification,
+  // aucun plafond. N'importe qui connaissant l'URL disposait d'un proxy IA
+  // facture sur le compte de l'entreprise. Verifie par requete depuis une
+  // machine tierce non authentifiee.
+  if (limiteDepassee(req, { max: 10, fenetreMs: 60_000 })) {
+    return res.status(429).json({ error: 'Trop de requetes. Reessayez dans une minute.' });
+  }
+  if (!exigerSession(req, res)) return;
+  // ─────────────────────────────────────────────────────────────────────────
 
   const { nom, valeurPart, parts, investissementDepart, annee, zakatCalculee, zakatObligatoire } = req.body;
 

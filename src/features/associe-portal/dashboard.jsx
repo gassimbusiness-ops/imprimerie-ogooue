@@ -6,6 +6,7 @@ import { FINANCIAL_SUMMARY, MACHINES, INVENTAIRE_STOCK } from '@/utils/seed-data
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { apiFetch } from '@/services/api-client';
 import {
   TrendingUp, Users, Boxes, BookOpen, DollarSign,
   PieChart, BarChart3, Package, Eye, Building2, Wallet,
@@ -38,7 +39,7 @@ function SimulateurZakat({ capInfo, myInvestisseur }) {
   const analyserAvecIA = async () => {
     setLoadingIA(true);
     try {
-      const res = await fetch('/api/zakat-analyse', {
+      const res = await apiFetch('/api/zakat-analyse', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
