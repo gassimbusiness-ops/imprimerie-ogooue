@@ -124,3 +124,51 @@ export function chargeMensuelle(charge) {
 export function chargeAnnuelle(charge) {
   return chargeMensuelle(charge) * 12;
 }
+
+// ───────────────────────────────────────────────────────────────────────────
+// Chiffre d'affaires des rapports journaliers
+//
+// Avant ce helper, le Tableau de bord sommait Object.values(r.categories)
+// (donc TOUTES les cles presentes) tandis que Rapports & Analyses sommait une
+// liste figee de 8 cles. Tant que les donnees ne contiennent que ces 8 cles,
+// les deux resultats coincident — mais l'ajout d'une 9e categorie serait
+// compte d'un cote et ignore de l'autre, sans aucune erreur visible.
+// ───────────────────────────────────────────────────────────────────────────
+
+/** Categories de prestations d'un rapport journalier. */
+export const CATEGORIES_RAPPORT = [
+  'copies',
+  'marchandises',
+  'scan',
+  'tirage_saisies',
+  'badges_plastification',
+  'demi_photos',
+  'maintenance',
+  'imprimerie',
+];
+
+/**
+ * CA brut d'un rapport journalier : somme de TOUTES les categories presentes.
+ * Les depenses ne sont PAS deduites — c'est un chiffre d'affaires, pas une caisse nette.
+ * @param {{categories?: Record<string, number>}} rapport
+ * @returns {number}
+ */
+export function caRapport(rapport) {
+  const cats = rapport?.categories || {};
+  return Object.values(cats).reduce((s, v) => s + (Number(v) || 0), 0);
+}
+
+/** CA brut d'une liste de rapports journaliers. */
+export function caRapports(rapports) {
+  return (rapports || []).reduce((s, r) => s + caRapport(r), 0);
+}
+
+/** Depenses saisies dans un rapport journalier. */
+export function depensesRapport(rapport) {
+  return (rapport?.depenses || []).reduce((s, d) => s + (Number(d?.montant) || 0), 0);
+}
+
+/** Depenses d'une liste de rapports journaliers. */
+export function depensesRapports(rapports) {
+  return (rapports || []).reduce((s, r) => s + depensesRapport(r), 0);
+}
