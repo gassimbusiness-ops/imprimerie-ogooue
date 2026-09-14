@@ -2,7 +2,7 @@ import { createContext, useContext, useState, useEffect } from 'react';
 import { db } from './db';
 import { hashPassword, verifyPassword, generateSalt } from './crypto';
 import { logAction } from './audit';
-import { enregistrerJeton, effacerJeton } from './api-client';
+import { enregistrerJeton, effacerJeton, apiFetch } from './api-client';
 
 const AuthContext = createContext(null);
 
@@ -179,16 +179,17 @@ export function AuthProvider({ children }) {
    * @param {string} newPassword
    */
   const changePassword = async (userId, newPassword) => {
-    if (!newPassword || newPassword.length < 6) {
-      return { error: 'Le mot de passe doit contenir au moins 6 caractères' };
+    if (!newPassword || newPassword.length < 8) {
+      return { error: 'Le mot de passe doit contenir au moins 8 caractères' };
     }
-    const salt = generateSalt();
-    const hash = await hashPassword(newPassword, salt);
-    await db.employes.update(userId, {
-      password_hash: hash,
-      password_salt: salt,
-      password_changed_at: new Date().toISOString(),
+    // Ecriture cote serveur : le navigateur ne fabrique plus d'empreinte et ne peut
+    // plus ecraser celle d'un autre compte. Le jeton signe decide qui a le droit.
+    const res = await apiFetch('/api/auth-changer-mot-de-passe', {
+      method: 'POST',
+      body: JSON.stringify({ userId, nouveauMotDePasse: newPassword }),
     });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) return { error: json.error || 'Changement refuse' };
     return { success: true };
   };
 
@@ -196,15 +197,36 @@ export function AuthProvider({ children }) {
    * Create a user account with password.
    */
   const createUser = async (userData, password) => {
-    const salt = generateSalt();
-    const hash = await hashPassword(password, salt);
-    const created = await db.employes.create({
-      ...userData,
-      password_hash: hash,
-      password_salt: salt,
-      password_changed_at: new Date().toISOString(),
+    // Creation cote serveur.
+    //
+    // Le champ `role` envoye par le navigateur est IGNORE sans session administrateur :
+    // le serveur force 'client'. C'est ce qui ferme la prise de controle — auparavant
+    // n'importe qui pouvait s'inscrire avec role: 'admin' depuis le formulaire public.
+    //
+    // Ce chemin sert donc aux deux usages : inscription publique d'un client (sans
+    // session) et creation par un administrateur (avec session).
+    // Les champs metier (code de parrainage, type de client...) partent avec la creation :
+    // un `update` separe echouerait, la modification d'un employe etant reservee aux admins.
+    const extras = { ...userData };
+    ['email', 'nom', 'prenom', 'telephone', 'poste', 'role'].forEach((k) => delete extras[k]);
+
+    const res = await apiFetch('/api/auth-creer-utilisateur', {
+      method: 'POST',
+      body: JSON.stringify({
+        email: userData.email,
+        motDePasse: password,
+        nom: userData.nom,
+        prenom: userData.prenom,
+        telephone: userData.telephone,
+        poste: userData.poste,
+        role: userData.role,
+        extras,
+      }),
     });
-    return created;
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json.error || 'Creation du compte refusee');
+
+    return json.user;
   };
 
   const hasPermission = (module, action = 'read') => {

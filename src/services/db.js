@@ -3,6 +3,7 @@
  * Le mode est déterminé automatiquement par les variables d'environnement.
  */
 import { supabase, USE_SUPABASE } from './supabase';
+import { apiFetch } from './api-client';
 
 class Collection {
   constructor(name) {
@@ -120,6 +121,60 @@ class Collection {
 
 // ── Collections ──
 
+
+/**
+ * Collection `employes` — routee par /api/employes.
+ *
+ * POURQUOI UNE SOUS-CLASSE
+ * 13 ecrans appellent `db.employes.list()`. Plutot que de modifier 13 fichiers (et d'en
+ * oublier un), on intercepte ici : les appelants ne changent pas, mais la requete part
+ * vers un endpoint qui filtre selon le role AVANT d'envoyer. Les salaires ne quittent
+ * plus le serveur pour un non-administrateur.
+ *
+ * En mode localStorage (sans Supabase), on garde le comportement d'origine.
+ */
+class CollectionEmployes extends Collection {
+  async list() {
+    if (!USE_SUPABASE) return super.list();
+    try {
+      const res = await apiFetch('/api/employes', { method: 'GET' });
+      if (!res.ok) { console.error('[db] employes.list:', res.status); return []; }
+      const json = await res.json();
+      return json.employes || [];
+    } catch (e) {
+      console.error('[db] employes.list:', e.message);
+      return [];
+    }
+  }
+
+  async getById(id) {
+    const tous = await this.list();
+    return tous.find((e) => e.id === id) || null;
+  }
+
+  async create(data) {
+    if (!USE_SUPABASE) return super.create(data);
+    const res = await apiFetch('/api/employes', { method: 'POST', body: JSON.stringify({ data }) });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Creation refusee');
+    const { id } = await res.json();
+    return { ...data, id };
+  }
+
+  async update(id, data) {
+    if (!USE_SUPABASE) return super.update(id, data);
+    const res = await apiFetch('/api/employes', { method: 'PATCH', body: JSON.stringify({ id, data }) });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Modification refusee');
+    return true;
+  }
+
+  async delete(id) {
+    if (!USE_SUPABASE) return super.delete(id);
+    const res = await apiFetch(`/api/employes?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'Suppression refusee');
+    return true;
+  }
+}
+
 export const db = {
   users: new Collection('users'),
   rapports: new Collection('rapports'),
@@ -130,7 +185,7 @@ export const db = {
   factures: new Collection('factures'),
   produits: new Collection('produits'),
   pointages: new Collection('pointages'),
-  employes: new Collection('employes'),
+  employes: new CollectionEmployes('employes'),
   mouvements_stock: new Collection('mouvements_stock'),
   parametres: new Collection('parametres'),
   clotures_caisse: new Collection('clotures_caisse'),
