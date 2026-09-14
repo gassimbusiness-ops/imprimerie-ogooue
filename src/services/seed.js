@@ -1,5 +1,7 @@
 import { db, getSettings, saveSettings } from './db';
 import { hashPassword, generateSalt } from './crypto';
+import { USE_SUPABASE } from './supabase';
+import { lireJeton } from './api-client';
 
 /**
  * Comptes par défaut — UNIQUEMENT ces 3 comptes.
@@ -54,6 +56,23 @@ const DEFAULT_SETTINGS = {
  * Only runs once — subsequent calls return immediately.
  */
 export async function seedDatabase() {
+  // ⚠️ NE PAS AMORCER LES COMPTES DEPUIS UN NAVIGATEUR NON CONNECTE.
+  //
+  // Depuis le verrou de session, la creation d un employe passe par
+  // POST /api/employes, reserve au role admin. Un navigateur qui arrive sur la
+  // page de connexion n a pas de jeton : l appel renvoie 401 et `create()` leve.
+  //
+  // Le 14/09/2026 cette exception a blanchi toute l application en production,
+  // parce qu elle remontait jusqu a init() et empechait ReactDOM.render().
+  // main.jsx isole desormais chaque etape, mais il ne faut pas pour autant
+  // provoquer une erreur qu on sait certaine : on sort proprement.
+  //
+  // Les 3 comptes par defaut existent deja en base depuis mars 2026. Cet
+  // amorcage ne sert plus qu au mode localStorage (developpement hors ligne).
+  if (USE_SUPABASE && !lireJeton()) {
+    return;
+  }
+
   // Check if already seeded (data exists)
   const existing = await db.employes.list();
   if (existing.length > 0) return;
