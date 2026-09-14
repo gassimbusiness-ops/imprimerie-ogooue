@@ -1,5 +1,11 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { db } from '@/services/db';
+import { todayISO, startOfMonthISO, addDaysISO } from '@/lib/dates';
+import { caRapport, depensesRapport } from '@/services/finance-calc';
+import {
+  filtrerRapports, indexerRapports, normaliserPlage, plageActive,
+  libellePlage, totauxFiltres,
+} from './filtrage';
 import { useAuth } from '@/services/auth';
 import { logAction } from '@/services/audit';
 import { notifyRapportSoumis, notifyDemandeModification } from '@/services/notifications';
@@ -44,13 +50,17 @@ const CATEGORIES = [
 
 function fmt(n) { return new Intl.NumberFormat('fr-FR').format(Math.round(n || 0)); }
 
-function totalRecettes(r) {
-  return Object.values(r.categories || {}).reduce((s, v) => s + (v || 0), 0);
-}
+/**
+ * Montant d'une mesure éventuellement indisponible.
+ * Règle du projet : une valeur indisponible vaut `null` et s'affiche « — »,
+ * jamais « 0 » — afficher 0 F sur une recherche sans résultat laisserait croire
+ * à une période sans recette.
+ */
+function fmtMontant(n) { return n == null ? '—' : `${fmt(n)} F`; }
 
-function totalDepenses(r) {
-  return (r.depenses || []).reduce((s, d) => s + (d.montant || 0), 0);
-}
+// Recettes / dépenses : source unique de vérité dans src/services/finance-calc.js
+function totalRecettes(r) { return caRapport(r); }
+function totalDepenses(r) { return depensesRapport(r); }
 
 export default function Rapports() {
   const { user, isAdmin, isManager } = useAuth();
@@ -75,62 +85,71 @@ export default function Rapports() {
     return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
   });
 
-  // Une plage de dates est active si dateFrom OU dateTo est defini
-  const usePlageActive = !!(dateFrom || dateTo);
+  // Une plage de dates est active dès qu'une borne exploitable est saisie.
+  const usePlageActive = plageActive(dateFrom, dateTo);
+  // Bornes remises à l'endroit si le gérant a saisi « du 15 au 05 ».
+  const plage = useMemo(() => normaliserPlage(dateFrom, dateTo), [dateFrom, dateTo]);
+  const rechercheActive = usePlageActive || !!searchTerm.trim() || filterStatut !== 'all';
 
   const load = async () => {
     setLoading(true);
     let data = await db.rapports.list();
     if (isEmploye) {
-      const today = new Date().toISOString().split('T')[0];
+      // Date métier locale — jamais .toISOString() (cf. src/lib/dates.js)
+      const today = todayISO();
       data = data.filter((r) => r.date === today);
     }
-    setRapports(data.sort((a, b) => b.date.localeCompare(a.date)));
+    setRapports(data.sort((a, b) => (b.date || '').localeCompare(a.date || '')));
     setLoading(false);
   };
 
   useEffect(() => { load(); }, []);
 
-  // Filter by month/plage, status and keyword search
-  const filtered = useMemo(() => {
-    const q = (searchTerm || '').trim().toLowerCase();
-    return rapports.filter((r) => {
-      if (filterStatut !== 'all' && r.statut !== filterStatut) return false;
+  // Index de recherche : calculé UNE fois par jeu de données (600+ rapports,
+  // ~30 lignes chacun) et non à chaque frappe.
+  const indexRecherche = useMemo(() => indexerRapports(rapports), [rapports]);
 
-      // Filtre dates : plage si definie, sinon mois actif
-      if (usePlageActive) {
-        if (dateFrom && r.date < dateFrom) return false;
-        if (dateTo && r.date > dateTo) return false;
-      } else if (!isEmploye && !r.date?.startsWith(currentMonth)) {
-        return false;
-      }
+  // Filtrage : plage de dates ET mot-clé ET statut. Logique pure et testée
+  // dans src/features/rapports/filtrage.js (tests/filtrage.test.mjs).
+  const filtered = useMemo(() => filtrerRapports(rapports, {
+    debut: dateFrom,
+    fin: dateTo,
+    mot: searchTerm,
+    statut: filterStatut,
+    // Le mois de la navigation ← → ne sert que si aucune plage n'est saisie.
+    mois: isEmploye ? '' : currentMonth,
+  }, indexRecherche), [rapports, indexRecherche, dateFrom, dateTo, searchTerm, filterStatut, currentMonth, isEmploye]);
 
-      // Recherche mot-cle : operateur_nom, description des lignes, descriptions des depenses
-      if (q) {
-        const inOperateur = (r.operateur_nom || '').toLowerCase().includes(q);
-        const inLignes = (r.lignes || []).some((l) => (l.description || '').toLowerCase().includes(q));
-        const inDepenses = (r.depenses || []).some((d) => (d.description || '').toLowerCase().includes(q));
-        if (!inOperateur && !inLignes && !inDepenses) return false;
-      }
-
-      return true;
-    });
-  }, [rapports, currentMonth, filterStatut, isEmploye, dateFrom, dateTo, searchTerm, usePlageActive]);
-
-  // Stats
+  // Stats de CE QUI EST AFFICHÉ (et non du mois entier) : les cartes et le
+  // tableau parlent ainsi toujours du même ensemble. Sur 0 résultat, les
+  // montants valent null → « — », jamais « 0 F ».
   const stats = useMemo(() => {
-    const monthRapports = rapports.filter((r) => r.date?.startsWith(currentMonth));
-    const totalRec = monthRapports.reduce((s, r) => s + totalRecettes(r), 0);
-    const totalDep = monthRapports.reduce((s, r) => s + totalDepenses(r), 0);
+    const t = totauxFiltres(filtered, { ca: totalRecettes, depenses: totalDepenses });
     return {
-      count: monthRapports.length,
-      recettes: totalRec,
-      depenses: totalDep,
-      solde: totalRec - totalDep,
-      aValider: monthRapports.filter((r) => r.statut === 'soumis').length,
-      clotures: monthRapports.filter((r) => r.statut === 'cloture').length,
+      ...t,
+      aValider: filtered.filter((r) => r.statut === 'soumis').length,
+      clotures: filtered.filter((r) => r.statut === 'cloture').length,
     };
-  }, [rapports, currentMonth]);
+  }, [filtered]);
+
+  // Période affichée en clair : « du 05/04/2026 au 15/04/2026 » ou le mois courant.
+  const periodeLabel = usePlageActive ? libellePlage(dateFrom, dateTo) : '';
+
+  const resetFiltres = () => { setDateFrom(''); setDateTo(''); setSearchTerm(''); setFilterStatut('all'); };
+
+  // Raccourcis de plage — évitent au gérant de saisir deux dates à la main.
+  // Toutes ces bornes passent par src/lib/dates.js : jamais d'UTC.
+  const appliquerPlage = (debut, fin) => { setDateFrom(debut); setDateTo(fin); };
+  const plage7Jours = () => appliquerPlage(addDaysISO(-6), todayISO());
+  const plageMoisEnCours = () => appliquerPlage(startOfMonthISO(), todayISO());
+  const plageMoisPrecedent = () => {
+    const n = new Date();
+    // new Date(y, -1, 1) bascule correctement sur décembre de l'année précédente.
+    const debut = startOfMonthISO(new Date(n.getFullYear(), n.getMonth() - 1, 1));
+    // Dernier jour = veille du 1er du mois en cours.
+    const fin = addDaysISO(-1, new Date(n.getFullYear(), n.getMonth(), 1));
+    appliquerPlage(debut, fin);
+  };
 
   const handleNew = () => { setEditing(null); setShowForm(true); };
   const handleEdit = (r) => {
@@ -228,6 +247,10 @@ export default function Rapports() {
     return new Date(y, m - 1, 1).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
   })();
 
+  // Libellé de la période réellement affichée : la plage si elle est saisie,
+  // sinon le mois de la navigation ← →.
+  const periodeTexte = periodeLabel || monthLabel;
+
   const formatDate = (d) => {
     return new Date(d + 'T00:00:00').toLocaleDateString('fr-FR', {
       weekday: 'short', day: 'numeric', month: 'short',
@@ -267,12 +290,13 @@ export default function Rapports() {
   const [iaResult, setIaResult] = useState(null);
 
   const handleAnalyseIA = async () => {
-    const monthRapports = rapports.filter((r) => r.date?.startsWith(currentMonth));
-    if (monthRapports.length === 0) { toast.error('Aucun rapport pour ce mois'); return; }
+    // On analyse EXACTEMENT ce qui est affiché à l'écran.
+    const cible = filtered;
+    if (cible.length === 0) { toast.error('Aucun rapport à analyser pour cette sélection'); return; }
     setIaLoading(true);
     setIaResult(null);
     try {
-      const rapportsData = monthRapports.map((r) => ({
+      const rapportsData = cible.map((r) => ({
         date: r.date,
         recettes: totalRecettes(r),
         depenses: totalDepenses(r),
@@ -280,7 +304,7 @@ export default function Rapports() {
         services: r.categories || {},
       }));
       const system = `Tu es analyste financier expert pour une PME gabonaise.`;
-      const prompt = `Analyse ces rapports journaliers de l'imprimerie Ogooue (Moanda, Gabon) pour la periode ${monthLabel}.\nDonnees : ${JSON.stringify(rapportsData)}\n\nDonne une analyse en 4 parties :\n1. Resume global (2 phrases)\n2. Points forts de la periode (liste de 3 elements)\n3. Points d'attention ou alertes (liste de 2-3 elements)\n4. Recommandations actionnables (liste de 2-3 elements)\n\nReponds en francais naturel, sans markdown avec des # ou **. Utilise des tirets (-) pour les listes.`;
+      const prompt = `Analyse ces rapports journaliers de l'imprimerie Ogooue (Moanda, Gabon) pour la periode ${periodeTexte}.\nDonnees : ${JSON.stringify(rapportsData)}\n\nDonne une analyse en 4 parties :\n1. Resume global (2 phrases)\n2. Points forts de la periode (liste de 3 elements)\n3. Points d'attention ou alertes (liste de 2-3 elements)\n4. Recommandations actionnables (liste de 2-3 elements)\n\nReponds en francais naturel, sans markdown avec des # ou **. Utilise des tirets (-) pour les listes.`;
       const result = await askAI(system, prompt, 600);
       setIaResult(result);
       toast.success('Analyse IA terminee');
@@ -335,53 +359,76 @@ export default function Rapports() {
                   {Object.entries(STATUS_MAP).map(([k, v]) => <SelectItem key={k} value={k}>{v.label}</SelectItem>)}
                 </SelectContent>
               </Select>
-              <Button variant="outline" size="sm" className="gap-2" onClick={() => {
-                const monthRapports = rapports.filter((r) => r.date?.startsWith(currentMonth));
-                exportRapportsMensuels(monthRapports, currentMonth, stats);
-              }}>
+              {/* PDF et IA portent sur EXACTEMENT ce qui est affiché */}
+              <Button variant="outline" size="sm" className="gap-2" disabled={filtered.length === 0}
+                onClick={() => exportRapportsMensuels(filtered, currentMonth, stats, periodeLabel)}>
                 <Download className="h-4 w-4" /> PDF
               </Button>
-              <Button size="sm" className="gap-2 bg-violet-600 hover:bg-violet-700 text-white" onClick={handleAnalyseIA} disabled={iaLoading}>
+              <Button size="sm" className="gap-2 bg-violet-600 hover:bg-violet-700 text-white" onClick={handleAnalyseIA} disabled={iaLoading || filtered.length === 0}>
                 {iaLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Bot className="h-4 w-4" />}
                 Analyser avec IA
               </Button>
             </div>
           </div>
 
-          {/* Filtres avances : plage de dates + recherche mot-cle */}
-          <div className="flex flex-wrap items-end gap-2 rounded-lg border bg-muted/30 p-3">
-            <div className="flex items-center gap-2">
-              <Calendar className="h-4 w-4 text-muted-foreground" />
-              <span className="text-xs font-medium text-muted-foreground">Plage de dates :</span>
+          {/* ── Recherche : plage de dates libre + mot-clé (demande n°1 du gérant) ── */}
+          <div className="space-y-2 rounded-lg border bg-muted/30 p-3">
+            <div className="flex flex-wrap items-end gap-2">
+              {/* Pas de min/max natif : saisir « du 15 au 05 » ne doit pas être
+                  bloqué, les bornes sont remises à l'endroit et le signalent. */}
+              <div className="flex flex-col">
+                <label htmlFor="rap-du" className="text-[10px] font-medium text-muted-foreground">Du</label>
+                <Input id="rap-du" type="date" value={dateFrom}
+                  onChange={(e) => setDateFrom(e.target.value)} className="h-8 w-[150px]" />
+              </div>
+              <div className="flex flex-col">
+                <label htmlFor="rap-au" className="text-[10px] font-medium text-muted-foreground">Au</label>
+                <Input id="rap-au" type="date" value={dateTo}
+                  onChange={(e) => setDateTo(e.target.value)} className="h-8 w-[150px]" />
+              </div>
+              <div className="flex min-w-[220px] flex-1 flex-col">
+                <label htmlFor="rap-q" className="text-[10px] font-medium text-muted-foreground">
+                  Rechercher un mot (opérateur, description, dépense, note)
+                </label>
+                <Input id="rap-q" type="text" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)}
+                  placeholder="ex. depot, bache, Chantal…" className="h-8" />
+              </div>
+              {rechercheActive && (
+                <Button variant="ghost" size="sm" onClick={resetFiltres} className="h-8 gap-1">
+                  <X className="h-3.5 w-3.5" /> Réinitialiser
+                </Button>
+              )}
             </div>
-            <div className="flex flex-col">
-              <label className="text-[10px] text-muted-foreground">Du</label>
-              <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="h-8 w-[140px]" />
+
+            {/* Raccourcis de plage */}
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-[10px] text-muted-foreground">Raccourcis :</span>
+              <Button variant="outline" size="sm" className="h-6 px-2 text-[11px]" onClick={plage7Jours}>7 derniers jours</Button>
+              <Button variant="outline" size="sm" className="h-6 px-2 text-[11px]" onClick={plageMoisEnCours}>Mois en cours</Button>
+              <Button variant="outline" size="sm" className="h-6 px-2 text-[11px]" onClick={plageMoisPrecedent}>Mois précédent</Button>
             </div>
-            <div className="flex flex-col">
-              <label className="text-[10px] text-muted-foreground">Au</label>
-              <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="h-8 w-[140px]" />
-            </div>
-            <div className="flex flex-col flex-1 min-w-[200px]">
-              <label className="text-[10px] text-muted-foreground">Recherche (opérateur, description, dépense)</label>
-              <Input
-                type="text"
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                placeholder="Mot-clé..."
-                className="h-8"
-              />
-            </div>
-            {(dateFrom || dateTo || searchTerm) && (
-              <Button variant="ghost" size="sm" onClick={() => { setDateFrom(''); setDateTo(''); setSearchTerm(''); }} className="h-8 gap-1">
-                <X className="h-3.5 w-3.5" /> Réinitialiser
-              </Button>
-            )}
-            {usePlageActive && (
-              <Badge variant="outline" className="h-7 gap-1 border-blue-500/40 text-blue-700">
-                <Filter className="h-3 w-3" /> Plage active
+
+            {/* Période appliquée, en clair + nombre de résultats */}
+            <div className="flex flex-wrap items-center gap-2 border-t pt-2">
+              <Badge variant="outline" className="h-6 gap-1 border-blue-500/40 text-blue-700">
+                <Filter className="h-3 w-3" /> Période : {periodeTexte}
               </Badge>
-            )}
+              {searchTerm.trim() && (
+                <Badge variant="outline" className="h-6 border-violet-500/40 text-violet-700">
+                  Mot : « {searchTerm.trim()} »
+                </Badge>
+              )}
+              <span className="text-xs font-medium">
+                {filtered.length === 0
+                  ? 'Aucun rapport ne correspond'
+                  : `${filtered.length} rapport${filtered.length > 1 ? 's' : ''} trouvé${filtered.length > 1 ? 's' : ''}`}
+              </span>
+              {plage.inversee && (
+                <span className="text-xs text-amber-700">
+                  Les dates étaient à l'envers — la plage a été remise dans l'ordre.
+                </span>
+              )}
+            </div>
           </div>
 
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 lg:grid-cols-6">
@@ -391,15 +438,15 @@ export default function Rapports() {
             </CardContent></Card>
             <Card><CardContent className="p-3">
               <p className="text-[10px] text-muted-foreground">Recettes</p>
-              <p className="text-lg font-bold text-emerald-600">{fmt(stats.recettes)} F</p>
+              <p className={`text-lg font-bold ${stats.recettes == null ? 'text-muted-foreground/50' : 'text-emerald-600'}`}>{fmtMontant(stats.recettes)}</p>
             </CardContent></Card>
             <Card><CardContent className="p-3">
               <p className="text-[10px] text-muted-foreground">Dépenses</p>
-              <p className="text-lg font-bold text-red-600">{fmt(stats.depenses)} F</p>
+              <p className={`text-lg font-bold ${stats.depenses == null ? 'text-muted-foreground/50' : 'text-red-600'}`}>{fmtMontant(stats.depenses)}</p>
             </CardContent></Card>
             <Card><CardContent className="p-3">
               <p className="text-[10px] text-muted-foreground">Solde</p>
-              <p className={`text-lg font-bold ${stats.solde >= 0 ? 'text-primary' : 'text-destructive'}`}>{fmt(stats.solde)} F</p>
+              <p className={`text-lg font-bold ${stats.solde == null ? 'text-muted-foreground/50' : (stats.solde >= 0 ? 'text-primary' : 'text-destructive')}`}>{fmtMontant(stats.solde)}</p>
             </CardContent></Card>
             <Card><CardContent className="p-3">
               <p className="text-[10px] text-muted-foreground">À valider</p>
@@ -423,7 +470,7 @@ export default function Rapports() {
                   <Bot className="h-4 w-4 text-violet-600" />
                 </div>
                 <div>
-                  <h3 className="font-semibold text-sm text-violet-900">Analyse IA — {monthLabel}</h3>
+                  <h3 className="font-semibold text-sm text-violet-900">Analyse IA — {periodeTexte}</h3>
                   <p className="text-[10px] text-violet-600">Basee sur {stats.count} rapport(s)</p>
                 </div>
               </div>
@@ -457,7 +504,25 @@ export default function Rapports() {
               </thead>
               <tbody>
                 {filtered.length === 0 ? (
-                  <tr><td colSpan={CATEGORIES.length + 6} className="py-12 text-center text-muted-foreground">Aucun rapport pour cette période</td></tr>
+                  <tr><td colSpan={CATEGORIES.length + 6} className="py-12 text-center">
+                    <p className="text-muted-foreground">
+                      {rechercheActive
+                        ? 'Aucun rapport ne correspond à votre recherche.'
+                        : `Aucun rapport pour ${periodeTexte}.`}
+                    </p>
+                    {rechercheActive && (
+                      <>
+                        <p className="mt-1 text-xs text-muted-foreground/70">
+                          Période : {periodeTexte}
+                          {searchTerm.trim() && ` · mot recherché : « ${searchTerm.trim()} »`}
+                          {filterStatut !== 'all' && ` · statut : ${STATUS_MAP[filterStatut]?.label}`}
+                        </p>
+                        <Button variant="outline" size="sm" className="mt-3 gap-1" onClick={resetFiltres}>
+                          <X className="h-3.5 w-3.5" /> Réinitialiser la recherche
+                        </Button>
+                      </>
+                    )}
+                  </td></tr>
                 ) : filtered.map((r, rowIdx) => {
                   const rec = totalRecettes(r);
                   const dep = totalDepenses(r);
@@ -562,8 +627,24 @@ export default function Rapports() {
             <Card>
               <CardContent className="flex flex-col items-center justify-center py-16">
                 <FileSpreadsheet className="mb-4 h-12 w-12 text-muted-foreground/30" />
-                <p className="text-muted-foreground">Aucun rapport pour l'instant</p>
-                <Button onClick={handleNew} variant="outline" className="mt-4">Créer le premier rapport</Button>
+                {rechercheActive ? (
+                  <>
+                    <p className="text-muted-foreground">Aucun rapport ne correspond à votre recherche.</p>
+                    <p className="mt-1 text-xs text-muted-foreground/70">
+                      Période : {periodeTexte}
+                      {searchTerm.trim() && ` · mot recherché : « ${searchTerm.trim()} »`}
+                      {filterStatut !== 'all' && ` · statut : ${STATUS_MAP[filterStatut]?.label}`}
+                    </p>
+                    <Button variant="outline" className="mt-4 gap-1" onClick={resetFiltres}>
+                      <X className="h-3.5 w-3.5" /> Réinitialiser la recherche
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-muted-foreground">Aucun rapport pour l&apos;instant</p>
+                    <Button onClick={handleNew} variant="outline" className="mt-4">Créer le premier rapport</Button>
+                  </>
+                )}
               </CardContent>
             </Card>
           ) : filtered.map((r) => {

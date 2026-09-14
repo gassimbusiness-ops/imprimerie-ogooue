@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { db } from '@/services/db';
+import { todayISO } from '@/lib/dates';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -70,8 +71,11 @@ export default function RapportForm({ rapport, onSave, onCancel }) {
   const fileInputRef = useRef(null);
   const initialLignesRef = useRef(null);
 
+  // Date métier locale : `.toISOString().split('T')[0]` renvoyait la VEILLE entre
+  // 00h et 01h à Libreville (UTC+1). L'écran Rapports filtre la vue « employé »
+  // sur todayISO() : les deux doivent utiliser le même calcul. Cf. src/lib/dates.js
   const [date, setDate] = useState(
-    rapport?.date || new Date().toISOString().split('T')[0],
+    rapport?.date || todayISO(),
   );
   const [operateurId, setOperateurId] = useState(rapport?.operateur_id || '');
   const [lignes, setLignes] = useState(() => initRows(rapport?.lignes));

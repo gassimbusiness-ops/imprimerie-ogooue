@@ -4,6 +4,7 @@
  */
 import { exigerSession } from './_lib/session.js';
 import { limiteDepassee } from './_lib/limite.js';
+import { modeleAnthropic, messageErreurAnthropic } from './_lib/modeles.js';
 
 export default async function handler(req, res) {
   // CORS headers
@@ -42,7 +43,7 @@ export default async function handler(req, res) {
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
+        model: modeleAnthropic(),
         max_tokens: plafond,
         system: system || '',
         messages: messages || [],
@@ -52,7 +53,7 @@ export default async function handler(req, res) {
     if (!response.ok) {
       const errorText = await response.text();
       console.error('[AI Proxy] Anthropic error:', response.status, errorText);
-      return res.status(response.status).json({ error: `Erreur API: ${response.status}` });
+      return res.status(response.status).json({ error: messageErreurAnthropic(response.status, errorText) });
     }
 
     const data = await response.json();

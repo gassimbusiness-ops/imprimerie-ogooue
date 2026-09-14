@@ -111,17 +111,47 @@ export function printHTML(title, htmlContent, options = {}) {
   iframe.style.height = '0';
   document.body.appendChild(iframe);
 
+  // ⚠️ L'ORDRE DE CES LIGNES EST LE BUG QUI A TUE LES 13 EXPORTS PDF DE L'APPLICATION.
+  //
+  // `contentDocument.write()` suivi de `close()` declenche l'evenement `load` de l'iframe
+  // immediatement. Assigner `iframe.onload` APRES `close()` arrive donc trop tard :
+  // l'evenement est deja passe, le gestionnaire n'est jamais appele, et `print()` n'est
+  // jamais execute. Aucune erreur, aucun message : le bouton « Exporter PDF » ne fait rien.
+  //
+  // Mesure sur le bundle reellement servi en production le 14/09/2026 : `onload count = 0`.
+  // Les 13 fonctions d'export de ce fichier passent toutes par ici : un seul bug, tous morts.
+  //
+  // Deux declencheurs valent mieux qu'un : `onload` pose AVANT l'ecriture, plus un repli
+  // temporise au cas ou l'evenement ne partirait pas selon le navigateur. `lance` garantit
+  // qu'une seule impression part, quel que soit celui des deux qui arrive en premier.
+  let lance = false;
+  const lancerImpression = () => {
+    if (lance) return;
+    lance = true;
+    // Le delai laisse au navigateur le temps d'appliquer la feuille de style ecrite
+    // dans l'iframe : imprimer trop tot produit un document sans mise en forme.
+    setTimeout(() => {
+      try {
+        iframe.contentWindow.focus();
+        iframe.contentWindow.print();
+      } catch (e) {
+        console.error('[export-pdf] impression impossible', e);
+      }
+      setTimeout(() => {
+        if (iframe.parentNode) document.body.removeChild(iframe);
+      }, 2000);
+    }, 300);
+  };
+
+  iframe.onload = lancerImpression;
+
   iframe.contentDocument.open();
   iframe.contentDocument.write(fullHTML);
   iframe.contentDocument.close();
 
-  iframe.onload = () => {
-    setTimeout(() => {
-      iframe.contentWindow.focus();
-      iframe.contentWindow.print();
-      setTimeout(() => document.body.removeChild(iframe), 2000);
-    }, 300);
-  };
+  // Repli : si `load` etait deja passe au moment ou on l'a pose, c'est ce timer qui sauve
+  // l'export. S'il est bien parti, `lance` rend cet appel inoffensif.
+  setTimeout(lancerImpression, 50);
 }
 
 /**
@@ -146,17 +176,27 @@ function fmt(n) { return new Intl.NumberFormat('fr-FR').format(Math.round(n || 0
 /**
  * Exporte les rapports d'un mois en PDF
  */
-export function exportRapportsMensuels(rapports, mois, stats = {}) {
-  const monthLabel = new Date(mois + '-01').toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+/**
+ * @param {Array} rapports
+ * @param {string} mois  `YYYY-MM` — sert uniquement à composer le titre par défaut
+ * @param {object} [stats]
+ * @param {string} [periodeLabel] libellé de période déjà formaté (ex. « du 05/04/2026 au
+ *   15/04/2026 »). Optionnel : sans lui, le titre reste le mois, comme avant.
+ *   Ajouté pour l'export d'une plage de dates libre depuis l'écran Rapports.
+ */
+export function exportRapportsMensuels(rapports, mois, stats = {}, periodeLabel = '') {
+  const monthLabel = periodeLabel
+    || new Date(mois + '-01').toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
 
   let html = `<h2>Rapports Journaliers — ${monthLabel}</h2>`;
 
-  // KPIs
+  // KPIs — une mesure indisponible s'affiche « — », jamais « 0 F »
+  const kpi = (v) => (v == null ? '—' : `${fmt(v)} F`);
   html += `<div class="kpi-row">
-    <div class="kpi-box"><div class="label">Rapports</div><div class="value">${stats.count || rapports.length}</div></div>
-    <div class="kpi-box"><div class="label">Recettes</div><div class="value text-emerald">${fmt(stats.recettes || 0)} F</div></div>
-    <div class="kpi-box"><div class="label">Dépenses</div><div class="value text-red">${fmt(stats.depenses || 0)} F</div></div>
-    <div class="kpi-box"><div class="label">Solde</div><div class="value text-blue">${fmt(stats.solde || 0)} F</div></div>
+    <div class="kpi-box"><div class="label">Rapports</div><div class="value">${stats.count ?? rapports.length}</div></div>
+    <div class="kpi-box"><div class="label">Recettes</div><div class="value text-emerald">${kpi(stats.recettes)}</div></div>
+    <div class="kpi-box"><div class="label">Dépenses</div><div class="value text-red">${kpi(stats.depenses)}</div></div>
+    <div class="kpi-box"><div class="label">Solde</div><div class="value text-blue">${kpi(stats.solde)}</div></div>
   </div>`;
 
   // Table
