@@ -42,12 +42,39 @@ registerSW({
 
 // ── App init ──
 
+/**
+ * ⚠️ CHAQUE ETAPE D AMORCAGE EST ISOLEE. NE PAS REVENIR A UNE SUITE DE `await` NUS.
+ *
+ * Le 14/09/2026, le deploiement du verrou de session a rendu l application
+ * ENTIEREMENT BLANCHE en production. La chaine exacte :
+ *   seedDatabase() -> db.employes.create() -> POST /api/employes -> 401 (pas de
+ *   session avant la connexion) -> `throw new Error('Creation refusee')`
+ *   -> init() rejette -> ReactDOM.render() n est JAMAIS appele -> ecran blanc.
+ *
+ * La faute n est pas le 401 : c est que le rendu de l interface etait place
+ * DERRIERE quatre `await` d amorcage. N importe quel echec — reseau coupe a
+ * Moanda, base indisponible, permission refusee — suffisait a effacer
+ * l application pour tout le monde.
+ *
+ * Regle : l interface s affiche TOUJOURS. L amorcage est un confort, pas une
+ * condition. Un echec d amorcage se voit dans la console, jamais a la place de
+ * l application.
+ */
 async function init() {
-  // Seed + import (idempotent — skips if data exists)
-  await seedDatabase();
-  await loadImportedData();
-  await seedPapeterieProject();
-  await seedInventaire();
+  const etapes = [
+    ['seedDatabase', seedDatabase],
+    ['loadImportedData', loadImportedData],
+    ['seedPapeterieProject', seedPapeterieProject],
+    ['seedInventaire', seedInventaire],
+  ];
+
+  for (const [nom, etape] of etapes) {
+    try {
+      await etape();
+    } catch (e) {
+      console.error(`[init] etape « ${nom} » ignoree :`, e?.message || e);
+    }
+  }
 
   ReactDOM.createRoot(document.getElementById('root')).render(
     <React.StrictMode>
