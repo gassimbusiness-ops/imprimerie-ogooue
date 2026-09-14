@@ -15,13 +15,21 @@ import {
 import {
   BookOpen, Search, Plus, Edit2, Trash2, Tag, DollarSign,
   Package, Clock, LayoutGrid, List, ChevronLeft, ChevronRight,
-  X, ZoomIn, Upload, Eye, ImageIcon, Shirt, Coffee,
-  Sparkles, FileDown, ImagePlus, Brain, Loader2, ChevronDown,
+  X, ZoomIn, Upload, Eye, Shirt, Coffee,
+  Sparkles, FileDown, Brain, Loader2, ChevronDown,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { AIButton } from '@/components/ui/ai-button';
 import { askAI, AI_PROMPTS } from '@/services/ai';
 import { apiFetch } from '@/services/api-client';
+import {
+  construirePromptProduit,
+  validerDemandeGeneration,
+  deciderEnregistrement,
+  extraireMessageErreur,
+  extraireImage,
+  formaterOctets,
+} from './generation-image';
 
 /* ─── Helpers ─── */
 function fmt(n) { return new Intl.NumberFormat('fr-FR').format(Math.round(n || 0)); }
@@ -77,12 +85,21 @@ const emptyForm = {
 };
 
 /* ─── Image compression ─── */
-function compressImage(file, maxW = 600, quality = 0.7) {
-  return new Promise((resolve) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const img = new Image();
-      img.onload = () => {
+/**
+ * Redimensionne + recompresse une source image (data URL) en JPEG.
+ *
+ * C'est le seul chemin d'entree des images de la fiche produit, photos
+ * importees comme images generees par l'IA. Raison : les images sont stockees
+ * en base64 DANS le JSONB `app_data.data` (Supabase plan gratuit, 500 Mo) et
+ * `db.list()` recharge toute la collection a chaque ouverture du catalogue.
+ * Une image `gpt-image-1` 1024x1024 brute pese 0,85 a 4 Mo en base64 ; passee
+ * ici elle retombe entre 16 et 90 Ko. Voir generation-image.js.
+ */
+function compressSource(src, maxW = 600, quality = 0.7) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
         const canvas = document.createElement('canvas');
         let w = img.width, h = img.height;
         if (w > maxW) { h = Math.round(h * maxW / w); w = maxW; }
@@ -90,9 +107,20 @@ function compressImage(file, maxW = 600, quality = 0.7) {
         const ctx = canvas.getContext('2d');
         ctx.drawImage(img, 0, 0, w, h);
         resolve(canvas.toDataURL('image/jpeg', quality));
-      };
-      img.src = e.target.result;
+      } catch (err) {
+        reject(err);
+      }
     };
+    img.onerror = () => reject(new Error('Image illisible (format non supporte ?)'));
+    img.src = src;
+  });
+}
+
+function compressImage(file, maxW = 600, quality = 0.7) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (e) => compressSource(e.target.result, maxW, quality).then(resolve, reject);
+    reader.onerror = () => reject(new Error('Fichier illisible'));
     reader.readAsDataURL(file);
   });
 }
@@ -257,9 +285,9 @@ function PrixBuilder({ value, onChange }) {
 /* ══════════════════════════════════════════════
    Image Uploader (form)
    ══════════════════════════════════════════════ */
-function ImageUploader({ images, onChange, maxImages = 5, productName = '', productCategorie = '', productDescription = '' }) {
+function ImageUploader({ images, onChange, maxImages = 5, fiche = {} }) {
   const fileRef = useRef(null);
-  const [generating, setGenerating] = useState(false);
+  const [iaOuvert, setIaOuvert] = useState(false);
 
   const handleFiles = async (e) => {
     const files = Array.from(e.target.files || []);
@@ -268,48 +296,18 @@ function ImageUploader({ images, onChange, maxImages = 5, productName = '', prod
     if (remaining <= 0) { toast.error(`Maximum ${maxImages} images`); return; }
 
     const toProcess = files.slice(0, remaining);
-    const compressed = await Promise.all(toProcess.map((f) => compressImage(f)));
-    onChange([...(images || []), ...compressed]);
+    try {
+      const compressed = await Promise.all(toProcess.map((f) => compressImage(f)));
+      onChange([...(images || []), ...compressed]);
+    } catch (err) {
+      toast.error(`Image non importee : ${err.message}`);
+    }
     if (fileRef.current) fileRef.current.value = '';
   };
 
-  // Generation d'une image produit via IA (DALL-E) + conversion en base64 pour
-  // stockage perenne (l'URL DALL-E expire ~1h)
-  const handleGenerateAI = async () => {
-    if (!productName.trim()) { toast.error('Renseignez d\'abord le nom du produit'); return; }
-    if ((images?.length || 0) >= maxImages) { toast.error(`Maximum ${maxImages} images`); return; }
-    setGenerating(true);
-    try {
-      const desc = [productName, productCategorie, productDescription].filter(Boolean).join(', ');
-      const res = await apiFetch('/api/generate-image', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt: desc, style: 'product', size: '1024x1024' }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Échec génération');
-
-      let base64 = data.imageBase64;
-      // Fallback si l'API renvoie une URL (au lieu du base64) : on la convertit
-      if (!base64 && data.url) {
-        const imgRes = await fetch(data.url);
-        const blob = await imgRes.blob();
-        base64 = await new Promise((resolve) => {
-          const reader = new FileReader();
-          reader.onloadend = () => resolve(reader.result);
-          reader.readAsDataURL(blob);
-        });
-      }
-      if (!base64) throw new Error('Aucune image reçue');
-      onChange([...(images || []), base64]);
-      toast.success('Image générée et ajoutée');
-    } catch (err) {
-      console.error('[Catalogue IA] Erreur:', err);
-      toast.error(`Génération échouée : ${err.message}`);
-    } finally {
-      setGenerating(false);
-    }
-  };
+  // Le bouton « Generer IA » ne doit JAMAIS etre gris sans explication :
+  // `verdict.message` est affiche juste en dessous du bouton.
+  const verdict = validerDemandeGeneration({ fiche, images, maxImages });
 
   const remove = (idx) => {
     onChange((images || []).filter((_, i) => i !== idx));
@@ -352,20 +350,248 @@ function ImageUploader({ images, onChange, maxImages = 5, productName = '', prod
             <span className="text-[9px]">Ajouter</span>
           </button>
         )}
-        {(images || []).length < maxImages && (
-          <button
-            type="button"
-            onClick={handleGenerateAI}
-            disabled={generating}
-            className="w-20 h-20 rounded-lg border-2 border-dashed border-violet-300 flex flex-col items-center justify-center gap-1 text-violet-600 hover:border-violet-500 hover:bg-violet-50 transition-colors disabled:opacity-50"
-            title="Générer une image du produit avec l'IA"
-          >
-            {generating ? <Loader2 className="h-5 w-5 animate-spin" /> : <Sparkles className="h-5 w-5" />}
-            <span className="text-[9px]">{generating ? '...' : 'Générer IA'}</span>
-          </button>
-        )}
+        <button
+          type="button"
+          // Ouvre seulement : un second clic ne doit pas refermer le panneau et
+          // faire perdre une image déjà générée (donc déjà facturée).
+          onClick={() => setIaOuvert(true)}
+          disabled={!verdict.ok || iaOuvert}
+          className={`w-20 h-20 rounded-lg border-2 border-dashed flex flex-col items-center justify-center gap-1 transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
+            iaOuvert
+              ? 'border-violet-500 bg-violet-50 text-violet-700'
+              : 'border-violet-300 text-violet-600 hover:border-violet-500 hover:bg-violet-50'
+          }`}
+          title={
+            iaOuvert
+              ? 'Panneau de génération ouvert ci-dessous'
+              : (verdict.ok ? 'Générer une image du produit avec l\'IA' : verdict.message)
+          }
+        >
+          <Sparkles className="h-5 w-5" />
+          <span className="text-[9px] text-center leading-tight">Générer IA</span>
+        </button>
       </div>
+
+      {/* Pourquoi le bouton est grisé — toujours affiché, jamais un bouton gris muet. */}
+      {!verdict.ok && (
+        <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1">
+          {verdict.message}
+        </p>
+      )}
+
       <input ref={fileRef} type="file" accept="image/*" multiple className="hidden" onChange={handleFiles} />
+
+      {/* Monté/démonté à l'ouverture : l'état repart toujours propre (prompt
+          reconstruit depuis la fiche, aucun aperçu d'une session précédente). */}
+      {iaOuvert && (
+        <GenerationImageIA
+          onClose={() => setIaOuvert(false)}
+          fiche={fiche}
+          images={images}
+          maxImages={maxImages}
+          onAccepter={(dataUrl) => {
+            onChange([...(images || []), dataUrl]);
+            setIaOuvert(false);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ══════════════════════════════════════════════
+   Génération d'image IA (fiche produit)
+   ══════════════════════════════════════════════
+   Règles tenues ici :
+    - le prompt est construit depuis la fiche, MONTRÉ et MODIFIABLE avant de lancer ;
+    - chaque génération est facturée → avertissement visible + verrou anti double-clic ;
+    - l'image est prévisualisée : elle n'entre dans le formulaire que si l'utilisateur
+      l'accepte. Une image rejetée n'est jamais écrite (et rien n'est écrit en base
+      ici : l'enregistrement se fait à la validation du formulaire produit) ;
+    - en cas d'échec, on affiche le message d'erreur RÉEL de l'API.
+   ══════════════════════════════════════════════ */
+function GenerationImageIA({ onClose, fiche, images, maxImages, onAccepter }) {
+  // Le prompt est construit depuis la fiche au montage, puis appartient à
+  // l'utilisateur : c'est ce qu'il lit à l'écran qui part au service IA.
+  const [prompt, setPrompt] = useState(() => construirePromptProduit(fiche));
+  const [enCours, setEnCours] = useState(false);
+  const [etape, setEtape] = useState('');
+  const [apercu, setApercu] = useState(null);
+  const [octets, setOctets] = useState(0);
+  const [erreur, setErreur] = useState('');
+  // Verrou synchrone : `enCours` est un state React (asynchrone), il ne protège
+  // pas d'un double-clic rapide. Ce ref, lui, est mis à jour immédiatement.
+  const verrou = useRef(false);
+
+  const verdict = validerDemandeGeneration({
+    fiche,
+    promptEdite: prompt,
+    images,
+    maxImages,
+    enCours,
+  });
+
+  const lancer = async () => {
+    if (verrou.current) return;           // double-clic : on ne paie pas deux fois
+    if (!verdict.ok) return;
+    verrou.current = true;
+    setEnCours(true);
+    setErreur('');
+    setApercu(null);
+    setEtape('Génération en cours… (5 à 20 secondes)');
+    try {
+      const res = await apiFetch('/api/generate-image', {
+        method: 'POST',
+        body: JSON.stringify({ prompt: verdict.prompt, style: 'product', size: '1024x1024' }),
+      });
+      let corps = null;
+      try { corps = await res.json(); } catch { corps = null; }
+
+      if (!res.ok || (corps && corps.error)) {
+        throw new Error(extraireMessageErreur(res, corps));
+      }
+      const brute = extraireImage(corps);
+      if (!brute) throw new Error(extraireMessageErreur(res, corps));
+
+      setEtape('Compression avant enregistrement…');
+      const compressee = await compressSource(brute);
+      const decision = deciderEnregistrement(compressee);
+      if (!decision.ok) throw new Error(decision.message);
+
+      setApercu(compressee);
+      setOctets(decision.octets);
+      setEtape('');
+    } catch (err) {
+      console.error('[Catalogue IA image]', err);
+      setErreur(err.message || String(err));
+      setEtape('');
+    } finally {
+      setEnCours(false);
+      verrou.current = false;
+    }
+  };
+
+  const boutonLibelle = enCours
+    ? (etape || 'Génération en cours…')
+    : (apercu ? 'Régénérer une autre image' : 'Lancer la génération');
+
+  // Panneau INLINE (pas une modale imbriquée dans la modale du formulaire) :
+  // une modale dans une modale est la première cause de « l'écran ne répond
+  // plus, impossible de cliquer ». Ici, rien ne se superpose au formulaire.
+  return (
+    <div className="rounded-lg border border-violet-200 bg-violet-50/40 p-3">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <p className="flex items-center gap-1.5 text-sm font-medium text-violet-800">
+          <Sparkles className="h-4 w-4" /> Générer une image du produit
+        </p>
+        <button
+          type="button"
+          onClick={onClose}
+          disabled={enCours}
+          title={
+            enCours
+              ? 'Génération en cours — fermeture bloquée'
+              : (apercu ? 'Fermer — l\'image proposée sera perdue' : 'Fermer')
+          }
+          className="text-violet-700 hover:text-violet-900 disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          <X className="h-4 w-4" />
+        </button>
+      </div>
+
+      <div className="space-y-3">
+          <div>
+            <label className="mb-1 block text-sm font-medium">
+              Description envoyée à l&apos;IA — relisez et corrigez avant de lancer
+            </label>
+            <textarea
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+              rows={3}
+              disabled={enCours}
+              className="w-full rounded-md border bg-background px-3 py-2 text-sm disabled:opacity-60"
+              placeholder="Ex : Mug céramique blanc, anse épaisse, vu de trois quarts"
+            />
+            <div className="mt-1 flex items-center justify-between gap-2">
+              <p className="text-[11px] text-muted-foreground">
+                Fond neutre, éclairage studio, sans texte ni filigrane (ajouté automatiquement).
+              </p>
+              <button
+                type="button"
+                disabled={enCours}
+                onClick={() => setPrompt(construirePromptProduit(fiche))}
+                className="text-[11px] text-violet-600 hover:underline disabled:opacity-50 shrink-0"
+              >
+                Réinitialiser depuis la fiche
+              </button>
+            </div>
+          </div>
+
+          {/* Coût — discret mais toujours présent */}
+          <p className="text-[11px] text-amber-700 bg-amber-50 border border-amber-200 rounded px-2 py-1.5">
+            Chaque génération est facturée sur le compte OpenAI de l&apos;imprimerie.
+            Un seul clic suffit — l&apos;image met 5 à 20 secondes à arriver.
+          </p>
+
+          <Button
+            type="button"
+            onClick={lancer}
+            disabled={!verdict.ok}
+            className="w-full gap-2 bg-violet-600 hover:bg-violet-700 text-white"
+          >
+            {enCours ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+            {boutonLibelle}
+          </Button>
+
+          {/* Si le bouton est grisé, on dit pourquoi, juste en dessous. */}
+          {!verdict.ok && (
+            <p className="text-[11px] text-muted-foreground -mt-1">{verdict.message}</p>
+          )}
+
+          {/* Échec : message d'erreur RÉEL de l'API, jamais « une erreur est survenue ». */}
+          {erreur && (
+            <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2">
+              <p className="text-xs font-medium text-red-800">Génération échouée</p>
+              <p className="mt-0.5 text-xs text-red-700 break-words">{erreur}</p>
+              <p className="mt-1 text-[10px] text-red-600/80">
+                Message renvoyé par le service — à transmettre tel quel en cas de blocage.
+              </p>
+            </div>
+          )}
+
+          {/* Prévisualisation : rien n'est ajouté à la fiche tant que ce n'est pas accepté. */}
+          {apercu && (
+            <div className="space-y-2">
+              <img src={apercu} alt="Proposition générée par IA" className="w-full rounded-lg border" />
+              <p className="text-[10px] text-center text-muted-foreground">
+                Image créée par IA · {formaterOctets(octets)} après compression · non enregistrée pour l&apos;instant
+              </p>
+              <div className="flex gap-2">
+                <Button
+                  type="button"
+                  className="flex-1 gap-1.5"
+                  disabled={enCours}
+                  onClick={() => onAccepter(apercu)}
+                >
+                  <Eye className="h-3.5 w-3.5" /> Utiliser cette image
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="flex-1 gap-1.5"
+                  disabled={enCours}
+                  onClick={() => { setApercu(null); setOctets(0); }}
+                >
+                  <X className="h-3.5 w-3.5" /> Rejeter
+                </Button>
+              </div>
+              <p className="text-[10px] text-center text-muted-foreground">
+                « Utiliser » l&apos;ajoute au formulaire ; le produit n&apos;est enregistré
+                qu&apos;en validant la fiche.
+              </p>
+            </div>
+          )}
+      </div>
     </div>
   );
 }
@@ -679,7 +905,7 @@ function ProductForm({ open, onClose, editItem, onSave }) {
           <TagsInput value={form.options_personnalisables} onChange={(t) => upd('options_personnalisables', t)} label="Options personnalisables" placeholder="Logo, Texte, Couleur, Format..." />
 
           {/* Images */}
-          <ImageUploader images={form.images} onChange={(imgs) => upd('images', imgs)} productName={form.nom} productCategorie={form.categorie} productDescription={form.description} />
+          <ImageUploader images={form.images} onChange={(imgs) => upd('images', imgs)} fiche={form} />
 
           {/* Prix par quantité */}
           <PrixBuilder value={form.prix} onChange={(p) => upd('prix', p)} />
@@ -822,46 +1048,16 @@ export default function Catalogue() {
   };
 
   /* ─── IA Handlers ─── */
-  const [imageGenProduct, setImageGenProduct] = useState(null);
-  const [imageGenUrl, setImageGenUrl] = useState(null);
-  const [imageGenLoading, setImageGenLoading] = useState(false);
-
-  const handleGenImages = async (product) => {
-    const p = product || (filtered.length > 0 ? filtered[0] : produits[0]);
-    if (!p) { toast.error('Aucun produit sélectionné'); return; }
-    setImageGenProduct(p);
-    setImageGenUrl(null);
-    setImageGenLoading(true);
-    try {
-      const res = await apiFetch('/api/generate-image', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt: `Professional product photo for ${p.nom}, print shop in Gabon Africa, white background, commercial photography style, vibrant colors`,
-          size: '1024x1024',
-          quality: 'standard',
-        }),
-      });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
-      setImageGenUrl(data.url);
-      toast.success('Image generee !');
-    } catch (err) {
-      toast.error(`Erreur generation image : ${err.message}`);
-    } finally {
-      setImageGenLoading(false);
-    }
-  };
-
-  const handleUseGenImage = async () => {
-    if (!imageGenProduct || !imageGenUrl) return;
-    const images = [...(imageGenProduct.images || []), imageGenUrl];
-    await db.produits_catalogue.update(imageGenProduct.id, { images });
-    toast.success('Image ajoutee au produit');
-    setImageGenProduct(null);
-    setImageGenUrl(null);
-    load();
-  };
+  // Retiré le 14/09/2026 : le bouton global « Générer images IA » et sa modale.
+  // Trois défauts, tous constatés dans le code :
+  //  1. `onClick={() => handleGenImages()}` n'envoyait aucun produit : la
+  //     génération — facturée — partait sur `filtered[0]`, un produit au hasard.
+  //  2. Il lisait `data.url`, toujours `null` avec gpt-image-1 (qui renvoie du
+  //     b64_json) : l'image était payée puis jamais affichée, sans message.
+  //  3. `handleUseGenImage` écrivait directement en base depuis l'écran de
+  //     consultation, sans prévisualisation validée.
+  // La génération vit désormais dans la fiche produit (GenerationImageIA),
+  // avec prompt relu, prévisualisation, acceptation explicite et compression.
 
   const handleGenDescriptions = async () => {
     const targets = filtered.length > 0 ? filtered : produits;
@@ -998,15 +1194,6 @@ export default function Catalogue() {
         {/* IA Buttons */}
         {canWrite && (
           <div className="flex flex-wrap items-center gap-2">
-            <Button
-              className="gap-1.5 bg-[#E91E63] hover:bg-[#C2185B] text-white text-xs"
-              size="sm"
-              onClick={() => handleGenImages()}
-              disabled={!!iaLoading || imageGenLoading}
-            >
-              {imageGenLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ImagePlus className="h-3.5 w-3.5" />}
-              Générer images IA
-            </Button>
             <Button
               className="gap-1.5 bg-[#7C3AED] hover:bg-[#6D28D9] text-white text-xs"
               size="sm"
@@ -1283,51 +1470,6 @@ export default function Catalogue() {
       {/* Zoom Overlay */}
       <ZoomOverlay src={zoomSrc} onClose={() => setZoomSrc(null)} />
 
-      {/* Image Generation Modal */}
-      <Dialog open={!!imageGenProduct} onOpenChange={() => { setImageGenProduct(null); setImageGenUrl(null); }}>
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <ImagePlus className="h-4 w-4" /> Generer image IA
-            </DialogTitle>
-          </DialogHeader>
-          {imageGenProduct && (
-            <div className="space-y-4">
-              <p className="text-sm text-muted-foreground">Produit : <strong>{imageGenProduct.nom}</strong></p>
-              {imageGenLoading && (
-                <div className="flex flex-col items-center py-8 gap-3">
-                  <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                  <p className="text-sm text-muted-foreground">Generation en cours...</p>
-                </div>
-              )}
-              {imageGenUrl && (
-                <div className="space-y-3">
-                  <img src={imageGenUrl} alt="Generee par IA" className="w-full rounded-lg border" />
-                  <p className="text-[10px] text-muted-foreground text-center">Creee par IA — pour validation avant utilisation</p>
-                  <div className="flex gap-2">
-                    <Button className="flex-1 gap-1.5" onClick={handleUseGenImage}>
-                      <Eye className="h-3.5 w-3.5" /> Utiliser comme photo
-                    </Button>
-                    <Button variant="outline" className="flex-1 gap-1.5" onClick={() => handleGenImages(imageGenProduct)}>
-                      <Sparkles className="h-3.5 w-3.5" /> Regenerer
-                    </Button>
-                  </div>
-                  <a href={imageGenUrl} download={`${imageGenProduct.nom}-ia.png`} className="block">
-                    <Button variant="outline" className="w-full gap-1.5" size="sm">
-                      <FileDown className="h-3.5 w-3.5" /> Telecharger
-                    </Button>
-                  </a>
-                </div>
-              )}
-              {!imageGenLoading && !imageGenUrl && (
-                <Button className="w-full gap-2 bg-[#E91E63] hover:bg-[#C2185B] text-white" onClick={() => handleGenImages(imageGenProduct)}>
-                  <ImagePlus className="h-4 w-4" /> Lancer la generation
-                </Button>
-              )}
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
