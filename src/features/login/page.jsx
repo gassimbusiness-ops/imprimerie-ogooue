@@ -72,9 +72,22 @@ export default function Login() {
     setRegLoading(true);
 
     try {
-      // Check if email already exists
-      const existing = await db.employes.list();
-      if (existing.some((e) => e.email?.toLowerCase() === reg.email.toLowerCase().trim())) {
+      // Unicite de l'email verifiee cote serveur.
+      // Avant : db.employes.list() telechargeait toute la table des employes
+      // (salaires, empreintes de mots de passe) dans le navigateur d'un visiteur
+      // non authentifie, simplement parce qu'il ouvrait l'onglet "Creer un compte".
+      const dispo = await fetch('/api/auth-email-disponible', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: reg.email.trim() }),
+      }).then((r) => r.json()).catch(() => null);
+
+      if (!dispo) {
+        setRegError('Verification impossible. Reessayez.');
+        setRegLoading(false);
+        return;
+      }
+      if (!dispo.disponible) {
         setRegError('Un compte avec cet email existe déjà');
         setRegLoading(false);
         return;

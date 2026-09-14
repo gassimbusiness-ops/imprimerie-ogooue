@@ -34,3 +34,5 @@ dist-ssr
 *.sw?
 
 .env
+# Secrets locaux — jamais commités
+migrations/SECRETS_A_COLLER_LOCAL.txt

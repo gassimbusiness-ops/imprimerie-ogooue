@@ -7,6 +7,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { BarChart3, Loader2, Sparkles, Users, Moon } from 'lucide-react';
+import { apiFetch } from '@/services/api-client';
 
 function fmt(n) { return new Intl.NumberFormat('fr-FR').format(Math.round(n || 0)); }
 
@@ -149,7 +150,7 @@ export default function ZakatPage() {
     setLoadingIA(true);
     try {
       const displayName = currentUser ? `${currentUser.prenom || ''} ${currentUser.nom || ''}`.trim() : 'Associe';
-      const res = await fetch('/api/zakat-analyse', {
+      const res = await apiFetch('/api/zakat-analyse', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

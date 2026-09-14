@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { db } from '@/services/db';
-import { tresorerieImprimerie, chargeMensuelle } from '@/services/finance-calc';
+import { toISODate, todayISO, startOfMonthISO, addDaysISO } from '@/lib/dates';
+import { tresorerieImprimerie, chargeMensuelle, caRapport, caRapports, depensesRapports } from '@/services/finance-calc';
 import { useAuth } from '@/services/auth';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -113,10 +114,10 @@ export default function Dashboard() {
   const ventesStats = useMemo(() => {
     const now = new Date();
     const weekStart = new Date(now); weekStart.setDate(now.getDate() - 7);
-    const weekStartStr = weekStart.toISOString().slice(0, 10);
+    const weekStartStr = toISODate(weekStart);
     const caSemaine = rapports
       .filter((r) => r.date >= weekStartStr)
-      .reduce((s, r) => s + Object.values(r.categories || {}).reduce((a, v) => a + (v || 0), 0), 0);
+      .reduce((s, r) => s + caRapports([r]), 0);
 
     // Top produits depuis les commandes (toutes lignes)
     const compteur = {};
@@ -137,32 +138,32 @@ export default function Dashboard() {
 
   const stats = useMemo(() => {
     if (!rapports.length) return null;
-    const today = new Date().toISOString().split('T')[0];
+    const today = todayISO();
     const now = new Date();
-    const monthStart = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
+    const monthStart = startOfMonthISO(now);
 
     const todayR = rapports.filter((r) => r.date === today);
-    const todayRec = todayR.reduce((s, r) => s + Object.values(r.categories || {}).reduce((a, v) => a + (v || 0), 0), 0);
-    const todayDep = todayR.reduce((s, r) => s + (r.depenses || []).reduce((a, d) => a + (d.montant || 0), 0), 0);
+    const todayRec = caRapports(todayR);
+    const todayDep = depensesRapports(todayR);
 
     const monthR = rapports.filter((r) => r.date >= monthStart);
-    const monthRec = monthR.reduce((s, r) => s + Object.values(r.categories || {}).reduce((a, v) => a + (v || 0), 0), 0);
-    const monthDep = monthR.reduce((s, r) => s + (r.depenses || []).reduce((a, d) => a + (d.montant || 0), 0), 0);
+    const monthRec = caRapports(monthR);
+    const monthDep = depensesRapports(monthR);
 
     const prevMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
     const prevMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0);
-    const prevR = rapports.filter((r) => r.date >= prevMonthStart.toISOString().split('T')[0] && r.date <= prevMonthEnd.toISOString().split('T')[0]);
-    const prevRec = prevR.reduce((s, r) => s + Object.values(r.categories || {}).reduce((a, v) => a + (v || 0), 0), 0);
+    const prevR = rapports.filter((r) => r.date >= toISODate(prevMonthStart) && r.date <= toISODate(prevMonthEnd));
+    const prevRec = caRapports(prevR);
     const monthTrend = prevRec > 0 ? ((monthRec - prevRec) / prevRec) * 100 : 0;
 
     const chartData = [];
     for (let i = 13; i >= 0; i--) {
       const d = new Date();
       d.setDate(d.getDate() - i);
-      const dateStr = d.toISOString().split('T')[0];
+      const dateStr = toISODate(d);
       const dayR = rapports.filter((r) => r.date === dateStr);
-      const rec = dayR.reduce((s, r) => s + Object.values(r.categories || {}).reduce((a, v) => a + (v || 0), 0), 0);
-      const dep = dayR.reduce((s, r) => s + (r.depenses || []).reduce((a, d2) => a + (d2.montant || 0), 0), 0);
+      const rec = caRapports(dayR);
+      const dep = depensesRapports(dayR);
       chartData.push({
         date: d.toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' }),
         recettes: rec,
@@ -209,8 +210,8 @@ export default function Dashboard() {
       {/* Stats — employés: pas de données financières */}
       {isEmploye ? (
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4 lg:gap-4">
-          <StatCard title="Rapports du jour" value={stats ? rapports.filter((r) => r.date === new Date().toISOString().split('T')[0]).length : 0} icon={FileSpreadsheet} iconBg="bg-primary/10" iconColor="text-primary" />
-          <StatCard title="Commandes" value={rapports.length} icon={Package} iconBg="bg-emerald-500/10" iconColor="text-emerald-600" />
+          <StatCard title="Rapports du jour" value={stats ? rapports.filter((r) => r.date === todayISO()).length : 0} icon={FileSpreadsheet} iconBg="bg-primary/10" iconColor="text-primary" />
+          <StatCard title="Rapports enregistres" value={rapports.length} icon={Package} iconBg="bg-emerald-500/10" iconColor="text-emerald-600" />
           <StatCard title="Clients" value={clients.length} icon={Users} iconBg="bg-violet-500/10" iconColor="text-violet-600" />
           <StatCard title="Alertes stock" value={stats?.lowStock?.length || 0} icon={AlertTriangle} iconBg="bg-amber-500/10" iconColor="text-amber-600" />
         </div>
@@ -469,7 +470,7 @@ export default function Dashboard() {
           </CardHeader>
           <CardContent className="space-y-2">
             {rapports.slice(0, 5).map((r) => {
-              const rec = Object.values(r.categories || {}).reduce((s, v) => s + (v || 0), 0);
+              const rec = caRapport(r);
               const dep = (r.depenses || []).reduce((s, d) => s + (d.montant || 0), 0);
               return (
                 <div key={r.id} className="flex items-center justify-between rounded-lg bg-muted/50 p-3">

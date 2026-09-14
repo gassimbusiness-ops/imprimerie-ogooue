@@ -3,6 +3,10 @@ import { db, getSettings } from '@/services/db';
 import { useAuth } from '@/services/auth';
 import { notifyFactureDisponible } from '@/services/notifications';
 import { exportDocument } from '@/services/export-pdf';
+import { todayISO } from '@/lib/dates';
+import ClientCombobox from './client-combobox';
+import { RESOLUTION, resoudreClient, nettoyerNom } from './client-resolution';
+import { assurerClientFacture } from './client-annuaire';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -32,6 +36,9 @@ import {
   FileCheck,
   Download,
   Printer,
+  UserPlus,
+  UserCheck,
+  AlertTriangle,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -131,36 +138,35 @@ export default function DevisFactures() {
     setShowForm(true);
   };
 
-  const selectClient = (id) => {
-    const client = clients.find((c) => c.id === id);
-    if (client) {
-      setForm((f) => ({
-        ...f,
-        client_id: id,
-        client_nom: client.nom,
-        client_adresse: client.adresse || '',
-      }));
-    }
+  // Choix explicite d'une fiche de l'annuaire dans la liste deroulante.
+  const selectClient = (client) => {
+    if (!client) return;
+    setForm((f) => ({
+      ...f,
+      client_id: client.id,
+      client_nom: client.nom || '',
+      client_adresse: f.client_adresse || client.adresse || '',
+    }));
   };
 
-  // Saisie libre du nom client : on tente le matching avec un client existant
-  // (insensible a la casse + trim). Si match exact, on auto-fill client_id et adresse.
-  // Sinon, on garde client_id vide (= "nouveau client", sera cree a la sauvegarde si facture).
+  // Saisie libre : le texte fait foi, on retire toute selection precedente.
+  // La decision (rattacher / creer / laisser libre) est prise par resoudreClient,
+  // ici pour l'affichage et au moment de l'enregistrement pour l'effet reel.
   const updateClientNom = (nom) => {
-    const trimmed = nom.trim();
-    const match = clients.find((c) => (c.nom || '').trim().toLowerCase() === trimmed.toLowerCase());
-    if (match) {
-      setForm((f) => ({
-        ...f,
-        client_nom: nom,
-        client_id: match.id,
-        client_adresse: f.client_adresse || match.adresse || '',
-      }));
-    } else {
-      // Pas de match : on conserve le nom saisi mais on retire l'id (= nouveau client)
-      setForm((f) => ({ ...f, client_nom: nom, client_id: '' }));
-    }
+    setForm((f) => ({ ...f, client_nom: nom, client_id: '' }));
   };
+
+  // Etat affiche sous le champ : l'ecran doit montrer sans ambiguite si l'on est
+  // sur un client existant ou sur un nom qui creera (ou non) une fiche.
+  const resolutionClient = useMemo(
+    () => resoudreClient({
+      type: form.type,
+      clients,
+      nomSaisi: form.client_nom,
+      clientId: form.client_id,
+    }),
+    [form.type, form.client_nom, form.client_id, clients],
+  );
 
   const updateLigne = (idx, field, value) => {
     setForm((f) => {
@@ -184,37 +190,49 @@ export default function DevisFactures() {
     return sub - (Number(form.remise) || 0);
   };
 
+  /**
+   * Branche le module `client-annuaire` sur la base et sur les toasts.
+   * Toute la logique (relecture, rattachement, creation, chemin d'erreur) est la-bas,
+   * testee par tests/client-annuaire.test.mjs.
+   */
+  const assurerClientAnnuaire = ({ nom, adresse, numero, clientId }) => assurerClientFacture(
+    {
+      listerClients: () => db.clients.list(),
+      creerClient: (data) => db.clients.create(data),
+      clientsConnus: clients,
+      notifier: (niveau, message) => {
+        if (niveau === 'erreur') toast.error(message);
+        else if (niveau === 'succes') toast.success(message);
+        else toast.info(message);
+      },
+    },
+    { nom, adresse, numero, clientId, dateISO: todayISO() },
+  );
+
   const handleSave = async () => {
-    const clientNom = form.client_nom.trim();
-    if (!clientNom) { toast.error('Client requis'); return; }
+    const decision = resoudreClient({
+      type: form.type,
+      clients,
+      nomSaisi: form.client_nom,
+      clientId: form.client_id,
+    });
+    if (decision.statut === RESOLUTION.INVALIDE) { toast.error(decision.message); return; }
     if (!form.lignes.some((l) => l.description.trim())) { toast.error('Au moins une ligne'); return; }
 
-    // Auto-creation du client dans l'annuaire si c'est une FACTURE avec client libre
-    // (= client_id vide et nom non present dans la liste)
-    let clientId = form.client_id;
-    if (form.type === 'facture' && !clientId) {
-      // Re-verifier match avec annuaire actuel (cas ou l'utilisateur a tape un nom existant
-      // mais avec une casse differente sans declencher updateClientNom)
-      const existing = clients.find((c) => (c.nom || '').trim().toLowerCase() === clientNom.toLowerCase());
-      if (existing) {
-        clientId = existing.id;
-      } else {
-        try {
-          const newClient = await db.clients.create({
-            nom: clientNom,
-            type: 'particulier',
-            adresse: form.client_adresse || '',
-            email: '',
-            telephone: '',
-            notes: 'Créé automatiquement lors d\'une facturation',
-          });
-          clientId = newClient.id;
-          toast.success(`Client "${clientNom}" ajouté à l'annuaire`);
-        } catch (e) {
-          console.error('[devis-factures] Echec creation client auto:', e);
-          // On continue sans bloquer la creation de la facture
-        }
-      }
+    let clientNom = decision.nom;
+    let clientId = decision.clientId;
+
+    // Regle metier : seule la FACTURE alimente l'annuaire.
+    // Un devis accepte un nom libre sans creer de fiche (statut LIBRE).
+    if (form.type === 'facture') {
+      const res = await assurerClientAnnuaire({
+        nom: clientNom,
+        adresse: form.client_adresse,
+        numero: form.numero,
+        clientId,
+      });
+      clientId = res.clientId;
+      clientNom = res.nom || clientNom;
     }
 
     const data = {
@@ -228,15 +246,23 @@ export default function DevisFactures() {
       remise: Number(form.remise) || 0,
       total_ttc: getTotal(),
       statut: 'brouillon',
-      date: new Date().toISOString().split('T')[0],
+      // ⚠️ jamais .toISOString() : voir src/lib/dates.js (decalage de fuseau au Gabon)
+      date: todayISO(),
     };
 
     const collection = form.type === 'devis' ? db.devis : db.factures;
-    await collection.create(data);
+    try {
+      await collection.create(data);
+    } catch (e) {
+      // Le formulaire reste ouvert : la saisie n'est pas perdue et l'utilisateur voit pourquoi.
+      console.error('[devis-factures] Echec enregistrement document:', e);
+      toast.error(`Enregistrement impossible (${(e && e.message) || 'erreur'}). Le document n'a pas été créé.`);
+      return;
+    }
     if (form.type === 'facture' && clientId) {
       notifyFactureDisponible(clientId, form.numero);
     }
-    toast.success(`${TYPES[form.type].label} créé`);
+    toast.success(form.type === 'devis' ? 'Devis créé' : 'Facture créée');
     setShowForm(false);
     load();
   };
@@ -249,13 +275,24 @@ export default function DevisFactures() {
     load();
   };
 
+  // Conversion devis → facture.
+  // C'est ici que se joue le cas « devis a client libre qui devient une facture » :
+  // le devis n'avait pas cree de fiche, la facture doit le faire maintenant.
   const handleConvertToFacture = async (devis) => {
     const factures = documents.filter((d) => d._type === 'facture');
     const num = `FAC-${String(factures.length + 1).padStart(4, '0')}`;
+
+    const res = await assurerClientAnnuaire({
+      nom: devis.client_nom,
+      adresse: devis.client_adresse,
+      numero: num,
+      clientId: devis.client_id,
+    });
+
     await db.factures.create({
       numero: num,
-      client_id: devis.client_id,
-      client_nom: devis.client_nom,
+      client_id: res.clientId,
+      client_nom: res.nom || devis.client_nom,
       client_adresse: devis.client_adresse,
       objet: devis.objet,
       lignes: devis.lignes,
@@ -263,12 +300,13 @@ export default function DevisFactures() {
       remise: devis.remise,
       total_ttc: devis.total_ttc,
       statut: 'brouillon',
-      date: new Date().toISOString().split('T')[0],
+      // ⚠️ jamais .toISOString() : voir src/lib/dates.js (decalage de fuseau au Gabon)
+      date: todayISO(),
       devis_ref: devis.numero,
     });
     await db.devis.update(devis.id, { statut: 'accepte' });
-    if (devis.client_id) {
-      notifyFactureDisponible(devis.client_id, num);
+    if (res.clientId) {
+      notifyFactureDisponible(res.clientId, num);
     }
     toast.success(`Facture ${num} créée à partir du devis`);
     setShowDetail(null);
@@ -419,26 +457,57 @@ export default function DevisFactures() {
           <div className="space-y-4 pt-2">
             <div>
               <label className="mb-1.5 block text-sm font-medium">Client</label>
-              <Input
-                list="clients-autocomplete"
+              <ClientCombobox
+                clients={clients}
                 value={form.client_nom}
-                onChange={(e) => updateClientNom(e.target.value)}
+                onChange={updateClientNom}
+                onSelect={selectClient}
                 placeholder={clients.length > 0 ? 'Tapez ou choisissez un client' : 'Nom du client'}
-                autoComplete="off"
               />
-              {clients.length > 0 && (
-                <datalist id="clients-autocomplete">
-                  {clients.map((c) => <option key={c.id} value={c.nom} />)}
-                </datalist>
-              )}
-              {form.type === 'facture' && form.client_nom.trim() && !form.client_id && (
-                <p className="mt-1 text-[10px] text-emerald-700">
-                  ✓ Nouveau client : sera ajouté automatiquement à l'annuaire à la création de la facture
+
+              {/* L'ecran doit montrer sans ambiguite lequel des deux cas on est en train de faire. */}
+              {resolutionClient.statut === RESOLUTION.EXISTANT && (
+                <p className="mt-1.5 flex items-start gap-1.5 rounded bg-muted/60 px-2 py-1.5 text-[11px] text-foreground">
+                  <UserCheck className="mt-px h-3.5 w-3.5 shrink-0 text-blue-600" />
+                  <span>
+                    <span className="font-medium">Client existant sélectionné</span>
+                    {' — '}
+                    {resolutionClient.rattachement === 'par_nom' && resolutionClient.nom !== nettoyerNom(form.client_nom)
+                      ? `« ${nettoyerNom(form.client_nom)} » sera rattaché à la fiche « ${resolutionClient.nom} »`
+                      : resolutionClient.nom}
+                    {resolutionClient.ambigu && (
+                      <span className="block text-amber-700">
+                        ⚠️ Plusieurs fiches portent ce nom dans l&apos;annuaire — à fusionner.
+                      </span>
+                    )}
+                  </span>
                 </p>
               )}
-              {form.client_id && (
-                <p className="mt-1 text-[10px] text-muted-foreground">
-                  Client de l'annuaire
+              {resolutionClient.statut === RESOLUTION.A_CREER && (
+                <p className="mt-1.5 flex items-start gap-1.5 rounded bg-emerald-50 px-2 py-1.5 text-[11px] text-emerald-800">
+                  <UserPlus className="mt-px h-3.5 w-3.5 shrink-0" />
+                  <span>
+                    <span className="font-medium">Nouveau client</span>
+                    {' — '}
+                    « {resolutionClient.nom} » sera ajouté à l&apos;annuaire à l&apos;enregistrement de la facture.
+                  </span>
+                </p>
+              )}
+              {resolutionClient.statut === RESOLUTION.LIBRE && (
+                <p className="mt-1.5 flex items-start gap-1.5 rounded bg-muted/60 px-2 py-1.5 text-[11px] text-muted-foreground">
+                  <FileText className="mt-px h-3.5 w-3.5 shrink-0" />
+                  <span>
+                    <span className="font-medium text-foreground">Nom libre</span>
+                    {' — '}
+                    un devis n&apos;ajoute pas de fiche à l&apos;annuaire. Le client sera créé si le devis
+                    devient une facture.
+                  </span>
+                </p>
+              )}
+              {resolutionClient.statut === RESOLUTION.INVALIDE && form.client_nom.length > 0 && (
+                <p className="mt-1.5 flex items-start gap-1.5 text-[11px] text-destructive">
+                  <AlertTriangle className="mt-px h-3.5 w-3.5 shrink-0" />
+                  <span>{resolutionClient.message}</span>
                 </p>
               )}
               <div className="mt-2">
@@ -495,7 +564,7 @@ export default function DevisFactures() {
             </div>
 
             <Button className="w-full" onClick={handleSave}>
-              Créer le {TYPES[form.type]?.label.toLowerCase()}
+              {form.type === 'devis' ? 'Créer le devis' : 'Créer la facture'}
             </Button>
           </div>
         </DialogContent>

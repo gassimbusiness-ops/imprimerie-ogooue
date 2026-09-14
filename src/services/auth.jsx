@@ -2,6 +2,7 @@ import { createContext, useContext, useState, useEffect } from 'react';
 import { db } from './db';
 import { hashPassword, verifyPassword, generateSalt } from './crypto';
 import { logAction } from './audit';
+import { enregistrerJeton, effacerJeton, apiFetch } from './api-client';
 
 const AuthContext = createContext(null);
 
@@ -117,30 +118,35 @@ export function AuthProvider({ children }) {
       return { error: 'Email et mot de passe requis' };
     }
 
-    const employes = await db.employes.list();
-    const found = employes.find(
-      (e) => e.email?.toLowerCase() === email.toLowerCase()
-    );
-    if (!found) return { error: 'Identifiants incorrects' };
-
-    // Verify password
-    if (!found.password_hash || !found.password_salt) {
-      return { error: 'Compte non activé. Contactez l\'administrateur.' };
+    // Verification cote serveur.
+    //
+    // Avant : `db.employes.list()` telechargeait toute la collection employes dans le
+    // navigateur — salaires, telephones, empreintes de mots de passe et sels — AVANT
+    // meme de verifier le mot de passe. Un simple essai de connexion, sans compte,
+    // suffisait a exfiltrer le personnel entier.
+    //
+    // Maintenant : le serveur seul lit la table et ne renvoie que l'identite publique,
+    // accompagnee d'un jeton de session signe que le navigateur ne peut pas fabriquer.
+    let reponse;
+    try {
+      reponse = await fetch('/api/auth-login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      });
+    } catch {
+      return { error: 'Connexion au serveur impossible. Verifiez votre reseau.' };
     }
 
-    const valid = await verifyPassword(password, found.password_hash, found.password_salt);
-    if (!valid) return { error: 'Identifiants incorrects' };
+    const resultat = await reponse.json().catch(() => ({}));
+    if (!reponse.ok) {
+      return { error: resultat.error || 'Identifiants incorrects' };
+    }
 
-    const userData = {
-      id: found.id,
-      nom: found.nom,
-      prenom: found.prenom,
-      email: found.email,
-      telephone: found.telephone || '',
-      role: found.role || 'employe',
-      poste: found.poste,
-      _loginAt: Date.now(),
-    };
+    const found = resultat.user;
+    enregistrerJeton(resultat.token);
+
+    const userData = { ...found, _loginAt: Date.now() };
     setUser(userData);
     localStorage.setItem('io_current_user', JSON.stringify(userData));
 
@@ -164,6 +170,7 @@ export function AuthProvider({ children }) {
     }
     setUser(null);
     localStorage.removeItem('io_current_user');
+    effacerJeton();
   };
 
   /**
@@ -172,16 +179,17 @@ export function AuthProvider({ children }) {
    * @param {string} newPassword
    */
   const changePassword = async (userId, newPassword) => {
-    if (!newPassword || newPassword.length < 6) {
-      return { error: 'Le mot de passe doit contenir au moins 6 caractères' };
+    if (!newPassword || newPassword.length < 8) {
+      return { error: 'Le mot de passe doit contenir au moins 8 caractères' };
     }
-    const salt = generateSalt();
-    const hash = await hashPassword(newPassword, salt);
-    await db.employes.update(userId, {
-      password_hash: hash,
-      password_salt: salt,
-      password_changed_at: new Date().toISOString(),
+    // Ecriture cote serveur : le navigateur ne fabrique plus d'empreinte et ne peut
+    // plus ecraser celle d'un autre compte. Le jeton signe decide qui a le droit.
+    const res = await apiFetch('/api/auth-changer-mot-de-passe', {
+      method: 'POST',
+      body: JSON.stringify({ userId, nouveauMotDePasse: newPassword }),
     });
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) return { error: json.error || 'Changement refuse' };
     return { success: true };
   };
 
@@ -189,15 +197,36 @@ export function AuthProvider({ children }) {
    * Create a user account with password.
    */
   const createUser = async (userData, password) => {
-    const salt = generateSalt();
-    const hash = await hashPassword(password, salt);
-    const created = await db.employes.create({
-      ...userData,
-      password_hash: hash,
-      password_salt: salt,
-      password_changed_at: new Date().toISOString(),
+    // Creation cote serveur.
+    //
+    // Le champ `role` envoye par le navigateur est IGNORE sans session administrateur :
+    // le serveur force 'client'. C'est ce qui ferme la prise de controle — auparavant
+    // n'importe qui pouvait s'inscrire avec role: 'admin' depuis le formulaire public.
+    //
+    // Ce chemin sert donc aux deux usages : inscription publique d'un client (sans
+    // session) et creation par un administrateur (avec session).
+    // Les champs metier (code de parrainage, type de client...) partent avec la creation :
+    // un `update` separe echouerait, la modification d'un employe etant reservee aux admins.
+    const extras = { ...userData };
+    ['email', 'nom', 'prenom', 'telephone', 'poste', 'role'].forEach((k) => delete extras[k]);
+
+    const res = await apiFetch('/api/auth-creer-utilisateur', {
+      method: 'POST',
+      body: JSON.stringify({
+        email: userData.email,
+        motDePasse: password,
+        nom: userData.nom,
+        prenom: userData.prenom,
+        telephone: userData.telephone,
+        poste: userData.poste,
+        role: userData.role,
+        extras,
+      }),
     });
-    return created;
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(json.error || 'Creation du compte refusee');
+
+    return json.user;
   };
 
   const hasPermission = (module, action = 'read') => {

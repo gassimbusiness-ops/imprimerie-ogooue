@@ -2,13 +2,27 @@
  * Vercel Serverless Function — Generate product mockup via gpt-image-1 (images/edits).
  * Uses uploaded logo as reference image for realistic integration.
  */
+import { exigerSession } from './_lib/session.js';
+import { limiteDepassee } from './_lib/limite.js';
+
 export default async function handler(req, res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Origin', process.env.APP_ORIGIN || '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+
+  // ── Verrou ajoute le 13/09/2026 ──────────────────────────────────────────
+  // Cet endpoint etait ouvert a Internet : CORS '*', aucune authentification,
+  // aucun plafond. N'importe qui connaissant l'URL disposait d'un proxy IA
+  // facture sur le compte de l'entreprise. Verifie par requete depuis une
+  // machine tierce non authentifiee.
+  if (limiteDepassee(req, { max: 6, fenetreMs: 60_000 })) {
+    return res.status(429).json({ error: 'Trop de requetes. Reessayez dans une minute.' });
+  }
+  if (!exigerSession(req, res)) return;
+  // ─────────────────────────────────────────────────────────────────────────
 
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) return res.status(500).json({ error: 'Cle API OpenAI non configuree' });

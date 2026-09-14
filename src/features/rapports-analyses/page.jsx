@@ -1,5 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { db } from '@/services/db';
+import { toISODate } from '@/lib/dates';
+import { caRapport, caRapports, CATEGORIES_RAPPORT } from '@/services/finance-calc';
 import { useAuth } from '@/services/auth';
 import { exportInventairePDF, exportClientsPDF, exportRapportCompletPDF, exportCSV } from '@/services/export-pdf';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -54,7 +56,8 @@ function getDateRange(periode) {
     case 'annee': start = new Date(today.getFullYear(), 0, 1); break;
     default: start = new Date(today.getFullYear(), today.getMonth(), 1);
   }
-  return { start: start.toISOString().slice(0, 10), end: now.toISOString().slice(0, 10) };
+  // Dates metier locales : ne jamais passer par UTC (cf. src/lib/dates.js)
+  return { start: toISODate(start), end: toISODate(now) };
 }
 
 function getPrevRange(periode) {
@@ -64,7 +67,7 @@ function getPrevRange(periode) {
   const diff = e - s;
   const prevEnd = new Date(s.getTime() - 86400000);
   const prevStart = new Date(prevEnd.getTime() - diff);
-  return { start: prevStart.toISOString().slice(0, 10), end: prevEnd.toISOString().slice(0, 10) };
+  return { start: toISODate(prevStart), end: toISODate(prevEnd) };
 }
 
 export default function RapportsAnalyses() {
@@ -130,20 +133,17 @@ export default function RapportsAnalyses() {
 
   // ═══ VENTES data ═══
   const ventesData = useMemo(() => {
-    const catKeys = ['copies', 'marchandises', 'scan', 'tirage_saisies', 'badges_plastification', 'demi_photos', 'maintenance', 'imprimerie'];
-    const ca = periodRapports.reduce((s, r) => {
-      const cats = r.categories || {};
-      return s + catKeys.reduce((ss, k) => ss + (cats[k] || 0), 0);
-    }, 0);
-    const prevCA = prevRapports.reduce((s, r) => {
-      const cats = r.categories || {};
-      return s + catKeys.reduce((ss, k) => ss + (cats[k] || 0), 0);
-    }, 0);
+    const catKeys = CATEGORIES_RAPPORT;
+    const ca = caRapports(periodRapports);
+    const prevCA = caRapports(prevRapports);
     const nbCommandes = periodCommandes.length;
     const prevNbCommandes = prevCommandes.length;
-    const panierMoyen = nbCommandes > 0 ? periodCommandes.reduce((s, c) => s + (c.montant_total || c.total || 0), 0) / nbCommandes : 0;
-    const variationCA = prevCA > 0 ? ((ca - prevCA) / prevCA * 100) : 0;
-    const variationCmd = prevNbCommandes > 0 ? ((nbCommandes - prevNbCommandes) / prevNbCommandes * 100) : 0;
+    // null (et non 0) quand la mesure n'existe pas : un zero se lit comme une mesure.
+    const panierMoyen = nbCommandes > 0 ? periodCommandes.reduce((s, c) => s + (c.montant_total || c.total || 0), 0) / nbCommandes : null;
+    // null (et non 0) quand il n'y a pas de base de comparaison : sinon on affiche
+    // une fleche verte "+0,0 %" alors qu'aucune comparaison n'est possible.
+    const variationCA = prevCA > 0 ? ((ca - prevCA) / prevCA * 100) : null;
+    const variationCmd = prevNbCommandes > 0 ? ((nbCommandes - prevNbCommandes) / prevNbCommandes * 100) : null;
 
     // CA par jour pour courbe
     const caParJour = {};
@@ -253,7 +253,7 @@ export default function RapportsAnalyses() {
 
   // ═══ FINANCE data ═══
   const financeData = useMemo(() => {
-    const catKeys = ['copies', 'marchandises', 'scan', 'tirage_saisies', 'badges_plastification', 'demi_photos', 'maintenance', 'imprimerie'];
+    const catKeys = CATEGORIES_RAPPORT;
 
     const monthRapports = rapports.filter((r) => (r.date || '').slice(0, 7) === new Date().toISOString().slice(0, 7));
     const recettes = monthRapports.reduce((s, r) => {
@@ -371,12 +371,12 @@ export default function RapportsAnalyses() {
               },
               {
                 label: 'Panier moyen',
-                value: `${fmt(ventesData.panierMoyen)} F`,
+                value: ventesData.panierMoyen === null ? '—' : `${fmt(ventesData.panierMoyen)} F`,
                 icon: CreditCard,
                 color: 'border-l-violet-500',
               },
               {
-                label: 'Rapports jour',
+                label: 'Rapports (période)',
                 value: periodRapports.length,
                 icon: FileText,
                 color: 'border-l-amber-500',
@@ -388,10 +388,10 @@ export default function RapportsAnalyses() {
                     <div className="min-w-0 flex-1">
                       <p className="text-[10px] sm:text-[11px] text-muted-foreground uppercase tracking-wide truncate">{label}</p>
                       <p className="text-sm sm:text-xl font-bold mt-1">{value}</p>
-                      {variation !== undefined && (
+                      {variation !== undefined && variation !== null && (
                         <p className={`text-[10px] flex items-center gap-0.5 mt-0.5 ${variation >= 0 ? 'text-emerald-600' : 'text-red-500'}`}>
                           {variation >= 0 ? <ArrowUpRight className="h-3 w-3" /> : <ArrowDownRight className="h-3 w-3" />}
-                          {Math.abs(variation).toFixed(1)}% vs période préc.
+                          {Math.abs(variation).toFixed(1)}% vs {prevRange.start} → {prevRange.end}
                         </p>
                       )}
                     </div>
@@ -876,7 +876,7 @@ export default function RapportsAnalyses() {
           </Card>
 
           <Card className="hover:shadow-md transition-shadow cursor-pointer" onClick={() => {
-            const catKeys = ['copies', 'marchandises', 'scan', 'tirage_saisies', 'badges_plastification', 'demi_photos', 'maintenance', 'imprimerie'];
+            const catKeys = CATEGORIES_RAPPORT;
             const data = periodRapports.map((r) => {
               const cats = r.categories || {};
               const total = catKeys.reduce((s, k) => s + (cats[k] || 0), 0);
@@ -948,7 +948,7 @@ export default function RapportsAnalyses() {
                 setIaResult(null);
                 try {
                   const byService = {};
-                  const catKeys = ['copies', 'marchandises', 'scan', 'tirage_saisies', 'badges_plastification', 'demi_photos', 'maintenance', 'imprimerie'];
+                  const catKeys = CATEGORIES_RAPPORT;
                   periodRapports.forEach((r) => {
                     const cats = r.categories || {};
                     catKeys.forEach((k) => { byService[k] = (byService[k] || 0) + (cats[k] || 0); });

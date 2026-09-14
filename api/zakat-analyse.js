@@ -3,8 +3,23 @@
  * POST /api/zakat-analyse
  * Utilise Claude (Anthropic) pour fournir des conseils Zakat personnalisés.
  */
+import { exigerSession } from './_lib/session.js';
+import { limiteDepassee } from './_lib/limite.js';
+import { modeleAnthropic, messageErreurAnthropic } from './_lib/modeles.js';
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+
+  // ── Verrou ajoute le 13/09/2026 ──────────────────────────────────────────
+  // Cet endpoint etait ouvert a Internet : CORS '*', aucune authentification,
+  // aucun plafond. N'importe qui connaissant l'URL disposait d'un proxy IA
+  // facture sur le compte de l'entreprise. Verifie par requete depuis une
+  // machine tierce non authentifiee.
+  if (limiteDepassee(req, { max: 10, fenetreMs: 60_000 })) {
+    return res.status(429).json({ error: 'Trop de requetes. Reessayez dans une minute.' });
+  }
+  if (!exigerSession(req, res)) return;
+  // ─────────────────────────────────────────────────────────────────────────
 
   const { nom, valeurPart, parts, investissementDepart, annee, zakatCalculee, zakatObligatoire } = req.body;
 
@@ -39,7 +54,7 @@ Maximum 150 mots.`;
         'anthropic-version': '2023-06-01',
       },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
+        model: modeleAnthropic(),
         max_tokens: 400,
         messages: [{ role: 'user', content: prompt }],
       }),
@@ -48,7 +63,9 @@ Maximum 150 mots.`;
     if (!response.ok) {
       const errText = await response.text();
       console.error('[Zakat IA] Anthropic error:', response.status, errText);
-      throw new Error('Erreur API IA');
+      // Message exploitable plutot que 'Erreur API IA' : c'est ce libelle opaque qui a fait
+      // croire pendant des semaines a une cle revoquee alors que c'etait le nom du modele.
+      throw new Error(messageErreurAnthropic(response.status, errText));
     }
 
     const data = await response.json();
