@@ -18,6 +18,9 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { askAI } from '@/services/ai';
+import {
+  STATUT_RH, estEnAttente, estApprouvee, estRejetee, estPayee, estEngageante, libelleStatutDemande,
+} from '@/services/statuts-rh';
 
 function fmt(n) { return new Intl.NumberFormat('fr-FR').format(Math.round(n || 0)); }
 
@@ -110,7 +113,7 @@ export default function PerformanceRH() {
 
       // Avances ce mois (demandes type avance, approuvee ou payee)
       const avances = demandesRH
-        .filter((d) => (d.employe_id === empId || d.user_id === empId) && d.type === 'avance' && ['approuvee', 'payee'].includes(d.statut) && (d.created_at || '').slice(0, 7) === currentMonth)
+        .filter((d) => (d.employe_id === empId || d.user_id === empId) && d.type === 'avance' && estEngageante(d) && (d.created_at || '').slice(0, 7) === currentMonth)
         .reduce((s, d) => s + (Number(d.montant) || 0), 0);
 
       const salaireBase = Number(e.salaire_base) || 0;
@@ -153,11 +156,11 @@ export default function PerformanceRH() {
 
     // Congés en cours
     const congesEnCours = demandesRH.filter((d) =>
-      d.type === 'conge' && d.statut === 'approuve' && d.date_fin >= today && d.date_debut <= today
+      d.type === 'conge' && estApprouvee(d) && d.date_fin >= today && d.date_debut <= today
     ).length;
 
     // Demandes en attente
-    const demandesAttente = demandesRH.filter((d) => d.statut === 'en_attente' || d.statut === 'pending').length;
+    const demandesAttente = demandesRH.filter(estEnAttente).length;
 
     // Absences par motif (pie chart)
     const absMotifs = {};
@@ -276,10 +279,14 @@ export default function PerformanceRH() {
   };
 
   const handleDemandeAction = async (demande, action) => {
-    const statut = action === 'approve' ? 'approuve' : 'rejete';
+    // On ECRIT la valeur canonique partagee (src/services/statuts-rh.js).
+    // Cet ecran ecrivait 'approuve' tandis que Demandes RH lisait 'approuvee' :
+    // l'avance approuvee n'etait jamais deduite du salaire, et le bouton
+    // « Marquer payee » ne s'affichait jamais.
+    const statut = action === 'approve' ? STATUT_RH.APPROUVEE : STATUT_RH.REJETEE;
     await db.demandes_rh.update(demande.id, { statut, traite_par: user?.id, traite_date: new Date().toISOString() });
     await logAction('update', 'rh', { details: `Demande RH ${statut}: ${demande.type} — ${demande.employe_nom || ''}` });
-    toast.success(`Demande ${statut === 'approuve' ? 'approuvée' : 'rejetée'}`);
+    toast.success(`Demande ${statut === STATUT_RH.APPROUVEE ? 'approuvée' : 'rejetée'}`);
     load();
   };
 
@@ -710,7 +717,7 @@ export default function PerformanceRH() {
           <h3 className="text-lg font-bold">Demandes RH</h3>
 
           {/* En attente */}
-          {demandesRH.filter((d) => d.statut === 'en_attente' || d.statut === 'pending').length > 0 && (
+          {demandesRH.filter(estEnAttente).length > 0 && (
             <Card className="border-l-4 border-l-orange-500">
               <CardHeader className="pb-2">
                 <CardTitle className="text-sm flex items-center gap-2">
@@ -719,7 +726,7 @@ export default function PerformanceRH() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-2">
-                  {demandesRH.filter((d) => d.statut === 'en_attente' || d.statut === 'pending').map((d) => (
+                  {demandesRH.filter(estEnAttente).map((d) => (
                     <div key={d.id} className="rounded-lg border p-3 flex flex-col sm:flex-row sm:items-center gap-3">
                       <div className="flex-1">
                         <p className="text-sm font-medium">{d.employe_nom || '—'}</p>
@@ -765,11 +772,12 @@ export default function PerformanceRH() {
                         </p>
                       </div>
                       <Badge className={`text-[10px] ${
-                        d.statut === 'approuve' ? 'bg-emerald-100 text-emerald-700' :
-                        d.statut === 'rejete' ? 'bg-red-100 text-red-700' :
+                        estApprouvee(d) ? 'bg-emerald-100 text-emerald-700' :
+                        estPayee(d) ? 'bg-blue-100 text-blue-700' :
+                        estRejetee(d) ? 'bg-red-100 text-red-700' :
                         'bg-amber-100 text-amber-700'
                       }`}>
-                        {d.statut === 'approuve' ? 'Approuvé' : d.statut === 'rejete' ? 'Rejeté' : 'En attente'}
+                        {libelleStatutDemande(d)}
                       </Badge>
                     </div>
                   ))}

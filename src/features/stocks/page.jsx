@@ -4,6 +4,7 @@ import { useAuth } from '@/services/auth';
 import { valeurStockTotal, valeurMachines } from '@/services/finance-calc';
 import { logAction } from '@/services/audit';
 import { notifyStockAlerte } from '@/services/notifications';
+import { preparerArticlesPourAffichage, seuilArticle, niveauStock } from '@/services/stocks-seuils';
 import { exportInventairePDF, exportCSV } from '@/services/export-pdf';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -27,15 +28,15 @@ import { askAI, AI_PROMPTS } from '@/services/ai';
 /* ─── Helpers ─── */
 function fmt(n) { return new Intl.NumberFormat('fr-FR').format(Math.round(n || 0)); }
 
+// Badge d'alerte — le calcul du niveau vient du module partage (teste),
+// seules les couleurs restent ici.
+const COULEURS_NIVEAU = {
+  rupture: { label: 'Rupture', color: 'bg-red-100 text-red-700 border-red-200' },
+  bas: { label: 'Bas', color: 'bg-amber-100 text-amber-700 border-amber-200' },
+  ok: { label: 'OK', color: 'bg-emerald-100 text-emerald-700 border-emerald-200' },
+};
 function statusBadge(quantite, quantite_minimum) {
-  if (quantite <= 0) return { label: 'Rupture', color: 'bg-red-100 text-red-700 border-red-200' };
-  if (quantite <= quantite_minimum) return { label: 'Bas', color: 'bg-amber-100 text-amber-700 border-amber-200' };
-  return { label: 'OK', color: 'bg-emerald-100 text-emerald-700 border-emerald-200' };
-}
-
-// Seuil minimum par defaut selon le type d'article
-function getDefaultSeuil(typeArticle) {
-  return typeArticle === 'consommable' ? 10 : 1;
+  return COULEURS_NIVEAU[niveauStock(quantite, quantite_minimum)];
 }
 
 /* ─── Constants ─── */
@@ -171,7 +172,7 @@ function StockDetail({ article, mouvements, open, onClose, canWrite, onEdit, onD
                 label: 'Message fournisseur',
                 onClick: async () => {
                   const { system, prompt } = AI_PROMPTS.stocks.messageFournisseur(
-                    article.nom, article.fournisseur || '', article.quantite_minimum || 10, article.unite || 'unité'
+                    article.nom, article.fournisseur || '', seuilArticle(article), article.unite || 'unité'
                   );
                   return askAI(system, prompt);
                 }
@@ -246,32 +247,16 @@ export default function Stocks() {
       db.produits.list(),
       db.mouvements_stock.list(),
     ]);
-    // Auto-fix: type_article pour machines connues + seuil minimum 10 pour consommables
-    const machinePatterns = /imprimante|ordinateur|scanner|plastifieuse|presse|laptop|pc\b|ecran|moniteur/i;
-    const machineCategories = ['Machines & Outils', 'Machines', 'Informatique'];
-    for (const item of p) {
-      let type = item.type_article || 'consommable';
-      let needsUpdate = false;
-      const updates = {};
-      // Auto-detect machines by name or category
-      if (type === 'consommable' && (machinePatterns.test(item.nom || '') || machineCategories.includes(item.categorie))) {
-        type = 'machine';
-        item.type_article = 'machine';
-        updates.type_article = 'machine';
-        needsUpdate = true;
-      }
-      // Seuil minimum 10 pour consommables
-      const seuil = item.quantite_minimum ?? item.stock_min ?? 0;
-      if (type === 'consommable' && seuil < 10) {
-        item.quantite_minimum = 10;
-        updates.quantite_minimum = 10;
-        needsUpdate = true;
-      }
-      if (needsUpdate) {
-        db.produits.update(item.id, updates).catch(() => {});
-      }
-    }
-    setProduits(p);
+    // ── AUCUNE ECRITURE ICI ──────────────────────────────────────────────
+    // Ce bloc contenait une « auto-correction » qui reecrivait EN BASE, a
+    // chaque ouverture de l'ecran, le seuil d'alerte de tous les consommables
+    // a 10 et reclassait des articles en « machine ».
+    // Mesure du 15/09/2026 : 26 articles sur 45 etaient a exactement 10, et le
+    // gerant ne pouvait plus regler un seuil sous 10 (alerte « Papier opaque
+    // 9/10 »). Regle du projet : un ecran de consultation n'ecrit jamais en
+    // base. La normalisation eventuelle des donnees deja abimees est proposee
+    // dans migrations/002_seuils_stock_a_valider.sql — non appliquee.
+    setProduits(preparerArticlesPourAffichage(p));
     setMouvements(m);
     setLoading(false);
   };
@@ -286,7 +271,7 @@ export default function Stocks() {
         if (filterCat !== 'all' && p.categorie !== filterCat) return false;
         if (filterType !== 'all' && (p.type_article || 'consommable') !== filterType) return false;
         if (filterStatus !== 'all') {
-          const st = statusBadge(p.quantite ?? p.stock ?? 0, p.quantite_minimum ?? p.stock_min ?? 0);
+          const st = statusBadge(p.quantite ?? p.stock ?? 0, seuilArticle(p));
           if (filterStatus === 'alerte' && st.label !== 'Bas' && st.label !== 'Rupture') return false;
           if (filterStatus === 'ok' && (st.label === 'Bas' || st.label === 'Rupture')) return false;
         }
@@ -302,7 +287,7 @@ export default function Stocks() {
     const total = produits.filter((p) => !p.masque).length;
     const alertes = produits.filter((p) => {
       const qty = p.quantite ?? p.stock ?? 0;
-      const min = p.quantite_minimum ?? p.stock_min ?? 0;
+      const min = seuilArticle(p);
       const type = p.type_article || 'consommable';
       return qty <= min && !p.masque && type === 'consommable';
     }).length;
@@ -429,7 +414,7 @@ export default function Stocks() {
     });
 
     // Alerte stock bas — uniquement pour les consommables
-    const minStock = mouvementItem.quantite_minimum ?? mouvementItem.stock_min ?? 0;
+    const minStock = seuilArticle(mouvementItem);
     const typeArt = mouvementItem.type_article || 'consommable';
     if (newStock <= minStock && newStock >= 0 && typeArt === 'consommable') {
       notifyStockAlerte(mouvementItem.nom, newStock, minStock);
@@ -465,7 +450,7 @@ export default function Stocks() {
             { label: 'Référence', accessor: 'reference' },
             { label: 'Catégorie', accessor: 'categorie' },
             { label: 'Quantité', accessor: (r) => r.quantite ?? r.stock ?? 0 },
-            { label: 'Minimum', accessor: (r) => r.quantite_minimum ?? r.stock_min ?? 0 },
+            { label: 'Minimum', accessor: (r) => seuilArticle(r) },
             { label: 'Unité', accessor: 'unite' },
             { label: 'Prix unitaire', accessor: 'prix_unitaire' },
             { label: 'Fournisseur', accessor: 'fournisseur' },
@@ -565,7 +550,7 @@ export default function Stocks() {
           <div className="grid gap-3 sm:grid-cols-2 lg:hidden">
             {filtered.map((p) => {
               const qty = p.quantite ?? p.stock ?? 0;
-              const min = p.quantite_minimum ?? p.stock_min ?? 0;
+              const min = seuilArticle(p);
               const st = statusBadge(qty, min);
               return (
                 <Card
@@ -633,7 +618,7 @@ export default function Stocks() {
                 <tbody>
                   {filtered.map((p) => {
                     const qty = p.quantite ?? p.stock ?? 0;
-                    const min = p.quantite_minimum ?? p.stock_min ?? 0;
+                    const min = seuilArticle(p);
                     const prix = p.prix_unitaire ?? p.prix_vente ?? 0;
                     const st = statusBadge(qty, min);
                     return (
@@ -746,9 +731,10 @@ export default function Stocks() {
               </div>
               <div>
                 <label className="mb-1.5 block text-sm font-medium">Type d'article *</label>
+                {/* Changer le type ne touche PAS au seuil : le seuil appartient
+                    au gerant, article par article (aucune valeur imposee). */}
                 <Select value={form.type_article || 'consommable'} onValueChange={(v) => {
-                  const newSeuil = v === 'consommable' && (Number(form.quantite_minimum) || 0) < 10 ? 10 : form.quantite_minimum;
-                  setForm({ ...form, type_article: v, quantite_minimum: newSeuil });
+                  setForm({ ...form, type_article: v });
                 }}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>{TYPE_ARTICLE.map((t) => <SelectItem key={t.value} value={t.value}>{t.icon} {t.label}</SelectItem>)}</SelectContent>
