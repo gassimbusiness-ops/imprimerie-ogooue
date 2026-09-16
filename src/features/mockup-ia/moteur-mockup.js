@@ -578,8 +578,8 @@ const ZONES_ANGLAIS = {
  * a aucune des six techniques de la maison.
  */
 const TECHNIQUES_ANGLAIS = {
-  flex: 'printed as matte cut vinyl, flat solid colours with clean sharp edges, slightly raised on the fabric',
-  sublimation: 'dye-sublimated into the fabric, perfectly flat with no relief and no visible film',
+  flex: 'printed as matte cut vinyl, flat solid colours with clean sharp edges, slightly raised on the surface',
+  sublimation: 'dye-sublimated into the surface, perfectly flat with no relief and no visible film',
   transfert_dark: 'heat-transferred, with a very slight matte film edge visible around the artwork',
   transfert: 'heat-transferred, slightly matte, sitting flat on the surface',
   impression_grand_format: 'wide-format printed directly on the vinyl, matte finish',
@@ -767,7 +767,7 @@ export function construirePromptMockupIA(params) {
     'including every accented character. Do not redraw it in another style,',
     'do not translate it, do not correct it, do not re-letter it, do not crop it.',
     `Place the logo ${emplacement}, ${rendu}.${taille}`,
-    'The logo must follow the folds and the perspective of the object,',
+    'The logo must follow the shape, the curvature and the perspective of the object,',
     'and pick up the light of the scene.',
     decrireTextes(textes, support),
     // Sans blocs de texte, la phrase « apart from the strings listed above »
