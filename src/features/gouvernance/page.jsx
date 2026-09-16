@@ -67,6 +67,16 @@ const TABS = [
 
 
 // ─── Seed investisseurs initiaux ───
+/**
+ * ⚠️ N'EST PLUS APPELEE AU CHARGEMENT — et ne doit jamais le redevenir.
+ *
+ * Constat 1.4 de l'audit VAGUE 2 : cette fonction recreait les deux fiches
+ * investisseurs, avec des parts figees a 76,11 % / 23,89 %, a chaque connexion
+ * d'un associe si la table etait vide. Elle est conservee (la regle du projet
+ * interdit de supprimer) comme reference du jeu de donnees initial, a rejouer
+ * volontairement depuis une migration si besoin.
+ */
+// eslint-disable-next-line no-unused-vars
 async function seedInvestisseurs() {
   const existing = await db.investisseurs.list();
   if (existing.length > 0) return;
@@ -198,29 +208,31 @@ export default function Gouvernance() {
     }
   };
 
+  // ⚠️ CET ECRAN N'ECRIT PLUS RIEN AU CHARGEMENT.
+  //
+  // Constats 1.3 et 1.4 de l'audit VAGUE 2. Le montage creait, si les tables
+  // etaient vides :
+  //   - deux fiches investisseurs figees a 76,11 % / 23,89 % ;
+  //   - un apport de 2 000 000 F ;
+  //   - une dette de 2 300 000 F.
+  //
+  // Ces trois ecritures ne sont supprimables depuis aucun ecran. Toute
+  // operation de nettoyage les reinjectait donc a la connexion suivante, et
+  // 4 300 000 F reapparaissaient dans les comptes de la societe sans que
+  // personne ne les ait saisis.
+  //
+  // C'est la meme famille que le bug de reference (« ouvrir un ecran modifie
+  // la base », constats C1 et C2), qui a ete corrigee pour Stock et Finances.
+  //
+  // Ce que le gerant voit desormais si les tables sont vides : des zeros et
+  // une liste vide — c'est-a-dire la verite. Une absence de saisie n'est plus
+  // presentee comme un apport de 2 000 000 F.
+  //
+  // Les donnees reelles sont en base (1 ligne dans chaque table au 16/09/2026)
+  // et ne sont pas touchees. Pour recreer un jeu initial, passer par une
+  // migration SQL explicite — pas par un effet de montage.
   useEffect(() => {
-    (async () => {
-      try {
-        await seedInvestisseurs();
-        const existing = await db.apports_associes.list();
-        if (existing.length === 0) {
-          await db.apports_associes.create({
-            associe: 'oumar', type: 'apport_capital', montant: 2000000,
-            description: 'Réinvestissement en marchandises', date: '2025-06-15',
-          });
-          const existingDettes = await db.dettes_associes.list();
-          if (existingDettes.length === 0) {
-            await db.dettes_associes.create({
-              associe: 'oumar', montant_initial: 2300000, montant_restant: 2300000,
-              description: "Compte courant d'associé — avances et dépenses", date: '2025-03-01',
-            });
-          }
-        }
-      } catch (err) {
-        console.error('Gouvernance seed error:', err);
-      }
-      load();
-    })();
+    load();
   }, []);
 
   // Parts figees — plus de calcul dynamique

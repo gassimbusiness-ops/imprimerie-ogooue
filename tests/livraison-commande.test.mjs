@@ -203,7 +203,29 @@ test('« ressemble a un test » sert a signaler, pas a supprimer', () => {
 test('une commande livree ne peut PAS etre supprimee', () => {
   const v = suppressionAutorisee({ id: 'c', statut: 'livree', montant_total: 45000 });
   assert.equal(v.autorise, false);
+  assert.match(v.motif, /livrée/, 'le motif doit dire que c’est la LIVRAISON qui protège la commande');
   assert.match(v.motif, /Annulez/, 'le motif doit dire quoi faire à la place');
+});
+
+test('une commande LIVREE PUIS ANNULEE reste protegee', () => {
+  // Le cas qui echappe a la garde « il y a de l'argent » : le statut est
+  // `annulee`, donc la seconde condition laisse passer. Seul le souvenir de la
+  // livraison protege encore les ecritures deja parties — et surtout la
+  // reference d'idempotence `commande:<id>`, dont la disparition ferait
+  // re-encaisser une re-saisie (constat 8b.2).
+  const v = suppressionAutorisee({
+    id: 'c', statut: 'annulee', livraison_traitee: true, montant_total: 45000,
+  });
+  assert.equal(v.autorise, false, 'une commande livrée puis annulée redevient supprimable');
+  assert.match(v.motif, /livrée/);
+});
+
+test('une commande livree a montant NUL reste protegee', () => {
+  // Second angle mort de la garde « il y a de l'argent » : montant 0 la laisse
+  // passer, alors que la livraison a pu écrire une facture et une sortie de stock.
+  const v = suppressionAutorisee({ id: 'c', statut: 'livree', montant_total: 0 });
+  assert.equal(v.autorise, false);
+  assert.match(v.motif, /livrée/);
 });
 
 test('une commande avec de l argent, non annulee, ne peut pas etre supprimee', () => {

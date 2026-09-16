@@ -36,3 +36,6 @@ dist-ssr
 .env
 # Secrets locaux — jamais commités
 migrations/SECRETS_A_COLLER_LOCAL.txt
+
+# Dossiers de build temporaires des tests de rendu (tests/outils/rendu-ecran.mjs)
+.tmp-rendu-ecran-*/

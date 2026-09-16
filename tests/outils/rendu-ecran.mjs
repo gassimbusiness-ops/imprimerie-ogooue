@@ -32,8 +32,7 @@
 import { build } from 'esbuild';
 import { JSDOM } from 'jsdom';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -152,31 +151,44 @@ export const __appels = appels;
 export default toast;
 `;
 
-/** Modules dont on ne veut ni le poids ni les effets de bord dans un test. */
-const STUBS_INERTES = {
-  '@/services/export-pdf': `
-export const exportDocument = () => {}; export const exportCSV = () => {};
-export const exportBonTravail = () => {}; export const exportRapportComplet = () => {};
-export const exportFacture = () => {}; export const exportDevis = () => {};
-export const exportRapportJournalier = () => {}; export const exportListe = () => {};
-export default {};
-`,
-  '@/services/notifications': `
-const n = async () => {};
-export const notifyNouvelleCommande = n; export const notifyCommandeValidee = n;
-export const notifyCommandeProduction = n; export const notifyCommandePrete = n;
-export const notifyCommandeLivree = n; export const notifyFactureDisponible = n;
-export const notifyTacheAssignee = n; export const notifyRappelOperateur = n;
-export const notifyStockAlerte = n; export const notifyRapportSoumis = n;
-export const getNotifications = async () => []; export const marquerLu = n;
-export const compterNonLues = async () => 0;
-`,
-  '@/services/audit': `export const logAction = async () => {}; export default {};`,
-  '@/services/ai': `
-export const askAI = async () => ''; export const chatAI = async () => '';
-export default {};
-`,
-};
+/**
+ * Fabrique une doublure INERTE d'un module du depot, en reprenant EXACTEMENT
+ * sa liste d'exports.
+ *
+ * Ecrire la liste a la main condamnait le harnais a casser des qu'un ecran
+ * importe une fonction de plus (« No matching export in export-pdf.js for
+ * import printHTML »). On lit donc la source et on rend un no-op par export :
+ * la doublure suit le depot toute seule.
+ *
+ * On ne remplace ainsi que des FEUILLES : PDF, notifications, journal d'audit,
+ * appels IA. Rien de ce qui est teste n'est reecrit.
+ */
+function doublureInerte(cheminRelatif) {
+  const chemin = resoudreFichier(resolve(RACINE, cheminRelatif));
+  const src = existsSync(chemin) ? readFileSync(chemin, 'utf8') : '';
+  const noms = new Set();
+  for (const m of src.matchAll(/export\s+(?:async\s+)?(?:function|const|let|var|class)\s+([A-Za-z0-9_$]+)/g)) {
+    noms.add(m[1]);
+  }
+  for (const m of src.matchAll(/export\s*\{([^}]*)\}/g)) {
+    for (const brut of m[1].split(',')) {
+      const nom = brut.trim().split(/\s+as\s+/).pop().trim();
+      if (nom && /^[A-Za-z0-9_$]+$/.test(nom)) noms.add(nom);
+    }
+  }
+  const lignes = [...noms].map(
+    (n) => `export const ${n} = (...a) => { __inerte.push([${JSON.stringify(cheminRelatif)}, ${JSON.stringify(n)}, a]); return undefined; };`,
+  );
+  return `const __inerte = (globalThis.__appelsInertes ||= []);\n${lignes.join('\n')}\nexport default {};\n`;
+}
+
+/** Feuilles remplacees par des doublures inertes. */
+const FEUILLES_INERTES = [
+  'src/services/export-pdf',
+  'src/services/notifications',
+  'src/services/audit',
+  'src/services/ai',
+];
 
 /**
  * Compile un ecran et ses dependances en un seul module ESM testable.
@@ -188,7 +200,11 @@ export default {};
  * @returns {Promise<{module: object, journal: object, toasts: Array, nettoyer: () => Promise<void>}>}
  */
 export async function compilerEcran({ ecran, donnees = {}, utilisateur = {} }) {
-  const dossier = await mkdtemp(join(tmpdir(), 'rendu-ecran-'));
+  // Le dossier de build vit DANS le depot (et pas dans /tmp) pour que Node
+  // resolve `react` / `react-dom` en remontant jusqu'a ./node_modules. React
+  // doit etre partage entre le bundle et le test, sinon deux instances
+  // coexistent et les hooks ne trouvent pas leur dispatcher.
+  const dossier = await mkdtemp(join(RACINE, '.tmp-rendu-ecran-'));
   const entree = join(dossier, 'entree.jsx');
   await writeFile(entree, `
 export { default as Ecran } from ${JSON.stringify(join(RACINE, ecran))};
@@ -196,31 +212,37 @@ export { __journal } from '@/services/db';
 export { __appels } from 'sonner';
 `);
 
-  const doublures = {
-    '@/services/db': sourceDoublureDb(donnees),
-    '@/services/supabase': DOUBLURE_SUPABASE,
-    '@/services/auth': sourceDoublureAuth({
+  // Les doublures de MODULES DU DEPOT sont posees par chemin ABSOLU, apres
+  // resolution : le meme fichier est importe tantot en `@/services/db`, tantot
+  // en `./db`. Filtrer sur la chaine d'import en raterait la moitie.
+  const parChemin = new Map([
+    [resoudreFichier(resolve(RACINE, 'src/services/db')), sourceDoublureDb(donnees)],
+    [resoudreFichier(resolve(RACINE, 'src/services/supabase')), DOUBLURE_SUPABASE],
+    [resoudreFichier(resolve(RACINE, 'src/services/auth')), sourceDoublureAuth({
       id: 'u-admin', prenom: 'Gassim', nom: 'Admin', role: 'admin', ...utilisateur,
-    }),
-    sonner: DOUBLURE_TOAST,
-    ...STUBS_INERTES,
-  };
+    })],
+    ...FEUILLES_INERTES.map((f) => [resoudreFichier(resolve(RACINE, f)), doublureInerte(f)]),
+  ]);
 
   const plugin = {
     name: 'doublures',
     setup(b) {
-      const noms = Object.keys(doublures);
-      const motif = new RegExp(`^(${noms.map((n) => n.replace(/[/@.]/g, '\\$&')).join('|')})$`);
-      b.onResolve({ filter: motif }, (args) => ({ path: args.path, namespace: 'doublure' }));
-      b.onLoad({ filter: /.*/, namespace: 'doublure' }, (args) => ({
-        contents: doublures[args.path], loader: 'js', resolveDir: RACINE,
+      // `sonner` est un paquet : on l'intercepte par son nom.
+      b.onResolve({ filter: /^sonner$/ }, (args) => ({ path: args.path, namespace: 'doublure' }));
+      b.onLoad({ filter: /.*/, namespace: 'doublure' }, () => ({
+        contents: DOUBLURE_TOAST, loader: 'js', resolveDir: RACINE,
       }));
-      // `@/x` → `<racine>/src/x`, comme le fait vite.config.js. L'extension
-      // est resolue ici : le depot importe partout sans extension, et esbuild
-      // ne le fait pas pour un chemin qu'un plugin lui rend tout resolu.
-      b.onResolve({ filter: /^@\// }, (args) => {
-        const base = resolve(RACINE, 'src', args.path.slice(2));
-        return { path: resoudreFichier(base) };
+      // `@/x` → `<racine>/src/x`, comme le fait vite.config.js. L'extension est
+      // resolue ici : le depot importe sans extension, et esbuild ne complete
+      // pas un chemin qu'un plugin lui rend deja absolu.
+      b.onResolve({ filter: /^@\// }, (args) => ({
+        path: resoudreFichier(resolve(RACINE, 'src', args.path.slice(2))),
+      }));
+      // Substitution par chemin absolu, quelle que soit l'orthographe d'import.
+      b.onLoad({ filter: /\.(js|jsx)$/ }, (args) => {
+        const remplacement = parChemin.get(args.path);
+        if (!remplacement) return null;
+        return { contents: remplacement, loader: 'jsx', resolveDir: RACINE };
       });
     },
   };
@@ -231,13 +253,24 @@ export { __appels } from 'sonner';
     outfile: sortie,
     bundle: true,
     format: 'esm',
+    // React reste EXTERNE : une seule instance pour le bundle et pour le test.
+    external: ['react', 'react-dom', 'react-dom/client', 'react/jsx-runtime'],
     platform: 'browser',
     jsx: 'automatic',
     target: 'es2022',
     logLevel: 'silent',
     plugins: [plugin],
     loader: { '.js': 'jsx', '.jsx': 'jsx' },
-    define: { 'process.env.NODE_ENV': '"test"', __APP_BUILD__: '"test"' },
+    define: {
+      'process.env.NODE_ENV': '"test"',
+      __APP_BUILD__: '"test"',
+      // Vite remplace `import.meta.env` a la compilation ; esbuild ne le fait
+      // pas tout seul, et plusieurs modules le lisent au chargement.
+      'import.meta.env': JSON.stringify({
+        MODE: 'test', DEV: false, PROD: false, BASE_URL: '/',
+        VITE_SUPABASE_URL: '', VITE_SUPABASE_ANON_KEY: '',
+      }),
+    },
   });
 
   // Le module n'est PAS importe ici : certaines dependances lisent `window` des
@@ -247,10 +280,34 @@ export { __appels } from 'sonner';
 }
 
 /**
- * Installe un DOM complet dans les globales de Node et rend de quoi le retirer.
+ * Installe un DOM complet dans les globales de Node.
+ *
+ * ⚠️ UN SEUL DOM PAR PROCESSUS, cree a la premiere demande et reutilise ensuite.
+ *
+ * Ce n'est pas une optimisation. En developpement, `react-dom` fabrique a son
+ * CHARGEMENT un noeud technique (`invokeGuardedCallbackDev`) attache au
+ * document du moment, et s'en sert pour propager les erreurs de rendu. Si un
+ * second jsdom remplace le premier, ce noeud appartient a l'ancien document et
+ * React echoue avec « Failed to execute 'dispatchEvent' on 'EventTarget' » —
+ * une panne du HARNAIS, qui ressemble a s'y meprendre a une panne de l'ECRAN.
+ *
+ * L'isolement entre tests est assure autrement : chaque appel recompile son
+ * propre bundle, avec sa propre doublure de base de donnees et son propre
+ * journal. Ce qui est partage, c'est le DOM — remis a zero a chaque montage.
+ *
  * @returns {{dom: JSDOM, restaurer: () => void}}
  */
+let domPartage = null;
+
 function installerDom() {
+  if (domPartage) {
+    // Remise a zero : conteneur vide, stockage vide, aucun etat de test passe.
+    const w = domPartage.window;
+    try { w.localStorage.clear(); w.sessionStorage.clear(); } catch { /* indisponible */ }
+    w.document.body.innerHTML = '<div id="racine"></div>';
+    return { dom: domPartage, restaurer() { w.document.body.innerHTML = '<div id="racine"></div>'; } };
+  }
+
   const dom = new JSDOM('<!doctype html><html><body><div id="racine"></div></body></html>', {
     url: 'https://exemple.test/', pretendToBeVisual: true,
   });
@@ -282,7 +339,27 @@ function installerDom() {
     requestAnimationFrame: (cb) => setTimeout(() => cb(Date.now()), 0),
     cancelAnimationFrame: (id) => clearTimeout(id),
     self: w,
+    DocumentFragment: w.DocumentFragment, HTMLDocument: w.HTMLDocument,
+    SVGElement: w.SVGElement, Text: w.Text, Range: w.Range,
+    MutationObserver: w.MutationObserver, FileReader: w.FileReader,
+    Blob: w.Blob, File: w.File, FormData: w.FormData, URL: w.URL,
+    HTMLFormElement: w.HTMLFormElement, HTMLButtonElement: w.HTMLButtonElement,
+    HTMLTextAreaElement: w.HTMLTextAreaElement, HTMLSelectElement: w.HTMLSelectElement,
+    PointerEvent: w.PointerEvent || w.MouseEvent, TouchEvent: w.TouchEvent,
   };
+  // Toutes les interfaces DOM exposees par jsdom (NodeFilter, DocumentFragment,
+  // TreeWalker…). Les enumerer plutot que les lister a la main : le premier
+  // oubli se manifeste par un « X is not defined » DANS un effet React, c'est-
+  // a-dire par un ecran blanc — exactement le symptome qu'on cherche a
+  // detecter. Un harnais qui produit lui-meme de faux ecrans blancs ne sert
+  // a rien.
+  for (const nom of Object.getOwnPropertyNames(w)) {
+    if (!/^[A-Z]/.test(nom)) continue;
+    if (nom in globales) continue;
+    if (globalThis[nom] !== undefined) continue;
+    globales[nom] = w[nom];
+  }
+
   const anciens = {};
   for (const [cle, valeur] of Object.entries(globales)) {
     anciens[cle] = Object.prototype.hasOwnProperty.call(globalThis, cle)
@@ -291,17 +368,13 @@ function installerDom() {
   }
   globalThis.IS_REACT_ACT_ENVIRONMENT = true;
 
+  domPartage = dom;
+  // Les globales ne sont PAS restaurees : le DOM vit tout le processus de test.
+  // `anciens` n'est conserve que pour le diagnostic.
+  void anciens;
   return {
     dom,
-    restaurer() {
-      for (const [cle, valeur] of Object.entries(anciens)) {
-        try {
-          if (valeur === Symbol.for('absent')) delete globalThis[cle];
-          else globalThis[cle] = valeur;
-        } catch { /* globale non inscriptible */ }
-      }
-      try { w.close(); } catch { /* deja ferme */ }
-    },
+    restaurer() { w.document.body.innerHTML = '<div id="racine"></div>'; },
   };
 }
 
@@ -325,7 +398,8 @@ export async function rendreEcran(p) {
 
   const React = (await import('react')).default;
   const { createRoot } = await import('react-dom/client');
-  const { act } = await import('react-dom/test-utils');
+  // `React.act` depuis React 18.3 ; `react-dom/test-utils` en repli.
+  const act = React.act || (await import('react-dom/test-utils')).act;
 
   const conteneur = globalThis.document.getElementById('racine');
   let racine;
