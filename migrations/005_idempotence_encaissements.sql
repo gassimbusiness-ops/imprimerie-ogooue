@@ -1,9 +1,23 @@
 -- ════════════════════════════════════════════════════════════════════════════
 -- 005 — Rendre l'idempotence des encaissements RÉELLE
 --
---        ⚠️  CE FICHIER N'A PAS ÉTÉ APPLIQUÉ. Aucune écriture n'a été faite
---        en production. Il attend la validation de Gassim, et l'exécution du
---        bloc de contrôle (section A) AVANT le bloc de création (section C).
+--        ✅ APPLIQUÉE EN PRODUCTION LE 2026-09-17, sur accord explicite de
+--        Gassim, dans l'ordre prescrit : contrôle (A) d'abord, création (C)
+--        et fonction (D) ensuite, preuve (E) pour finir.
+--
+--        CE QUI A ÉTÉ MESURÉ, ET NON SUPPOSÉ :
+--          A. mouvements_financiers = 32 lignes, 20 avec référence,
+--             0 référence en double  → l'index pouvait être créé tel quel.
+--          C. idx_mouvements_reference_unique : indisvalid = true,
+--             indisready = true.
+--          D. crediter_compte() recréée avec le NULLIF. Contrôle exécuté à
+--             montant 0 sur « Moov Money » et « Airtel Money » : les deux
+--             portaient solde = "" (chaîne vide) et portent maintenant 0.
+--             7 comptes sur 11 avaient la chaîne vide — sans le NULLIF, la
+--             fonction plantait sur les deux seuls comptes qu'elle doit servir.
+--          E. Tentative d'insertion d'un doublon de référence, dans un bloc
+--             annulé : PostgreSQL l'a REJETÉE (unique_violation). Décompte
+--             relu après le test : toujours 32 lignes, rien n'a été écrit.
 --
 -- Projet Supabase : bcwkrrqmjpaohmafcncw     Table unique : app_data
 -- Rédigé le       : 2026-09-16
