@@ -770,8 +770,12 @@ export function construirePromptMockupIA(params) {
     'The logo must follow the folds and the perspective of the object,',
     'and pick up the light of the scene.',
     decrireTextes(textes, support),
-    'Apart from the logo and the strings listed above, do not add any other text,',
-    'logo, slogan, price, label or watermark anywhere in the image.',
+    // Sans blocs de texte, la phrase « apart from the strings listed above »
+    // renverrait a une liste vide : le modele comblerait le flou.
+    (normaliserTextes(textes).length
+      ? 'Apart from the logo and the strings listed above, do not add any other text,'
+      : 'Apart from the logo itself, do not add any text,')
+    + ' logo, slogan, price, label or watermark anywhere in the image.',
     'Studio lighting, soft shadows, shallow depth of field, clean neutral background,',
     'photorealistic, high resolution, catalogue quality.',
     extra,
