@@ -4,6 +4,9 @@ import { logAction } from '@/services/audit';
 import { useAuth } from '@/services/auth';
 import { executerPrelevementsDus } from '@/services/credit-mensualites';
 import { executerChargesDues } from '@/services/charges-fixes-prelevement';
+import { apercuMensualitesDues, apercuChargesDues } from '@/services/prelevements-apercu';
+import { verrouPrelevements, CLE_PRELEVEMENTS } from '@/services/execution-unique';
+import { todayISO } from '@/lib/dates';
 import { exportGrandLivrePDF } from '@/services/export-pdf';
 import { tresorerieImprimerie, chargeMensuelle } from '@/services/finance-calc';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -96,6 +99,9 @@ export default function Finances() {
   const [loading, setLoading] = useState(true);
 
   // UI states
+  // Confirmation des prelevements : { nature, apercu, aujourdhui } ou null.
+  const [confirmPrelevement, setConfirmPrelevement] = useState(null);
+  const [prelevementEnCours, setPrelevementEnCours] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [editItem, setEditItem] = useState(null);
   const [form, setForm] = useState({});
@@ -127,57 +133,71 @@ export default function Finances() {
     setLoading(false);
   };
 
-  useEffect(() => {
-    (async () => {
-      await load();
-      // Rattrapage automatique des mensualites + charges fixes dues au chargement (silencieux)
-      try {
-        const [rCredit, rCharges] = await Promise.all([
-          executerPrelevementsDus(),
-          executerChargesDues(),
-        ]);
-        const totalAuto = (rCredit.processed?.length || 0) + (rCharges.processed?.length || 0);
-        if (totalAuto > 0) {
-          toast.success(`${totalAuto} prélèvement(s) automatique(s) effectué(s)`);
-          await load(); // refresh apres prelevements
-        }
-      } catch (e) {
-        console.error('[Finances] Erreur prelevements auto:', e);
-      }
-    })();
-  }, []);
+  // ── AUCUN PRELEVEMENT AU MONTAGE ────────────────────────────────────────
+  // Ce `useEffect` enchainait `executerPrelevementsDus()` et
+  // `executerChargesDues()` juste apres `load()` : OUVRIR l'ecran Finances
+  // debitait les comptes bancaires. React.StrictMode montant deux fois en
+  // developpement, le meme prelevement pouvait meme partir en double (voir le
+  // commentaire d'en-tete de src/services/execution-unique.js).
+  // L'ecran ne fait plus que lire. L'execution est explicite : bouton +
+  // apercu chiffre + confirmation.
+  useEffect(() => { load(); }, []);
 
-  const handleForcerPrelevement = async () => {
-    const r = await executerPrelevementsDus();
-    if (r.errors.length > 0) {
-      toast.error(`${r.errors.length} erreur(s) — voir console`);
-      console.error('[Finances] Erreurs prelevement:', r.errors);
-    }
-    if (r.processed.length > 0) {
-      const total = r.processed.reduce((s, p) => s + (p.montant_total || 0), 0);
-      const totalMens = r.processed.reduce((s, p) => s + (p.mensualites || 0), 0);
-      toast.success(`${totalMens} mensualité(s) prélevée(s) — ${fmt(total)} F`);
-      await logAction('update', 'finances', { entityLabel: 'Prélèvement crédits', details: `${totalMens} mensualités, ${fmt(total)} F` });
-      await load();
-    } else if (r.errors.length === 0) {
-      toast.info('Aucune échéance due');
-    }
+  /* ── Execution explicite des prelevements ───────────────────────────────
+     `nature` vaut 'credit' (mensualites de dette) ou 'charge' (charges fixes).
+     Etape 1 : on calcule un apercu SANS RIEN ECRIRE et on ouvre la confirmation.
+     Etape 2 : `confirmerPrelevement()` execute, sous verrou d'execution unique. */
+  const ouvrirConfirmation = (nature) => {
+    const aujourdhui = todayISO();
+    const apercu = nature === 'credit'
+      ? apercuMensualitesDues({ dettes, comptes, mouvements, aujourdhui })
+      : apercuChargesDues({ charges, comptes, mouvements, aujourdhui });
+    setConfirmPrelevement({ nature, apercu, aujourdhui });
   };
 
-  const handleForcerPrelevementCharges = async () => {
-    const r = await executerChargesDues();
-    if (r.errors.length > 0) {
-      toast.error(`${r.errors.length} erreur(s) — voir console`);
-      console.error('[Finances] Erreurs prelevement charges:', r.errors);
-    }
-    if (r.processed.length > 0) {
-      const total = r.processed.reduce((s, p) => s + (p.montant_total || 0), 0);
-      const totalEch = r.processed.reduce((s, p) => s + (p.echeances || 0), 0);
-      toast.success(`${totalEch} charge(s) prélevée(s) — ${fmt(total)} F`);
-      await logAction('update', 'finances', { entityLabel: 'Prélèvement charges fixes', details: `${totalEch} échéances, ${fmt(total)} F` });
-      await load();
-    } else if (r.errors.length === 0) {
-      toast.info('Aucune charge due');
+  const confirmerPrelevement = async () => {
+    if (!confirmPrelevement || prelevementEnCours) return;
+    const { nature } = confirmPrelevement;
+    setPrelevementEnCours(true);
+    try {
+      // Verrou d'execution unique : un second appel concurrent (double-clic,
+      // double montage StrictMode, deuxieme bouton) recoit la MEME promesse et
+      // ne relance pas l'operation. Voir src/services/execution-unique.js pour
+      // le detail de pourquoi l'idempotence lire-puis-ecrire des services ne
+      // suffit pas a elle seule.
+      const r = await verrouPrelevements.executerUneSeuleFois(
+        `${CLE_PRELEVEMENTS}:${nature}`,
+        () => (nature === 'credit' ? executerPrelevementsDus() : executerChargesDues()),
+      );
+
+      const errors = r?.errors || [];
+      const processed = r?.processed || [];
+
+      if (errors.length > 0) {
+        // On nomme ce qui a echoue : un echec silencieux sur de l'argent est
+        // pire qu'un echec bruyant.
+        const detail = errors.map((e) => e.dette || e.charge || '?').join(', ');
+        toast.error(`${errors.length} échec(s) : ${detail}`);
+        console.error('[Finances] Erreurs prelevement:', errors);
+      }
+
+      if (processed.length > 0) {
+        const total = processed.reduce((s, p) => s + (p.montant_total || 0), 0);
+        const nb = processed.reduce((s, p) => s + (p.mensualites || p.echeances || 0), 0);
+        const libelle = nature === 'credit' ? 'Prélèvement crédits' : 'Prélèvement charges fixes';
+        toast.success(`${nb} prélèvement(s) — ${fmt(total)} F débités`);
+        await logAction('update', 'finances', { entityLabel: libelle, details: `${nb} échéances, ${fmt(total)} F` });
+        await load();
+      } else if (errors.length === 0) {
+        toast.info('Aucune échéance due — rien n\'a été débité');
+      }
+    } catch (e) {
+      // Une exception ici ne doit jamais casser l'ecran : on l'affiche.
+      console.error('[Finances] Prelevement interrompu:', e);
+      toast.error(`Prélèvement interrompu : ${e?.message || 'erreur inconnue'}`);
+    } finally {
+      setPrelevementEnCours(false);
+      setConfirmPrelevement(null);
     }
   };
 
@@ -663,9 +683,9 @@ export default function Finances() {
           {/* Bouton forcer prelevement charges */}
           {(isAdmin || isManager) && charges.some((c) => c.prelevement_auto && c.actif !== false) && (
             <div className="flex justify-end">
-              <Button variant="outline" size="sm" onClick={handleForcerPrelevementCharges} className="gap-2">
+              <Button variant="outline" size="sm" onClick={() => ouvrirConfirmation('charge')} disabled={prelevementEnCours} className="gap-2">
                 <RefreshCw className="h-3.5 w-3.5" />
-                Forcer prélèvement charges (échéances dues)
+                Exécuter les prélèvements de charges dus…
               </Button>
             </div>
           )}
@@ -720,9 +740,9 @@ export default function Finances() {
           {/* Bouton forcer prelevement */}
           {(isAdmin || isManager) && dettes.some((d) => d.prelevement_auto && d.statut !== 'solde') && (
             <div className="flex justify-end">
-              <Button variant="outline" size="sm" onClick={handleForcerPrelevement} className="gap-2">
+              <Button variant="outline" size="sm" onClick={() => ouvrirConfirmation('credit')} disabled={prelevementEnCours} className="gap-2">
                 <RefreshCw className="h-3.5 w-3.5" />
-                Forcer prélèvement (échéances dues)
+                Exécuter les mensualités de crédit dues…
               </Button>
             </div>
           )}
@@ -842,6 +862,81 @@ export default function Finances() {
           </div>
         </CardContent></Card>
       )}
+
+      {/* ═══════════ CONFIRMATION PRELEVEMENTS ═══════════
+          Rien n'est debite tant que ce bouton n'est pas actionne. */}
+      <Dialog
+        open={!!confirmPrelevement}
+        onOpenChange={(ouvert) => { if (!ouvert && !prelevementEnCours) setConfirmPrelevement(null); }}
+      >
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-amber-600" />
+              {confirmPrelevement?.nature === 'credit' ? 'Prélever les mensualités de crédit' : 'Prélever les charges fixes'}
+            </DialogTitle>
+          </DialogHeader>
+
+          {confirmPrelevement && (
+            <div className="space-y-4 pt-2">
+              {confirmPrelevement.apercu.nombre === 0 ? (
+                <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-4 text-sm text-emerald-800">
+                  <p className="font-semibold">Aucune échéance due au {confirmPrelevement.aujourdhui}.</p>
+                  <p className="mt-1">Rien ne sera débité.</p>
+                </div>
+              ) : (
+                <>
+                  <div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">
+                    <p className="font-semibold">
+                      Cette action débite réellement les comptes bancaires.
+                    </p>
+                    <p className="mt-1">
+                      {confirmPrelevement.apercu.nombre} écriture(s) seront créées, pour un total de{' '}
+                      <strong>{fmt(confirmPrelevement.apercu.total)} F</strong>.
+                    </p>
+                  </div>
+
+                  <div className="rounded-lg border divide-y max-h-64 overflow-y-auto">
+                    {confirmPrelevement.apercu.lignes.map((l) => (
+                      <div key={l.reference} className="flex items-center gap-3 px-3 py-2 text-sm">
+                        <div className="flex-1 min-w-0">
+                          <p className="font-medium truncate">{l.libelle}</p>
+                          <p className="text-[11px] text-muted-foreground">
+                            échéance {l.echeance} → {l.compte}
+                          </p>
+                        </div>
+                        <span className="font-bold text-red-600 shrink-0">−{fmt(l.montant)} F</span>
+                      </div>
+                    ))}
+                  </div>
+
+                  <p className="text-[11px] text-muted-foreground">
+                    Aperçu calculé à partir des données affichées, arrêté au {confirmPrelevement.aujourdhui}.
+                    Les échéances déjà prélevées sont exclues. L&apos;exécution fait foi : si une écriture
+                    a été enregistrée entre-temps, elle ne sera pas doublée.
+                  </p>
+                </>
+              )}
+
+              <div className="flex justify-end gap-2">
+                <Button variant="outline" onClick={() => setConfirmPrelevement(null)} disabled={prelevementEnCours}>
+                  Annuler
+                </Button>
+                <Button
+                  onClick={confirmerPrelevement}
+                  disabled={prelevementEnCours || confirmPrelevement.apercu.nombre === 0}
+                  className="bg-red-600 hover:bg-red-700 gap-2"
+                >
+                  {prelevementEnCours && <RefreshCw className="h-3.5 w-3.5 animate-spin" />}
+                  {prelevementEnCours
+                    ? 'Prélèvement en cours…'
+                    : `Confirmer — débiter ${fmt(confirmPrelevement.apercu.total)} F`}
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* ═══════════ FORM DIALOG ═══════════ */}
       <Dialog open={showForm} onOpenChange={setShowForm}>

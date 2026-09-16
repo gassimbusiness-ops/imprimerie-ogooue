@@ -15,6 +15,10 @@ import {
   Wallet, Building2,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import {
+  STATUT_RH, LIBELLES_STATUT_RH, statutDemande,
+  estEnAttente, estApprouvee, estEngageante,
+} from '@/services/statuts-rh';
 
 function fmt(n) { return new Intl.NumberFormat('fr-FR').format(Math.round(n || 0)); }
 
@@ -38,11 +42,13 @@ const TYPES_CHARGES = {
 
 const ALL_TYPES = { ...TYPES_RH, ...TYPES_CHARGES };
 
-const STATUTS = {
-  en_attente: { label: 'En attente', color: 'bg-amber-100 text-amber-700' },
-  approuvee: { label: 'Approuvée', color: 'bg-emerald-100 text-emerald-700' },
-  rejetee: { label: 'Rejetée', color: 'bg-red-100 text-red-700' },
-  payee: { label: 'Payée', color: 'bg-blue-100 text-blue-700' },
+// Couleurs des badges, indexees par STATUT canonique (src/services/statuts-rh.js).
+// Les libelles viennent du module partage : une seule source de verite.
+const COULEURS_STATUT = {
+  [STATUT_RH.EN_ATTENTE]: 'bg-amber-100 text-amber-700',
+  [STATUT_RH.APPROUVEE]: 'bg-emerald-100 text-emerald-700',
+  [STATUT_RH.REJETEE]: 'bg-red-100 text-red-700',
+  [STATUT_RH.PAYEE]: 'bg-blue-100 text-blue-700',
 };
 
 export default function DemandesRH() {
@@ -86,7 +92,7 @@ export default function DemandesRH() {
         if (!typeConfig && d.type === 'autre' && filterCategory !== 'rh') return false;
       }
       if (filterType !== 'all' && d.type !== filterType) return false;
-      if (filterStatut !== 'all' && d.statut !== filterStatut) return false;
+      if (filterStatut !== 'all' && statutDemande(d) !== filterStatut) return false;
       if (search) {
         const q = search.toLowerCase();
         return `${d.user_nom || ''} ${d.motif || ''} ${d.type} ${d.employe_nom || ''}`.toLowerCase().includes(q);
@@ -103,16 +109,16 @@ export default function DemandesRH() {
     const chargeTypes = Object.keys(TYPES_CHARGES);
     const chargesMois = thisMonth.filter((d) => chargeTypes.includes(d.type));
 
-    const avancesApprouvees = demandes.filter((d) => d.type === 'avance' && (d.statut === 'approuvee' || d.statut === 'payee'));
+    const avancesApprouvees = demandes.filter((d) => d.type === 'avance' && estEngageante(d));
     const totalAvances = avancesApprouvees.reduce((s, d) => s + (d.montant || 0), 0);
 
     const totalChargesMois = chargesMois
-      .filter((d) => d.statut === 'approuvee' || d.statut === 'payee')
+      .filter(estEngageante)
       .reduce((s, d) => s + (d.montant || 0), 0);
 
     return {
       total: demandes.length,
-      en_attente: demandes.filter((d) => d.statut === 'en_attente').length,
+      en_attente: demandes.filter(estEnAttente).length,
       totalAvances,
       totalChargesMois,
     };
@@ -134,7 +140,7 @@ export default function DemandesRH() {
       date_debut: form.date_debut || undefined,
       date_fin: form.date_fin || undefined,
       montant: Number(form.montant) || 0,
-      statut: 'en_attente',
+      statut: STATUT_RH.EN_ATTENTE,
       category: isCharge ? 'charge' : 'rh',
       user_id: user?.id,
       user_nom: `${user?.prenom} ${user?.nom}`,
@@ -156,7 +162,7 @@ export default function DemandesRH() {
   };
 
   const handleDecision = async (d, decision) => {
-    const label = decision === 'approuvee' ? 'approbation' : decision === 'payee' ? 'paiement' : 'rejet';
+    const label = decision === STATUT_RH.APPROUVEE ? 'approbation' : decision === STATUT_RH.PAYEE ? 'paiement' : 'rejet';
     const commentaire = prompt(`Commentaire pour ${label} :`);
     if (commentaire === null) return;
 
@@ -164,7 +170,7 @@ export default function DemandesRH() {
     //    creer un mouvement financier reel + debiter le compte
     let compteIdFinal = d.compte_id;
     let mouvementCree = null;
-    if (decision === 'payee' && (d.montant || 0) > 0) {
+    if (decision === STATUT_RH.PAYEE && (d.montant || 0) > 0) {
       // Si pas de compte_id sur la demande, demander a l'admin lequel debiter
       if (!compteIdFinal && comptes.length > 0) {
         const liste = comptes.map((c, i) => `${i + 1}. ${c.nom} (solde: ${(c.solde || 0).toLocaleString('fr-FR')} F)`).join('\n');
@@ -214,11 +220,11 @@ export default function DemandesRH() {
     });
     await logAction('update', 'demandes_rh', { entityId: d.id, entityLabel: d.user_nom, details: `Demande ${decision}${mouvementCree ? ` (mouvement créé)` : ''}` });
 
-    if (decision === 'payee' && mouvementCree) {
+    if (decision === STATUT_RH.PAYEE && mouvementCree) {
       const compteNom = comptes.find((c) => c.id === compteIdFinal)?.nom || 'compte';
       toast.success(`Payée — ${d.montant.toLocaleString('fr-FR')} F débités sur ${compteNom}`);
     } else {
-      toast.success(`Demande ${decision === 'approuvee' ? 'approuvée' : decision === 'payee' ? 'marquée payée' : 'rejetée'}`);
+      toast.success(`Demande ${LIBELLES_STATUT_RH[decision] || decision}`);
     }
     load();
   };
@@ -285,7 +291,7 @@ export default function DemandesRH() {
           <SelectTrigger className="w-[140px]"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">Tous statuts</SelectItem>
-            {Object.entries(STATUTS).map(([k, v]) => <SelectItem key={k} value={k}>{v.label}</SelectItem>)}
+            {Object.entries(LIBELLES_STATUT_RH).map(([k, v]) => <SelectItem key={k} value={k}>{v}</SelectItem>)}
           </SelectContent>
         </Select>
       </div>
@@ -294,7 +300,7 @@ export default function DemandesRH() {
       <div className="space-y-3">
         {filtered.map((d) => {
           const t = ALL_TYPES[d.type] || ALL_TYPES.autre_rh;
-          const st = STATUTS[d.statut] || STATUTS.en_attente;
+          const statut = statutDemande(d);
           const TypeIcon = t.icon;
           const isCharge = t.category === 'charge';
           return (
@@ -305,7 +311,7 @@ export default function DemandesRH() {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
                       <p className="font-semibold text-sm">{t.label}</p>
-                      <Badge className={`text-[10px] ${st.color}`}>{st.label}</Badge>
+                      <Badge className={`text-[10px] ${COULEURS_STATUT[statut]}`}>{LIBELLES_STATUT_RH[statut]}</Badge>
                       {isCharge && <Badge variant="outline" className="text-[10px]">Charge</Badge>}
                       {isAdmin && <span className="text-xs text-muted-foreground"><User className="inline h-3 w-3" /> {d.user_nom}</span>}
                     </div>
@@ -320,15 +326,15 @@ export default function DemandesRH() {
                       <p className="mt-2 rounded-lg bg-muted/50 p-2 text-xs italic text-muted-foreground">Admin: {d.commentaire_admin}</p>
                     )}
                   </div>
-                  {isAdmin && d.statut === 'en_attente' && (
+                  {isAdmin && estEnAttente(d) && (
                     <div className="flex gap-1 shrink-0">
-                      <button onClick={() => handleDecision(d, 'approuvee')} className="rounded-lg p-2 text-emerald-600 hover:bg-emerald-50" title="Approuver"><CheckCircle2 className="h-5 w-5" /></button>
-                      <button onClick={() => handleDecision(d, 'rejetee')} className="rounded-lg p-2 text-red-600 hover:bg-red-50" title="Rejeter"><XCircle className="h-5 w-5" /></button>
+                      <button onClick={() => handleDecision(d, STATUT_RH.APPROUVEE)} className="rounded-lg p-2 text-emerald-600 hover:bg-emerald-50" title="Approuver"><CheckCircle2 className="h-5 w-5" /></button>
+                      <button onClick={() => handleDecision(d, STATUT_RH.REJETEE)} className="rounded-lg p-2 text-red-600 hover:bg-red-50" title="Rejeter"><XCircle className="h-5 w-5" /></button>
                     </div>
                   )}
-                  {isAdmin && d.statut === 'approuvee' && d.montant > 0 && (
+                  {isAdmin && estApprouvee(d) && d.montant > 0 && (
                     <div className="flex gap-1 shrink-0">
-                      <button onClick={() => handleDecision(d, 'payee')} className="rounded-lg p-2 text-blue-600 hover:bg-blue-50" title="Marquer payée"><DollarSign className="h-5 w-5" /></button>
+                      <button onClick={() => handleDecision(d, STATUT_RH.PAYEE)} className="rounded-lg p-2 text-blue-600 hover:bg-blue-50" title="Marquer payée"><DollarSign className="h-5 w-5" /></button>
                     </div>
                   )}
                 </div>
@@ -352,8 +358,8 @@ export default function DemandesRH() {
               {Object.entries(TYPES_CHARGES).map(([key, config]) => {
                 const currentMonth = new Date().toISOString().slice(0, 7);
                 const items = demandes.filter((d) => d.type === key && (d.created_at || '').startsWith(currentMonth));
-                const total = items.filter((d) => d.statut === 'approuvee' || d.statut === 'payee').reduce((s, d) => s + (d.montant || 0), 0);
-                const pending = items.filter((d) => d.statut === 'en_attente').reduce((s, d) => s + (d.montant || 0), 0);
+                const total = items.filter(estEngageante).reduce((s, d) => s + (d.montant || 0), 0);
+                const pending = items.filter(estEnAttente).reduce((s, d) => s + (d.montant || 0), 0);
                 const Icon = config.icon;
                 return (
                   <div key={key} className="flex items-center gap-3 rounded-lg border p-2.5">
