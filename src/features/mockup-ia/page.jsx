@@ -56,6 +56,8 @@ import {
   analyserPixelsLogo, extraireScene, extraireMessageErreur,
   construireRecette, recetteSansImage, deciderEnregistrement,
   verifierPlafond, svgContientDuTexte, coutGeneration, formatFCFA,
+  validerPromptLibre, LONGUEUR_PROMPT_LIBRE_MAX,
+  origineCout, COUT_MESURE_SOURCE,
   MENTION_RESERVE, PLAFOND_GENERATIONS_PAR_JOUR, QUALITE_PAR_DEFAUT,
 } from './moteur-mockup.js';
 import {
@@ -196,6 +198,11 @@ function EcranMockup() {
   // Blocs de texte a marquer EN PLUS du logo (nom, telephone, slogan).
   // Demande de Gassim du 16/09/2026.
   const [textes, setTextes] = useState([]);
+  // Description de scene ajoutee a la main — demande de Gassim du 16/09/2026 :
+  // « on peut aussi mettre un prompt pour plus personnaliser ? ». Elle s'AJOUTE
+  // aux consignes de scene. Elle ne peut pas demander du texte : c'est le champ
+  // « Textes et personnalisation » qui porte le contenu a marquer.
+  const [promptLibre, setPromptLibre] = useState('');
   const [promptEdite, setPromptEdite] = useState(undefined);
   const [photothequeTestee, setPhotothequeTestee] = useState(false);
 
@@ -232,7 +239,12 @@ function EcranMockup() {
   // Changer de mode change la NATURE du prompt (scene nue vs objet marque).
   // Garder le prompt relu pour l'autre mode enverrait au service un texte qui
   // ne correspond plus au bouton sur lequel on vient de cliquer.
-  useEffect(() => { setPromptEdite(undefined); }, [mode]);
+  //
+  // Meme raison pour la description de scene : un prompt edite a la main PRIME
+  // sur le prompt genere. Si on le gardait, ce que le gerant vient de taper
+  // dans la description de scene ne partirait pas — sans que rien ne le dise.
+  // On repart donc du prompt genere, qui la contient.
+  useEffect(() => { setPromptEdite(undefined); }, [mode, promptLibre]);
 
   // Charger les devis et commandes pour le rattachement. Best effort : si la
   // base est injoignable, l'ecran fonctionne quand meme, sans rattachement.
@@ -457,10 +469,16 @@ function EcranMockup() {
   const promptAuto = useMemo(
     () => (mode === 'ia'
       ? construirePromptMockupIA({
-        supportId, colorisId, angleId, techniqueId, zoneId, largeurImpressionCm,
+        supportId, colorisId, angleId, techniqueId, zoneId, largeurImpressionCm, promptLibre,
       })
-      : construirePromptScene({ supportId, colorisId, angleId })),
-    [mode, supportId, colorisId, angleId, techniqueId, zoneId, largeurImpressionCm],
+      : construirePromptScene({ supportId, colorisId, angleId, promptLibre })),
+    [mode, supportId, colorisId, angleId, techniqueId, zoneId, largeurImpressionCm, promptLibre],
+  );
+
+  // Verdict sur la description de scene, affiche sous le champ, en direct.
+  const libreVerif = useMemo(
+    () => validerPromptLibre(promptLibre, textes),
+    [promptLibre, textes],
   );
 
   const demande = useMemo(() => validerDemandeMockup({
@@ -470,6 +488,7 @@ function EcranMockup() {
     largeurImpressionCm,
     largeurLogoPx: logoAnalyse?.largeurPx || logoImage?.naturalWidth || 0,
     promptEdite,
+    promptLibre,
     sceneExistante: sceneImage ? (sceneOrigine || 'photo') : null,
     enCours,
     compteurDuJour: compteur,
@@ -481,7 +500,8 @@ function EcranMockup() {
   }), [
     mode,
     supportId, colorisId, angleId, techniqueId, zoneId, logoFichier, logoAnalyse,
-    largeurImpressionCm, logoImage, promptEdite, sceneImage, sceneOrigine, enCours, compteur,
+    largeurImpressionCm, logoImage, promptEdite, promptLibre, sceneImage, sceneOrigine,
+    enCours, compteur,
     textes,
   ]);
 
@@ -533,6 +553,7 @@ function EcranMockup() {
       largeurImpressionCm,
       largeurLogoPx: logoAnalyse?.largeurPx || logoImage?.naturalWidth || 0,
       promptEdite,
+      promptLibre,
       sceneExistante: null, // on demande explicitement une generation
       enCours: false,
       compteurDuJour: compteur,
@@ -1194,6 +1215,52 @@ function EcranMockup() {
               />
             </div>
 
+            {/* ── LA DESCRIPTION DE SCENE ────────────────────────────────────
+                Demande de Gassim du 16/09/2026. Elle s'AJOUTE aux consignes
+                de scene ; elle ne peut pas demander du texte. La phrase
+                d'explication dit les deux — c'est elle qui evite la tentative
+                « ecris le numero en gros », et le refus qui va avec. ─────── */}
+            <div className="space-y-1.5 rounded-lg border p-3">
+              <label
+                htmlFor="mockup-prompt-libre"
+                className="flex items-center gap-1.5 text-xs font-semibold"
+              >
+                <Wand2 className="h-3.5 w-3.5" /> Décrire la scène (facultatif)
+              </label>
+              <p className="text-[11px] text-muted-foreground">
+                Ce champ décrit <strong>la mise en scène</strong> — le décor, la lumière,
+                l&apos;ambiance, l&apos;angle, le contexte — et s&apos;ajoute aux réglages
+                ci-dessus&nbsp;; il ne peut <strong>pas</strong> faire écrire du texte
+                (nom, numéro, slogan) : ceux-là se saisissent à l&apos;étape 4b et sont dessinés
+                par l&apos;application.
+              </p>
+              <textarea
+                id="mockup-prompt-libre"
+                className="h-16 w-full rounded border bg-background p-2 text-[12px]"
+                maxLength={LONGUEUR_PROMPT_LIBRE_MAX}
+                placeholder="Ex : posé sur un comptoir en bois, lumière de fin de journée, boutique de Moanda floue en arrière-plan"
+                value={promptLibre}
+                onChange={(e) => setPromptLibre(e.target.value)}
+              />
+              <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                {/* Chaine unique, et pas `{n} / {max} caractères` : un mot
+                    accentue colle a une accolade JSX n'est plus reconnu comme
+                    du texte par le detecteur d'identifiants accentues du
+                    dossier — il le lirait comme du code. */}
+                <span>{`${promptLibre.trim().length} / ${LONGUEUR_PROMPT_LIBRE_MAX} caractères`}</span>
+                {promptLibre.trim() && (
+                  <button
+                    type="button"
+                    className="underline"
+                    onClick={() => setPromptLibre('')}
+                  >
+                    Effacer
+                  </button>
+                )}
+              </div>
+              {!libreVerif.ok && <Alerte type="blocage">{libreVerif.message}</Alerte>}
+            </div>
+
             <details className="rounded-lg border bg-muted/30 p-3">
               <summary className="cursor-pointer text-xs font-medium">
                 {mode === 'ia'
@@ -1201,6 +1268,7 @@ function EcranMockup() {
                   : 'Prompt de la scène — relisez-le, c\u2019est lui qui part au service IA'}
               </summary>
               <textarea
+                id="mockup-prompt"
                 className="mt-2 h-28 w-full rounded border bg-background p-2 font-mono text-[11px]"
                 value={promptEdite ?? promptAuto}
                 onChange={(e) => setPromptEdite(e.target.value)}
@@ -1213,6 +1281,10 @@ function EcranMockup() {
                   {mode === 'ia'
                     ? 'Ce prompt decrit l\u2019objet et place le logo, joint a la requete comme image de reference. Il ne demande AUCUN texte : vos blocs sont dessines par l\u2019application par-dessus l\u2019image.'
                     : 'Ce prompt ne decrit QUE le support nu. Ni le logo ni vos textes n\u2019y figurent, et ils ne sont jamais envoyes.'}
+                  {' '}
+                  Votre description de scene y est deja reprise, et la consigne
+                  \u00ab&nbsp;n&apos;ecris aucun texte&nbsp;\u00bb le ferme toujours \u2014 meme si vous
+                  modifiez ce qui precede.
                 </span>
               </div>
             </details>
@@ -1236,11 +1308,21 @@ function EcranMockup() {
             {/* 🔴 Le bouton grise dit TOUJOURS pourquoi, juste en dessous. */}
             {!plafond.ok && <Alerte type="blocage">{plafond.message}</Alerte>}
             {plafond.ok && (
-              <p className="text-center text-[11px] text-muted-foreground">
-                {compteur} generation{compteur > 1 ? 's' : ''} aujourd&apos;hui ·
-                {' '}{plafond.restant} restante{plafond.restant > 1 ? 's' : ''} sur {PLAFOND_GENERATIONS_PAR_JOUR}
-                {' '}· cout cumule ≈ {formatFCFA(compteur * coutProchaineGeneration)}
-              </p>
+              <>
+                <p className="text-center text-[11px] text-muted-foreground">
+                  {compteur} generation{compteur > 1 ? 's' : ''} aujourd&apos;hui ·
+                  {' '}{plafond.restant} restante{plafond.restant > 1 ? 's' : ''} sur {PLAFOND_GENERATIONS_PAR_JOUR}
+                  {' '}· cout cumule ≈ {formatFCFA(compteur * coutProchaineGeneration)}
+                </p>
+                {/* Le chiffre affiche sur le bouton est MESURE, pas estime.
+                    On le dit : l'estimation precedente (71 F) surevaluait de
+                    5,5× et a servi d'argument dans des arbitrages. */}
+                <p className="text-center text-[10px] text-muted-foreground/80">
+                  {origineCout(QUALITE_PAR_DEFAUT) === 'mesure'
+                    ? COUT_MESURE_SOURCE
+                    : 'Cout estime, non mesure dans cette qualite.'}
+                </p>
+              </>
             )}
             {!demande.ok && demande.raison !== 'plafond' && (
               <Alerte type="attention">{demande.message}</Alerte>

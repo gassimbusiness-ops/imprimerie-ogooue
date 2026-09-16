@@ -70,21 +70,73 @@ export {
    ═════════════════════════════════════════════════════════════════════════════ */
 
 /**
- * Cout estime d'UNE generation de scene, en FCFA.
+ * Cout d'UNE generation de scene, en FCFA, carre 1024.
  *
- * Verifie le 15/09/2026 sur `developers.openai.com/api/docs/pricing` :
- * les modeles gpt-image-2.5 sont factures 30 $ / million de jetons d'image en
- * sortie. OpenAI ne publie pas la table de jetons par taille/qualite pour la
- * generation 2.5 ; la generation precedente consommait ~1 056 jetons en `low`,
- * ~4 160 en `medium` et ~6 208 en `high` pour un carre 1024. A 30 $/M, cela
- * donne ~0,032 $ / ~0,125 $ / ~0,186 $ l'image.
+ * ── `medium` : MESURE, PAS ESTIME ────────────────────────────────────────
  *
- * Taux 1 USD = 568,91 FCFA (Xe.com, 14/09/2026). Le XAF est fixe contre l'euro,
- * pas contre le dollar : prevoir ±5 %.
+ * Releve le 16/09/2026 sur le tableau de bord OpenAI du compte de
+ * l'entreprise (`platform.openai.com`, page Usage), apres les 6 generations
+ * reelles faites ce jour-la avec le vrai logo :
  *
- * C'est une ESTIMATION affichee comme telle. La verite reste la facture OpenAI.
+ *     depense de septembre ............... 0,14 $ au total
+ *     cle « ogooue-app-mockups-vercel » ... 0,14 $ · 6 requetes · 8 083 jetons
+ *     soit ............................... ~1 350 jetons par requete
+ *                                          ~0,023 $ l'image en qualite `medium`
+ *
+ * A 568,91 FCFA le dollar : **13 F l'image**.
+ *
+ * ── Ce que ce chiffre remplace, et de combien on se trompait ─────────────
+ *
+ * La valeur precedente (71 F) etait une ESTIMATION : 30 $/M de jetons de
+ * sortie multiplies par la table de jetons de la generation PRECEDENTE de
+ * modeles (~1 056 / ~4 160 / ~6 208 jetons en low / medium / high), faute de
+ * table publiee pour gpt-image-2.5. La mesure dit ~1 350 jetons la ou
+ * l'estimation en supposait 4 160 : elle **surevaluait d'un facteur 5,5**.
+ * Une table de jetons d'un modele anterieur n'est pas une mesure du modele
+ * courant — c'est exactement l'erreur deja commise en §5 sur la fidelite.
+ *
+ * ── `low` et `high` : ESTIMES, et ils le restent ─────────────────────────
+ *
+ * ⚠️ AUCUNE generation n'a ete faite en `low` ni en `high` au moment de la
+ * mesure : les 6 requetes facturees etaient toutes en `medium`. Ces deux
+ * valeurs ne sont donc PAS mesurees. Elles sont deduites de la mesure
+ * `medium` par le seul rapport de jetons documente (celui de la generation
+ * precedente, faute de mieux) :
+ *
+ *     low  = 13 F × 1 056 / 4 160 ≈ 3 F    (estime)
+ *     high = 13 F × 6 208 / 4 160 ≈ 20 F   (estime)
+ *
+ * Ce rapport peut etre faux sur gpt-image-2.5, comme l'etait la table
+ * absolue. `COUT_ORIGINE` porte cette distinction pour que l'ecran puisse la
+ * dire au lieu de la sous-entendre. Pour la lever : lancer une generation
+ * dans la qualite voulue, puis relire le tableau de bord OpenAI.
+ *
+ * Taux 1 USD = 568,91 FCFA (Xe.com, 14/09/2026). Le XAF est fixe contre
+ * l'euro, pas contre le dollar : prevoir ±5 %.
+ *
+ * ⚠️ Ces chiffres valent pour CE modele, a CETTE taille (1024×1024), ce
+ * jour-la. Changer `taille` ou `OPENAI_IMAGE_MODEL` les perime.
  */
-export const COUT_ESTIME_FCFA = { low: 18, medium: 71, high: 106 };
+export const COUT_ESTIME_FCFA = { low: 3, medium: 13, high: 20 };
+
+/**
+ * D'ou vient chaque chiffre de `COUT_ESTIME_FCFA`. On ne presente jamais comme
+ * mesure ce qui ne l'est pas : c'est la regle qui a fait tomber les 71 F.
+ */
+export const COUT_ORIGINE = {
+  low: 'estime',
+  medium: 'mesure',
+  high: 'estime',
+};
+
+/** Date et source de la mesure, pour l'afficher a l'ecran sans la reecrire. */
+export const COUT_MESURE_SOURCE =
+  'Mesure du 16/09/2026 — tableau de bord OpenAI : 0,14 $ pour 6 generations '
+  + '(8 083 jetons), soit ~13 F l\'image en qualite moyenne.';
+
+export function origineCout(qualite = QUALITE_PAR_DEFAUT) {
+  return COUT_ORIGINE[qualite] || 'estime';
+}
 
 /** Qualite par defaut : `medium`. Un mockup de comptoir n'a pas besoin de `high`. */
 export const QUALITE_PAR_DEFAUT = 'medium';
@@ -92,10 +144,16 @@ export const QUALITE_PAR_DEFAUT = 'medium';
 /**
  * Plafond quotidien de generations IA, par poste.
  *
- * A 71 F la generation, 20 generations coutent 1 420 F, soit 2,7 % du CA d'une
- * journee moyenne (51 872 F, mesure sur 339 jours). Au-dela, on arrete : c'est
- * un garde-fou, pas une limite d'usage — la photo reelle du support ne coute
- * rien et n'est jamais comptee ici.
+ * A 13 F la generation (cout MESURE le 16/09/2026, cf. ci-dessus), 20
+ * generations coutent 260 F, soit 0,5 % du CA d'une journee moyenne
+ * (51 872 F, mesure sur 339 jours). Le calcul precedent annonçait 1 420 F et
+ * 2,7 % : il reposait sur l'estimation a 71 F, corrigee depuis.
+ *
+ * ⚠️ Le plafond n'est PAS redimensionne pour autant. A 260 F/jour, ce qui
+ * limite n'est plus l'argent — c'est le temps de relecture humaine de chaque
+ * visuel avant de le montrer a un client. 20 relectures par jour reste un
+ * plafond honnete. La photo reelle du support ne coute rien et n'est jamais
+ * comptee ici.
  */
 export const PLAFOND_GENERATIONS_PAR_JOUR = 20;
 
@@ -528,6 +586,120 @@ function nettoyer(v) {
   return String(v).replace(/\s+/g, ' ').trim();
 }
 
+/* ─────────────────────────────────────────────────────────────────────────────
+   LE PROMPT LIBRE — ajouter une SCENE, jamais du texte
+
+   Demande de Gassim, 16/09/2026 : « on peut aussi mettre un prompt pour plus
+   personnaliser ? en plus des generations par defaut deja ».
+
+   Ce champ decrit la MISE EN SCENE et rien d'autre : une ambiance, un decor,
+   un angle, un style de photo, un contexte gabonais, une mise en situation.
+   Il s'AJOUTE aux consignes de scene ; il ne les remplace pas et ne peut pas
+   les vider. Trois proprietes le garantissent, et elles sont testees :
+
+    1. il est concatene APRES la description de base, donc la troncature de
+       `bornerAvecConsigne` le mange LUI avant de toucher a la scene ;
+    2. `CONSIGNE_AUCUN_TEXTE` est recollee apres la troncature : un prompt
+       libre de 5 000 caracteres ne peut pas la faire disparaitre ;
+    3. il passe par `validerPromptLibre` avant d'autoriser le clic.
+
+   ⛔ Ce qu'il ne peut PAS faire : demander du texte. C'est la decision du
+   16/09/2026, et rouvrir cette porte par un champ libre serait exactement la
+   refermer d'une main et l'ouvrir de l'autre.
+   ───────────────────────────────────────────────────────────────────────── */
+
+/**
+ * Longueur maximale du prompt libre.
+ *
+ * 240 caracteres : de quoi decrire une scene (« sur un comptoir en bois, lumiere
+ * de fin de journee, une vendeuse en arriere-plan flou ») sans pouvoir pousser
+ * la description de base sous la troncature. Le prompt complet, lui, reste borne
+ * par `LONGUEUR_PROMPT_MAX` / `LONGUEUR_PROMPT_MAX_IA` — ce champ est compte
+ * DEDANS, il ne s'y ajoute pas en franchise.
+ */
+export const LONGUEUR_PROMPT_LIBRE_MAX = 240;
+
+/**
+ * Suite de 5 chiffres ou plus, espaces et separateurs compris.
+ *
+ * Attrape « 060 44 46 34 », « 06044 46 34 », « 077-12-34-56 ». N'attrape ni
+ * « 180 cm », ni « 2026 », ni « 1024x1024 » (le `x` coupe la suite).
+ *
+ * Pourquoi ce controle EN PLUS de `promptContientTexteClient` : ce dernier ne
+ * compare qu'aux blocs de texte DECLARES. Un numero tape directement dans le
+ * prompt libre, sans avoir ete saisi comme bloc, y passerait sans etre vu.
+ */
+const MOTIF_SUITE_DE_CHIFFRES = /(?:\d[\s.\-/]*){5,}/;
+
+/**
+ * Valide le prompt libre. Renvoie TOUJOURS un message lisible quand c'est
+ * refuse : ce champ est a l'ecran, au comptoir, devant un client qui attend.
+ *
+ * @param {string} promptLibre
+ * @param {Array} [textes]  les blocs de texte declares
+ * @returns {{ok: boolean, valeur: string, raison: string|null, message: string}}
+ */
+export function validerPromptLibre(promptLibre, textes = []) {
+  const valeur = nettoyer(promptLibre);
+  if (!valeur) return { ok: true, valeur: '', raison: null, message: '' };
+
+  if (valeur.length > LONGUEUR_PROMPT_LIBRE_MAX) {
+    return {
+      ok: false,
+      valeur,
+      raison: 'prompt-libre-trop-long',
+      message: `Votre description de scene fait ${valeur.length} caracteres, maximum `
+        + `${LONGUEUR_PROMPT_LIBRE_MAX}. Au-dela, elle repousse la description du support `
+        + 'hors du prompt. Gardez l\'essentiel : le decor, la lumiere, la mise en situation.',
+    };
+  }
+
+  // ── Un texte client recopie dans le champ libre ──────────────────────────
+  const fuite = promptContientTexteClient(valeur, textes);
+  if (fuite.trouve) {
+    return {
+      ok: false,
+      valeur,
+      raison: 'prompt-libre-texte-client',
+      message: `Votre description de scene contient « ${fuite.contenu} », qui est un de vos `
+        + 'blocs de texte. Ce champ decrit la SCENE (decor, lumiere, mise en situation) — '
+        + 'il ne peut pas demander d\'ecrire du texte. Le 16/09, un bloc demande au modele '
+        + 'a ete purement omis, sans le moindre avertissement : depuis, c\'est l\'application '
+        + 'qui dessine les textes, caractere par caractere. Retirez-le d\'ici, il sera marque.',
+    };
+  }
+
+  // ── Un numero tape directement, sans passer par un bloc ──────────────────
+  if (MOTIF_SUITE_DE_CHIFFRES.test(valeur)) {
+    return {
+      ok: false,
+      valeur,
+      raison: 'prompt-libre-chiffres',
+      message: 'Votre description de scene contient une suite de chiffres, qui ressemble a un '
+        + 'numero. Le modele ne doit recevoir AUCUN texte a ecrire : un numero redessine par lui '
+        + 'peut etre faux, ou disparaitre en silence. Saisissez-le comme bloc de texte '
+        + '(etape « Textes et personnalisation ») — l\'application le dessinera elle-meme.',
+    };
+  }
+
+  return { ok: true, valeur, raison: null, message: '' };
+}
+
+/**
+ * Met le prompt libre en forme pour le modele. Renvoie '' si vide.
+ *
+ * La phrase d'introduction compte : livree brute, une consigne francaise au
+ * milieu d'un prompt anglais se fait deviner — c'est la meme erreur que les
+ * libelles de support envoyes bruts (« A Casquette in Rouge color »). On la
+ * cadre donc explicitement comme une direction de SCENE, jamais de contenu.
+ */
+function phrasePromptLibre(promptLibre) {
+  const v = nettoyer(promptLibre);
+  if (!v) return '';
+  return `Additional scene direction from the print shop — styling, setting and framing ONLY, `
+    + `never content to write: ${v}`;
+}
+
 /**
  * Borne un prompt SANS jamais rogner la consigne finale.
  *
@@ -559,7 +731,7 @@ function bornerAvecConsigne(description, consigne, max) {
 export function construirePromptScene(params) {
   // `params` peut arriver a null : la destructuration directe leverait, et une
   // exception ici blanchirait l'ecran. Aucun chemin faillible ne casse le rendu.
-  const { supportId, colorisId, angleId = 'face' } = params || {};
+  const { supportId, colorisId, angleId = 'face', promptLibre = '' } = params || {};
   const support = trouverSupport(supportId);
   if (!support) return '';
   const coloris = trouverColoris(supportId, colorisId) || support.coloris[0];
@@ -582,7 +754,10 @@ export function construirePromptScene(params) {
     'Flat frontal diffuse studio lighting, no hard shadows, no colour cast,',
     'neutral light grey seamless background, natural fabric texture and soft folds visible,',
     'the printable area is fully visible and not cropped.',
-  ].join(' ');
+    // Le prompt libre est EN DERNIER dans la description, jamais a la place
+    // d'une des lignes ci-dessus : la troncature le mange lui, pas la scene.
+    phrasePromptLibre(promptLibre),
+  ].filter(Boolean).join(' ');
 
   // La consigne « n'ecris rien de toi-meme » est recollee APRES la troncature :
   // elle ne peut donc jamais etre rognee par un libelle de support trop long.
@@ -866,8 +1041,13 @@ export function construirePromptMockupIA(params) {
   const {
     supportId, colorisId, angleId = 'face', techniqueId, zoneId,
     largeurImpressionCm = 0,
+    // `promptLibre` EST une entree utilisateur, et c'est assume : il decrit la
+    // scene. Il est filtre par `validerPromptLibre` avant d'autoriser le clic,
+    // il est place en DERNIER dans la description, et `CONSIGNE_AUCUN_TEXTE`
+    // est recollee apres lui. Voir le bloc « LE PROMPT LIBRE » plus haut.
+    promptLibre = '',
     // `personnalisation` et `textes` sont VOLONTAIREMENT absents de cette
-    // destructuration. Ne les remettez pas : ce sont des entrees utilisateur.
+    // destructuration. Ne les remettez pas : ce sont des CONTENUS a imprimer.
   } = params || {};
   const support = trouverSupport(supportId);
   if (!support) return '';
@@ -901,7 +1081,10 @@ export function construirePromptMockupIA(params) {
     'The rest of the product surface stays completely bare.',
     'Studio lighting, soft shadows, shallow depth of field, clean neutral background,',
     'photorealistic, high resolution, catalogue quality.',
-  ].join(' ');
+    // En DERNIER, pour la meme raison qu'en mode scene : ce qui saute a la
+    // troncature doit etre la personnalisation, jamais la consigne de base.
+    phrasePromptLibre(promptLibre),
+  ].filter(Boolean).join(' ');
 
   // La consigne « n'ecris rien de toi-meme » est la DERNIERE phrase, et elle est
   // recollee apres la troncature : aucune rallonge de libelle ne peut la manger.
@@ -939,6 +1122,9 @@ export function validerDemandeMockup(params) {
     largeurLogoPx = 0,
     detailMinPx = 0,
     promptEdite,
+    // Description de scene ajoutee a la main par le gerant. Elle S'AJOUTE aux
+    // consignes ; elle ne peut ni les remplacer, ni demander du texte.
+    promptLibre = '',
     sceneExistante = null,   // photo reelle du support : aucun appel IA, aucun cout
     enCours = false,
     compteurDuJour = 0,
@@ -957,9 +1143,9 @@ export function validerDemandeMockup(params) {
   const modeIA = mode === 'ia';
   const promptAuto = modeIA
     ? construirePromptMockupIA({
-      supportId, colorisId, angleId, techniqueId, zoneId, largeurImpressionCm,
+      supportId, colorisId, angleId, techniqueId, zoneId, largeurImpressionCm, promptLibre,
     })
-    : construirePromptScene({ supportId, colorisId, angleId });
+    : construirePromptScene({ supportId, colorisId, angleId, promptLibre });
 
   // Le prompt relu/modifie par l'utilisateur prime TOUJOURS sur le prompt genere :
   // c'est lui, et lui seul, qui part au service IA. Nuance : un champ vide n'est
@@ -1063,6 +1249,16 @@ export function validerDemandeMockup(params) {
   const verifTextes = validerTextes(textes, { techniqueId });
   if (!verifTextes.ok) {
     return { ...base, ok: false, raison: 'texte-invalide', message: verifTextes.message, faisabilite };
+  }
+
+  // ── La description de scene ajoutee a la main ────────────────────────────
+  // Elle est verifiee AVANT le controle global du prompt : le message « votre
+  // description de scene contient un numero » dit quoi corriger et ou, la ou
+  // « le prompt contient… » enverrait chercher dans un pave anglais de 1 900
+  // caracteres qu'on n'a pas ecrit.
+  const verifLibre = validerPromptLibre(promptLibre, textes);
+  if (!verifLibre.ok) {
+    return { ...base, ok: false, raison: verifLibre.raison, message: verifLibre.message, faisabilite };
   }
 
   // ── Aucun texte client ne part au modele, prompt edite compris ───────────

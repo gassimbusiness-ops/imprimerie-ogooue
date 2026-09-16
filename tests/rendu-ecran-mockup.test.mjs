@@ -217,7 +217,7 @@ test('Mockups — le numero saisi s affiche verbatim et reste hors du prompt', a
     assert.ok(texte.includes(NUMERO), 'la saisie verbatim n’est pas affichée');
 
     // 3. ⛔ Le prompt qui part au modele ne doit rien en savoir.
-    const prompt = v.conteneur.querySelector('textarea');
+    const prompt = v.conteneur.querySelector('#mockup-prompt');
     assert.ok(prompt, 'la zone de prompt est introuvable');
     assert.ok(
       !prompt.value.includes(NUMERO) && !/060/.test(prompt.value),
@@ -246,13 +246,73 @@ test('Mockups — changer de mode ne remet jamais le texte dans le prompt', asyn
       const choix = bouton(v.conteneur, libelle);
       assert.ok(choix, `le mode « ${libelle} » est introuvable`);
       await cliquer(v, choix);
-      const prompt = v.conteneur.querySelector('textarea');
+      const prompt = v.conteneur.querySelector('#mockup-prompt');
       assert.ok(prompt, 'la zone de prompt est introuvable');
       assert.ok(
         !prompt.value.includes(NOM) && !/IMPRIMERIE|OGOOU/i.test(prompt.value),
         `mode « ${libelle} » : le nom du client est parti dans le prompt`,
       );
     }
+    assert.deepEqual(v.erreurs.map(String), [], 'une exception est partie pendant l’interaction');
+  } finally { await v.demonter(); }
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   4. LA DESCRIPTION DE SCENE — elle s'ajoute, elle n'ouvre rien
+
+   Demande de Gassim du 16/09/2026 : « on peut aussi mettre un prompt pour plus
+   personnaliser ? ». Ce qui est verifie ici, c'est ce que le gerant VOIT :
+   le champ existe, il dit a quoi il sert, ce qu'on y tape part vraiment, et un
+   numero tape dedans est refuse a l'ecran — pas silencieusement envoye.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+test('Mockups — le champ de scene existe et dit ce qu il ne peut PAS faire', async () => {
+  const v = await rendreEcran({ ecran: ECRAN, donnees: BASE });
+  try {
+    const champ = v.conteneur.querySelector('#mockup-prompt-libre');
+    assert.ok(champ, 'le champ de description de scène est introuvable');
+    // L'explication doit tenir a l'ecran, pas dans un commentaire de code :
+    // c'est elle qui evite la tentative « écris le numéro en gros ».
+    const texte = v.conteneur.textContent || '';
+    assert.match(texte, /Décrire la scène/i, 'le champ doit être nommé');
+    assert.match(texte, /mise en scène/i, 'l’écran doit dire ce que le champ décrit');
+    assert.match(
+      texte, /pas.{0,40}écrire du texte/is,
+      'l’écran doit dire que ce champ ne peut pas faire écrire du texte',
+    );
+  } finally { await v.demonter(); }
+});
+
+test('Mockups — ce qui est tape dans la scene arrive dans le prompt', async () => {
+  const SCENE = 'pose sur un comptoir en bois, lumiere de fin de journee';
+  const v = await rendreEcran({ ecran: ECRAN, donnees: BASE });
+  try {
+    await saisir(v, v.conteneur.querySelector('#mockup-prompt-libre'), SCENE);
+    const prompt = v.conteneur.querySelector('#mockup-prompt');
+    assert.ok(prompt.value.includes(SCENE), 'la description de scène n’est pas partie au modèle');
+    // Et la consigne ferme toujours le prompt, apres la personnalisation.
+    assert.ok(
+      prompt.value.trim().endsWith('text is composited afterwards by the application.'),
+      'la consigne « n’écris aucun texte » doit rester la dernière phrase',
+    );
+    assert.deepEqual(v.erreurs.map(String), [], 'une exception est partie pendant l’interaction');
+    assert.deepEqual(v.journal.ecritures, [], 'décrire une scène ne doit rien écrire en base');
+  } finally { await v.demonter(); }
+});
+
+test('Mockups — un numero tape dans la scene est refuse A L ECRAN', async () => {
+  const v = await rendreEcran({ ecran: ECRAN, donnees: BASE });
+  try {
+    await saisir(
+      v, v.conteneur.querySelector('#mockup-prompt-libre'),
+      'avec le 060 44 46 34 ecrit en gros sous le logo',
+    );
+    const texte = v.conteneur.textContent || '';
+    assert.match(
+      texte, /suite de chiffres/i,
+      'un numéro tapé dans la description de scène doit être refusé, visiblement',
+    );
+    assert.match(texte, /bloc de texte/i, 'le refus doit dire où le saisir à la place');
     assert.deepEqual(v.erreurs.map(String), [], 'une exception est partie pendant l’interaction');
   } finally { await v.demonter(); }
 });
