@@ -13,8 +13,8 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import {
-  Megaphone, Plus, Edit2, Trash2, Calendar, TrendingUp, Target,
-  Banknote, ArrowRight, Link2, Search, Eye,
+  Megaphone, Plus, Edit2, Trash2, Calendar, TrendingUp,
+  Banknote, Link2, Search,
 } from 'lucide-react';
 import { toast } from 'sonner';
 

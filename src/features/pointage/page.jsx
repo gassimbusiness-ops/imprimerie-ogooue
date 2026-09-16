@@ -1,9 +1,8 @@
 import { useState, useEffect, useMemo } from 'react';
 import { db } from '@/services/db';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import {
   Dialog,
   DialogContent,
@@ -21,13 +20,10 @@ import {
   Clock,
   LogIn,
   LogOut,
-  Calendar,
-  Users,
   ChevronLeft,
   ChevronRight,
   UserCheck,
   UserX,
-  Timer,
 } from 'lucide-react';
 import { toast } from 'sonner';
 

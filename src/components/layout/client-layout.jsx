@@ -5,7 +5,7 @@ import { getNotifications, markAsRead, markAllAsRead } from '@/services/notifica
 import { cn } from '@/lib/utils';
 import {
   LayoutDashboard, Package, FileText, MessageCircle,
-  ShoppingBag, LogOut, Menu, X, User, Printer, Gift, Calculator, Bell, CheckCheck,
+  ShoppingBag, LogOut, Menu, X, User, Gift, Calculator, Bell, CheckCheck,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import Chatbot from '@/components/chatbot';

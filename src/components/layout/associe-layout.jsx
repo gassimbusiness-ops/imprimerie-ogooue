@@ -3,7 +3,7 @@ import { Outlet, Link, useLocation } from 'react-router-dom';
 import { useAuth } from '@/services/auth';
 import { cn } from '@/lib/utils';
 import {
-  LayoutDashboard, BookOpen, Boxes, Users,
+  LayoutDashboard, BookOpen, Boxes,
   TrendingUp, LogOut, Menu, X, Hammer, Moon,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';

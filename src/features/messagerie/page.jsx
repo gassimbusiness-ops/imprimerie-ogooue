@@ -8,8 +8,8 @@ import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
-  MessageCircle, Send, Search, Plus, Phone, Mail, User,
-  ArrowLeft, Clock, Paperclip, FileText, Download, X, Image as ImageIcon, AlertTriangle,
+  MessageCircle, Send, Search, Plus, User,
+  ArrowLeft, Paperclip, FileText, Download, X, AlertTriangle,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { notifyNouveauMessage } from '@/services/notifications';
@@ -281,7 +281,7 @@ export default function Messagerie() {
     toast.success('Conversation créée');
   };
 
-  const useTemplate = (t) => {
+  const appliquerModele = (t) => {
     let text = t.text;
     if (activeConv?.client_nom) text = text.replace('{nom}', activeConv.client_nom);
     setNewMessage(text);
@@ -433,7 +433,7 @@ export default function Messagerie() {
           {TEMPLATES.map((t) => (
             <button
               key={t.label}
-              onClick={() => useTemplate(t)}
+              onClick={() => appliquerModele(t)}
               className="shrink-0 rounded-full border px-3 py-1 text-[10px] font-medium hover:bg-muted transition-colors"
             >
               {t.label}

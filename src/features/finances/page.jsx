@@ -9,7 +9,7 @@ import { verrouPrelevements, CLE_PRELEVEMENTS } from '@/services/execution-uniqu
 import { todayISO } from '@/lib/dates';
 import { exportGrandLivrePDF } from '@/services/export-pdf';
 import { tresorerieImprimerie, chargeMensuelle } from '@/services/finance-calc';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -19,10 +19,9 @@ import {
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
-import {
-  Landmark, Plus, Edit2, Trash2, CreditCard, Users2, TrendingUp,
-  Receipt, Coins, ArrowUpRight, ArrowDownLeft, ArrowLeftRight,
-  Calendar, Building2, Globe, Wallet, Banknote, RefreshCw, AlertTriangle,
+import { Plus, Edit2, Trash2, CreditCard, Users2, TrendingUp,
+  Receipt, ArrowUpRight, ArrowDownLeft, ArrowLeftRight,
+  Calendar, Building2, Globe, Banknote, RefreshCw, AlertTriangle,
   Download, CheckCircle2,
 } from 'lucide-react';
 import { toast } from 'sonner';

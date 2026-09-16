@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Menu, Bell, Search, Check, CheckCheck } from 'lucide-react';
+import { Menu, Bell, Search, CheckCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import GlobalSearch from './global-search';
 import { useAuth } from '@/services/auth';

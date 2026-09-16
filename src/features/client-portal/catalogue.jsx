@@ -10,8 +10,7 @@ import {
 } from '@/components/ui/select';
 import {
   Search, ShoppingCart, Plus, Minus, Trash2, ShoppingBag, Send,
-  Shirt, BookOpen, Printer, Camera, FileText, Scissors, Package, Tag,
-  Clock, Banknote, LayoutGrid, Coffee, ChevronLeft, ChevronRight, X, ZoomIn, Truck, Star,
+  Shirt, BookOpen, Package, Tag, Banknote, LayoutGrid, Coffee, Truck, Star,
 } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { toast } from 'sonner';

@@ -11,14 +11,12 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import {
-  PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend,
-  BarChart, Bar, XAxis, YAxis, CartesianGrid,
+  PieChart, Pie, Cell, ResponsiveContainer, Tooltip,
 } from 'recharts';
 import {
-  Crown, TrendingUp, Landmark, Banknote, Users, Plus, ArrowDownCircle,
+  Crown, TrendingUp, Users, Plus, ArrowDownCircle,
   Building2, Wallet, CreditCard, PiggyBank, Shield, History,
-  Edit3, AlertTriangle, FileText, Filter, Search, ChevronDown,
-  ChevronUp, Eye, Download, Pencil, Calculator, Edit2, Trash2,
+  Edit3, AlertTriangle, FileText, Download, Pencil, Calculator, Edit2, Trash2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -76,7 +74,7 @@ const TABS = [
  * interdit de supprimer) comme reference du jeu de donnees initial, a rejouer
  * volontairement depuis une migration si besoin.
  */
-// eslint-disable-next-line no-unused-vars
+// eslint-disable-next-line unused-imports/no-unused-vars
 async function seedInvestisseurs() {
   const existing = await db.investisseurs.list();
   if (existing.length > 0) return;

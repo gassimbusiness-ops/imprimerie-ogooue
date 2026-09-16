@@ -1,13 +1,12 @@
 import { useState, useEffect, useMemo } from 'react';
 import { db } from '@/services/db';
-import { logAction } from '@/services/audit';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Target, Plus, Edit2, Trash2, TrendingUp, CheckCircle2, Clock, AlertTriangle, BarChart3 } from 'lucide-react';
+import { Target, Plus, Trash2, CheckCircle2, Clock, AlertTriangle, BarChart3 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { toast } from 'sonner';
 

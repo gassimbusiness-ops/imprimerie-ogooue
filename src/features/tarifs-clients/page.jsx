@@ -1,13 +1,12 @@
 import { useState, useEffect, useMemo } from 'react';
 import { db } from '@/services/db';
-import { logAction } from '@/services/audit';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Tag, Plus, Edit2, Trash2, Search, User, Percent, Banknote } from 'lucide-react';
+import { Tag, Plus, Edit2, Trash2, Search, User, Banknote } from 'lucide-react';
 import { toast } from 'sonner';
 
 function fmt(n) { return new Intl.NumberFormat('fr-FR').format(Math.round(n || 0)); }

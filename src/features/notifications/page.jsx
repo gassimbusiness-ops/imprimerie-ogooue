@@ -208,7 +208,7 @@ export default function Notifications() {
   }
 
   // Commandes prêtes without notification sent
-  const commandesPrêtes = commandes.filter((c) => c.statut === 'pret');
+  const commandesPretes = commandes.filter((c) => c.statut === 'pret');
 
   return (
     <div className="space-y-6">
@@ -289,17 +289,17 @@ export default function Notifications() {
       </div>
 
       {/* Quick actions: Commandes prêtes */}
-      {commandesPrêtes.length > 0 && (
+      {commandesPretes.length > 0 && (
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="flex items-center gap-2 text-base">
               <Package className="h-4 w-4" />
-              Commandes prêtes à notifier ({commandesPrêtes.length})
+              Commandes prêtes à notifier ({commandesPretes.length})
             </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="space-y-2">
-              {commandesPrêtes.slice(0, 5).map((cmd) => (
+              {commandesPretes.slice(0, 5).map((cmd) => (
                 <div key={cmd.id} className="flex items-center justify-between rounded-lg border p-2.5">
                   <div>
                     <p className="text-sm font-medium">{cmd.numero} — {cmd.client_nom}</p>

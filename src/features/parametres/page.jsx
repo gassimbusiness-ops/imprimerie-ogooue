@@ -15,7 +15,7 @@ import {
 } from '@/components/ui/select';
 import {
   Settings, Building2, Camera, Save, Phone, Mail, MapPin, Globe,
-  Users, Shield, Key, Plus, Edit2, Trash2, UserPlus, Lock,
+  Users, Shield, Key, Edit2, Trash2, UserPlus, Lock,
   Eye, EyeOff, AlertTriangle, Palette, Image, Type, ToggleLeft,
   Database, Download, Loader2,
 } from 'lucide-react';

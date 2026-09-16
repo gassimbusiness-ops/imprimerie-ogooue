@@ -19,7 +19,6 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import {
-  Users,
   Plus,
   Search,
   Edit2,
@@ -27,7 +26,6 @@ import {
   Camera,
   Mail,
   Phone,
-  Briefcase,
   Shield,
 } from 'lucide-react';
 import { toast } from 'sonner';

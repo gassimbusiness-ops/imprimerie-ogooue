@@ -1,13 +1,12 @@
 import { useState, useEffect, useMemo } from 'react';
 import { db } from '@/services/db';
-import { logAction } from '@/services/audit';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { CalendarDays, Plus, Edit2, Trash2, Megaphone, Gift, Star, Sparkles } from 'lucide-react';
+import { Plus, Trash2, Megaphone, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
 
 const TYPES_EVT = {

@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { db } from '@/services/db';
-import { toISODate, todayISO, startOfMonthISO, addDaysISO } from '@/lib/dates';
+import { toISODate, todayISO, startOfMonthISO } from '@/lib/dates';
 import { tresorerieImprimerie, chargeMensuelle, caRapport, caRapports, depensesRapports } from '@/services/finance-calc';
 import { useAuth } from '@/services/auth';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -11,7 +11,6 @@ import {
   TrendingUp,
   TrendingDown,
   Wallet,
-  Receipt,
   Users,
   ArrowRight,
   FileSpreadsheet,

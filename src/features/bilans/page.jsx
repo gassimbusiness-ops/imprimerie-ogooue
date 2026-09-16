@@ -5,9 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
-import {
-  TrendingUp, TrendingDown, Banknote, BarChart3, PieChart as PieIcon,
-  Calendar, ArrowUpRight, ArrowDownRight, Minus, Download,
+import { BarChart3, PieChart as PieIcon, ArrowUpRight, ArrowDownRight, Download,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { exportBilanPDF } from '@/services/export-pdf';

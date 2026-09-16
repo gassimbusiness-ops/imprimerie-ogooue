@@ -13,8 +13,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import {
-  CheckSquare, Search, Plus, GripVertical, List, LayoutGrid,
-  Clock, AlertTriangle, User, Calendar, Flag, ChevronRight,
+  CheckSquare, Search, Plus, List, LayoutGrid, AlertTriangle, User, Calendar, ChevronRight,
   Edit2, Trash2, CheckCircle2, Circle, Timer, ArrowUpRight,
 } from 'lucide-react';
 import { toast } from 'sonner';

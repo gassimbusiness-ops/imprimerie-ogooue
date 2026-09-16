@@ -15,7 +15,6 @@ import {
   Settings,
   ChevronDown,
   X,
-  Printer,
   BarChart3,
   LogOut,
   Wallet,

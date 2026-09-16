@@ -1,22 +1,21 @@
 import { useState, useEffect, useMemo } from 'react';
 import { db } from '@/services/db';
 import { toISODate } from '@/lib/dates';
-import { caRapport, caRapports, CATEGORIES_RAPPORT } from '@/services/finance-calc';
+import { caRapports, CATEGORIES_RAPPORT } from '@/services/finance-calc';
 import { useAuth } from '@/services/auth';
-import { exportInventairePDF, exportClientsPDF, exportRapportCompletPDF, exportCSV } from '@/services/export-pdf';
+import { exportInventairePDF, exportRapportCompletPDF, exportCSV } from '@/services/export-pdf';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import {
-  BarChart, Bar, LineChart, Line, PieChart, Pie, Cell, AreaChart, Area,
+  BarChart, Bar, PieChart, Pie, Cell, AreaChart, Area,
   ResponsiveContainer, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
 } from 'recharts';
 import {
   TrendingUp, TrendingDown, ShoppingCart, Banknote, Users, Boxes,
   AlertTriangle, Package, CreditCard, PieChart as PieChartIcon, Download,
   FileText, ArrowUpRight, ArrowDownRight, Wallet, BarChart3, UserCheck,
-  PackageMinus, Eye, Filter,
+  PackageMinus, Eye,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { askAI } from '@/services/ai';

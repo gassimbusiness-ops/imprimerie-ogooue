@@ -14,10 +14,9 @@ import {
 } from '@/components/ui/select';
 import {
   Target, Search, Plus, Edit2, Trash2, Phone, Mail, Building2,
-  MapPin, ArrowRight, UserPlus, TrendingUp, ChevronRight, Eye,
-  Calendar, MessageCircle, X, Clock, Send, Copy, Megaphone,
-  Filter, History, Banknote, ChevronDown, AlertCircle, Sparkles,
-  Users, FileText, ShoppingCart,
+  MapPin, UserPlus, TrendingUp, Eye,
+  Calendar, MessageCircle, Send, Copy, Megaphone, History, AlertCircle, Sparkles,
+  Users, FileText,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { AIButton } from '@/components/ui/ai-button';

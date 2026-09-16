@@ -8,7 +8,7 @@ import { useAuth } from '@/services/auth';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Upload, Trash2, CheckCircle, AlertTriangle, Loader2, Database } from 'lucide-react';
+import { Upload, CheckCircle, AlertTriangle, Loader2, Database } from 'lucide-react';
 
 /* ─── Helpers ─── */
 function fmt(n) { return new Intl.NumberFormat('fr-FR').format(Math.round(n || 0)); }

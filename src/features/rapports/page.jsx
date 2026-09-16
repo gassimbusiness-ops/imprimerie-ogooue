@@ -22,13 +22,14 @@ import {
 import {
   Plus, FileSpreadsheet, Calendar, Eye, Edit, Lock, Trash2,
   CheckCircle2, Send, Save, Table2, List, LockOpen, MessageSquare,
-  Download, Filter, ChevronLeft, ChevronRight, Shield, Clock, Bot, Loader2, X,
+  Download, Filter, ChevronLeft, ChevronRight, Shield, Clock, Bot, Loader2, X, FileUp,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { exportRapportsMensuels } from '@/services/export-pdf';
 import { askAI } from '@/services/ai';
 import RapportForm from './components/rapport-form';
 import RapportDetail from './components/rapport-detail';
+import ImportExcelEcran, { BoutonModeleExcel } from './components/import-excel-ecran';
 
 const STATUS_MAP = {
   brouillon: { label: 'Brouillon', class: 'bg-orange-100 text-orange-700 border-orange-200', icon: Edit },
@@ -68,6 +69,9 @@ export default function Rapports() {
   const [rapports, setRapports] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
+  // Saisie hors ligne : les jours de coupure a Moanda, le rapport est tenu sur
+  // Excel puis importe ici. Voir components/import-excel-ecran.jsx.
+  const [showImport, setShowImport] = useState(false);
   const [editing, setEditing] = useState(null);
   const [viewing, setViewing] = useState(null);
   const [viewMode, setViewMode] = useState('tableur');
@@ -340,6 +344,13 @@ export default function Rapports() {
               <List className="h-4 w-4" />
             </button>
           </div>
+          {/* ── Saisie hors ligne (coupures de courant a Moanda) ──
+              Le modele se telecharge AVANT la coupure ; l'import se fait apres,
+              quand le courant et le reseau sont revenus. */}
+          <BoutonModeleExcel size="default" />
+          <Button variant="outline" onClick={() => setShowImport(true)} className="gap-2">
+            <FileUp className="h-4 w-4" /> Importer Excel
+          </Button>
           <Button onClick={handleNew} className="gap-2">
             <Plus className="h-4 w-4" /> Nouveau
           </Button>
@@ -730,6 +741,25 @@ export default function Rapports() {
             </DialogTitle>
           </DialogHeader>
           <RapportForm rapport={editing} onSave={handleSave} onCancel={() => setShowForm(false)} />
+        </DialogContent>
+      </Dialog>
+
+      {/* Import Excel — saisie des jours de coupure de courant */}
+      <Dialog open={showImport} onOpenChange={setShowImport}>
+        <DialogContent className="flex h-[92vh] w-[96vw] max-w-[1100px] flex-col gap-0 overflow-hidden p-0">
+          <DialogHeader className="shrink-0 border-b px-6 py-3">
+            <DialogTitle className="flex items-center gap-2">
+              <FileUp className="h-5 w-5" /> Import Excel — rapports journaliers
+            </DialogTitle>
+          </DialogHeader>
+          {/* Monte uniquement a l'ouverture : l'ecran lit la base dans son effet
+              de montage, il ne doit pas le faire tant qu'il n'est pas demande. */}
+          {showImport && (
+            <ImportExcelEcran
+              onTermine={load}
+              onFermer={() => setShowImport(false)}
+            />
+          )}
         </DialogContent>
       </Dialog>
 

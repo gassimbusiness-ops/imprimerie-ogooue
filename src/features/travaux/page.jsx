@@ -1,17 +1,17 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { db } from '@/services/db';
 import { useAuth } from '@/services/auth';
 import { logAction } from '@/services/audit';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
-  Hammer, Plus, Edit2, Trash2, Search, FolderOpen, Calendar,
-  Banknote, CheckCircle2, Clock, BarChart3, ChevronRight, ChevronDown,
-  LayoutGrid, List, GripVertical, User, AlertTriangle, Flag,
+  Hammer, Plus, Edit2, Trash2, Search, FolderOpen,
+  Banknote, Clock, BarChart3, ChevronRight, ChevronDown,
+  LayoutGrid, List, User, AlertTriangle,
 } from 'lucide-react';
 import { toast } from 'sonner';
 

@@ -1,6 +1,4 @@
 import { createContext, useContext, useState, useEffect } from 'react';
-import { db } from './db';
-import { hashPassword, verifyPassword, generateSalt } from './crypto';
 import { logAction } from './audit';
 import { enregistrerJeton, effacerJeton, apiFetch } from './api-client';
 

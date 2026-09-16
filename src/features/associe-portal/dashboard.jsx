@@ -7,10 +7,9 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { apiFetch } from '@/services/api-client';
-import {
-  TrendingUp, Users, Boxes, BookOpen, Banknote,
-  PieChart, BarChart3, Package, Eye, Building2, Wallet,
-  Hammer, Moon, Loader2, Sparkles, Calculator,
+import { Users, BookOpen,
+  PieChart, BarChart3, Package, Eye, Building2,
+  Hammer, Loader2, Sparkles, Calculator,
 } from 'lucide-react';
 
 function fmt(n) { return new Intl.NumberFormat('fr-FR').format(Math.round(n || 0)); }

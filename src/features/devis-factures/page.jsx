@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { db, getSettings } from '@/services/db';
+import { db } from '@/services/db';
 import { useAuth } from '@/services/auth';
 import { notifyFactureDisponible } from '@/services/notifications';
 import { exportDocument } from '@/services/export-pdf';
@@ -34,7 +34,6 @@ import {
   XCircle,
   Receipt,
   FileCheck,
-  Download,
   Printer,
   UserPlus,
   UserCheck,

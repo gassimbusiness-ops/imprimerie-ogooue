@@ -18,8 +18,8 @@ import {
 } from '@/components/ui/select';
 import {
   Boxes, Search, Plus, Edit2, Trash2, PackagePlus, PackageMinus,
-  AlertTriangle, Filter, Eye, EyeOff, ArrowDown, ArrowUp,
-  Package, Truck, MapPin, Clock, Banknote, History, X, Download, FileText,
+  AlertTriangle, Eye, EyeOff, ArrowDown, ArrowUp,
+  Package, Truck, MapPin, Banknote, History, Download, FileText,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { AIButton } from '@/components/ui/ai-button';

@@ -5,8 +5,7 @@ import { useAuth } from '@/services/auth';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import {
-  Package, FileText, MessageCircle, ShoppingBag, Clock, CheckCircle, Truck,
-  Printer, XCircle, Gift, Copy,
+  Package, FileText, MessageCircle, ShoppingBag, Gift, Copy,
 } from 'lucide-react';
 import { toast } from 'sonner';
 

@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'react';
 import { db } from '@/services/db';
 import { useAuth } from '@/services/auth';
-import { NIVEAUX, RECOMPENSES, calculerPoints } from '@/services/fidelite';
+import { NIVEAUX, RECOMPENSES } from '@/services/fidelite';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Gift, Star, TrendingUp, Clock, Award, ChevronRight, Copy, History } from 'lucide-react';
+import { Gift, Star, TrendingUp, Award, Copy, History } from 'lucide-react';
 import { toast } from 'sonner';
 
 function fmt(n) { return new Intl.NumberFormat('fr-FR').format(Math.round(n || 0)); }

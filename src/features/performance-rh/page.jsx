@@ -7,14 +7,13 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import {
-  BarChart, Bar, LineChart, Line, ResponsiveContainer, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
+import { LineChart, Line, ResponsiveContainer, XAxis, YAxis, CartesianGrid, Tooltip,
   PieChart, Pie, Cell,
 } from 'recharts';
 import {
   Users, UserCheck, Clock, AlertTriangle, Star, ClipboardList, TrendingUp,
-  Plus, Edit3, Check, X, Award, Calendar, BarChart3, ChevronDown, ChevronUp,
-  Ban, CheckCircle, MessageSquare, Brain, Loader2, Shield, Activity, Wallet, Package,
+  Plus, Edit3, Check, X, Award, Calendar, BarChart3,
+  Ban, CheckCircle, Brain, Loader2, Shield, Activity, Wallet,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { askAI } from '@/services/ai';

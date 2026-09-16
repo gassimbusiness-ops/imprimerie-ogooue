@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { db } from '@/services/db';
 import { useAuth } from '@/services/auth';
 import { logAction } from '@/services/audit';
-import { exportClientsPDF, exportFicheClientPDF, exportCSV } from '@/services/export-pdf';
+import { exportClientsPDF, exportCSV } from '@/services/export-pdf';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -34,7 +34,6 @@ import {
   StickyNote,
   Package,
   FileText,
-  MessageSquare,
   Download,
 } from 'lucide-react';
 import { toast } from 'sonner';
