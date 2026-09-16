@@ -122,6 +122,95 @@ export function transitionAutorisee(statutActuel, statutVise) {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
+   1 bis. PLAFONDS DES OPÉRATEURS — refuser honnêtement plutôt qu'échouer
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Plafond par transaction, en francs CFA, relevé sur les grilles officielles
+ * des opérateurs le 16/09/2026.
+ *
+ * 📗 Airtel Money Gabon — 500 000 F par transaction.
+ *    Grille : https://www.airtel.ga/airtelmoney/transaction_fees
+ *    Et, mot pour mot, l'article 3.5 des conditions d'abonnement :
+ *    « Le plafond des transactions Airtel money est de 500 000 F CFA ».
+ *
+ * 📗 Moov Money Gabon — 1 000 000 F par opération de paiement.
+ *    Grille : https://moovmoney.ga/grille-tarifaire-client/
+ *    ⚠️ Moov Money Online ajoute « Plafond : les paiements par Moov Money sont
+ *    plafonnés à 1 000 000 F/jr ET PAR CLIENT » : une facture d'un million
+ *    consomme 100 % du plafond quotidien du payeur, et échoue s'il a fait la
+ *    moindre autre opération dans la journée. D'où l'avertissement ci-dessous
+ *    bien avant d'atteindre le plafond dur.
+ *
+ * POURQUOI REFUSER AU LIEU DE LAISSER PASSER
+ *
+ * Une commande de 700 000 F envoyée à Airtel ne produit pas « montant trop
+ * élevé ». Elle produit le message que l'imprimerie a déjà vu trois fois en
+ * base : « Le compte client n'a pas suffisamment de balance ». L'application
+ * accuse alors un directeur d'école d'être à découvert, alors que la cause est
+ * un plafond réglementaire. Refuser en amont, avec le vrai motif, coûte une
+ * condition et évite une conversation pénible.
+ *
+ * Les valeurs sont surchargeables par variables d'environnement : une grille
+ * opérateur change sans prévenir, et personne ne doit attendre un déploiement.
+ */
+export const PLAFONDS_PAR_DEFAUT = Object.freeze({
+  airtel: 500_000,
+  moov: 1_000_000,
+  ext: 1_000_000, // le client choisit son opérateur sur la page SingPay
+});
+
+/** Seuil au-delà duquel un paiement passe, mais mérite d'être annoncé fragile. */
+export const SEUIL_AVERTISSEMENT = 500_000;
+
+function plafondOperateur(operateur, env = process.env) {
+  const parEnv = {
+    airtel: env.SINGPAY_PLAFOND_AIRTEL,
+    moov: env.SINGPAY_PLAFOND_MOOV,
+    ext: env.SINGPAY_PLAFOND_EXT,
+  }[operateur];
+  const n = Number(parEnv);
+  return Number.isFinite(n) && n > 0 ? n : PLAFONDS_PAR_DEFAUT[operateur];
+}
+
+/**
+ * Le montant demandé peut-il passer chez cet opérateur ?
+ *
+ * @param {number} montant en francs CFA
+ * @param {'airtel'|'moov'|'ext'} operateur
+ * @param {object} [env]
+ * @returns {{accepte: boolean, plafond: number, motif?: string, avertissement?: string}}
+ */
+export function controlerPlafond(montant, operateur, env = process.env) {
+  const plafond = plafondOperateur(operateur, env);
+  const m = Math.round(Number(montant) || 0);
+
+  if (m > plafond) {
+    const nom = { airtel: 'Airtel Money', moov: 'Moov Money', ext: 'Mobile Money' }[operateur] || operateur;
+    return {
+      accepte: false,
+      plafond,
+      motif:
+        `Montant supérieur au plafond ${nom} (${plafond.toLocaleString('fr-FR')} F par transaction). `
+        + `Ce n'est pas un problème de solde : l'opérateur refuserait la transaction. `
+        + `Pour ${m.toLocaleString('fr-FR')} F, régler par virement bancaire.`,
+    };
+  }
+
+  if (m > SEUIL_AVERTISSEMENT) {
+    return {
+      accepte: true,
+      plafond,
+      avertissement:
+        'Montant élevé : Moov Money plafonne aussi à 1 000 000 F par jour et par client, '
+        + "et Airtel Money refuse au-delà de 500 000 F. Prévoir le virement bancaire en repli.",
+    };
+  }
+
+  return { accepte: true, plafond };
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
    2. AUTHENTIFICATION DU RAPPEL
    ═══════════════════════════════════════════════════════════════════════════ */
 
@@ -568,7 +657,7 @@ async function appliquerEchec({ depot, paiement, statutVerifie, result }) {
  * `(solde || 0) + montant` et échappait au piège par accident ; le `??`, plus
  * moderne, l'aurait réintroduit. D'où ce passage explicite par `Number`.
  */
-function soldeNumerique(valeur) {
+export function soldeNumerique(valeur) {
   const n = Number(valeur);
   return Number.isFinite(n) ? n : 0;
 }

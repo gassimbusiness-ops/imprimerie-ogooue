@@ -47,7 +47,7 @@ import { supabase } from '@/services/supabase';
 import { printHTML } from '@/services/export-pdf';
 
 import {
-  SUPPORTS, ANGLES, TECHNIQUES,
+  SUPPORTS, ANGLES,
   trouverSupport, trouverColoris, trouverZone, trouverTechnique,
   construirePromptScene, construirePromptMockupIA, validerDemandeMockup, verifierFaisabilite,
   MODES_RENDU, MODE_PAR_DEFAUT, trouverMode,

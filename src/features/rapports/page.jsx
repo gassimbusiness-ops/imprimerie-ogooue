@@ -21,8 +21,8 @@ import {
 } from '@/components/ui/select';
 import {
   Plus, FileSpreadsheet, Calendar, Eye, Edit, Lock, Trash2,
-  CheckCircle2, Send, Save, Table2, List, LockOpen, MessageSquare,
-  Download, Filter, ChevronLeft, ChevronRight, Shield, Clock, Bot, Loader2, X, FileUp,
+  CheckCircle2, Send, Table2, List, LockOpen, MessageSquare,
+  Download, Filter, ChevronLeft, ChevronRight, Bot, Loader2, X, FileUp,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { exportRapportsMensuels } from '@/services/export-pdf';

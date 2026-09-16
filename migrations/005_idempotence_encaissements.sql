@@ -128,6 +128,14 @@ CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS idx_mouvements_reference_unique
 -- et retombe sur l'ancien comportement si elle n'existe pas — le code peut donc
 -- être déployé avant cette migration sans rien casser.
 
+-- ⚠️ `NULLIF(…, '')` N'EST PAS DÉCORATIF. Mesuré le 2026-09-16 : les comptes
+--    « Airtel Money » et « Moov Money » — les deux que le Mobile Money crédite —
+--    portent `solde: ""`, la chaîne vide. Or `''::numeric` lève une erreur en
+--    PostgreSQL (`invalid input syntax for type numeric`), que `COALESCE` seul
+--    n'attrape pas : il ne se déclenche que sur NULL, et la conversion échoue
+--    AVANT. Sans le NULLIF, la fonction planterait sur exactement les deux
+--    comptes pour lesquels elle a été écrite.
+
 CREATE OR REPLACE FUNCTION crediter_compte(p_compte_id uuid, p_montant numeric)
 RETURNS void
 LANGUAGE sql
@@ -136,13 +144,23 @@ AS $$
   SET data = jsonb_set(
         data,
         '{solde}',
-        to_jsonb(COALESCE((data->>'solde')::numeric, 0) + p_montant),
+        to_jsonb(COALESCE(NULLIF(data->>'solde', '')::numeric, 0) + p_montant),
         true
       ),
       updated_at = now()
   WHERE id = p_compte_id
     AND collection = 'comptes_bancaires';
 $$;
+
+-- Contrôle du cas réel avant de faire confiance à la fonction (lecture seule,
+-- sans effet — le montant 0 ne change aucun solde) :
+--
+--   SELECT id, data->>'nom' AS compte, data->>'solde' AS solde_avant
+--   FROM app_data WHERE collection = 'comptes_bancaires' AND data->>'solde' = '';
+--   -- 2026-09-16 : « Airtel Money » et « Moov Money »
+--
+--   SELECT crediter_compte('<id du compte Moov>'::uuid, 0);
+--   -- doit renvoyer sans erreur, et poser solde = 0 au lieu de la chaîne vide
 
 -- ════════════════════════════════════════════════════════════════════════════
 -- E. APRÈS — contrôle

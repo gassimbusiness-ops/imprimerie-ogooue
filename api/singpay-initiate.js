@@ -16,6 +16,7 @@
  * Body    : { amount, reference, client_msisdn, portefeuille, isTransfer }
  */
 import { getSingPayHeaders, getPaiementEndpoint, SINGPAY_BASE_URL } from '../src/lib/singpayAuth.js';
+import { controlerPlafond } from './_lib/singpay-encaissement.js';
 import { createClient } from '@supabase/supabase-js';
 
 const supabase = createClient(
@@ -34,6 +35,22 @@ export default async function handler(req, res) {
   }
   if (!['airtel', 'moov', 'ext'].includes(operateur)) {
     return res.status(400).json({ error: 'Operateur invalide. Valeurs : airtel | moov | ext' });
+  }
+
+  /* ── Plafond opérateur : refuser AVANT d'appeler la passerelle ────────────
+     Sans ce contrôle, une commande de 700 000 F part chez Airtel et revient
+     avec « Le compte client n'a pas suffisamment de balance » — le message
+     exact reçu trois fois en base. L'application accuse alors le client d'être
+     à découvert alors que la cause est un plafond réglementaire de 500 000 F
+     par transaction. Le vrai motif vaut mieux qu'un faux. */
+  const plafond = controlerPlafond(montant, operateur);
+  if (!plafond.accepte) {
+    return res.status(400).json({
+      error: 'Plafond Mobile Money depasse',
+      detail: plafond.motif,
+      plafond: plafond.plafond,
+      recommandation: 'virement_bancaire',
+    });
   }
 
   // Telephone obligatoire pour airtel/moov, optionnel pour ext (saisi sur la page SingPay)
@@ -256,6 +273,7 @@ export default async function handler(req, res) {
       externalLink, // non-null si operateur='ext'
       expiresAt,
       modeTest, // true = portefeuille non passe en production, aucun encaissement possible
+      avertissement: plafond.avertissement || undefined,
       message: modeTest
         ? 'Portefeuille SingPay en mode TEST (goLive non validé) — ce paiement ne peut pas aboutir.'
         : operateur === 'ext'

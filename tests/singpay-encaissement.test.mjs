@@ -26,6 +26,9 @@ import {
   verifierAupresDeSingPay,
   appliquerStatutPaiement,
   referenceMouvement,
+  soldeNumerique,
+  controlerPlafond,
+  PLAFONDS_PAR_DEFAUT,
   STATUTS_FINAUX,
 } from '../api/_lib/singpay-encaissement.js';
 
@@ -61,7 +64,9 @@ function creerDepot({ indexUnique = true, latenceMs = 0 } = {}) {
     },
     comptes: [
       { id: 'compte-finam', data: { id: 'compte-finam', nom: 'FINAM', solde: 100000 } },
-      { id: 'compte-moov', data: { id: 'compte-moov', nom: 'Moov Money', solde: 0 } },
+      // ⚠️ `solde: ''` et non 0 : c'est la valeur REELLE en production au
+      // 2026-09-16 pour « Airtel Money » et « Moov Money ».
+      { id: 'compte-moov', data: { id: 'compte-moov', nom: 'Moov Money', solde: '' } },
     ],
     mouvements: [],
     notifications: [],
@@ -94,7 +99,8 @@ function creerDepot({ indexUnique = true, latenceMs = 0 } = {}) {
 
     async crediterCompte(compteId, montant) {
       const c = etat.comptes.find((x) => x.id === compteId);
-      if (c) c.data.solde = (c.data.solde || 0) + montant;
+      // Meme conversion que le depot reel : sans elle, '' + 7000 vaut '7000'.
+      if (c) c.data.solde = soldeNumerique(c.data.solde) + montant;
     },
 
     async insererNotification(n) { etat.notifications.push(n); },
@@ -456,7 +462,7 @@ test('MONTANT : on credite le montant initie, jamais celui annonce', async () =>
   const r = await rejouerRappel(depot, { fetchImpl: singpayConfirme({ amount: 700000 }) });
 
   assert.equal(r.mouvementCree, false, 'aucune ecriture d argent sur un ecart de montant');
-  assert.equal(depot.etat.comptes[1].data.solde, 0, 'le solde n a pas bouge');
+  assert.equal(soldeNumerique(depot.etat.comptes[1].data.solde), 0, 'le solde n a pas bouge');
   assert.ok(
     depot.etat.notifications.some((n) => n.type === 'paiement_montant_incoherent'),
     'un humain est alerte',
@@ -477,6 +483,21 @@ test('l alerte de montant incoherent n est envoyee qu une fois', async () => {
     'une seule alerte',
   );
   assert.equal(depot.etat.mouvements.length, 0, 'et toujours aucune ecriture d argent');
+});
+
+test('SOLDE VIDE : un compte a "" est credite en nombre, pas en texte', () => {
+  // Mesure de production (2026-09-16) : « Airtel Money » et « Moov Money »
+  // portent solde: "" — la chaine vide, pas 0. Or en JavaScript
+  // `"" ?? 0` vaut "" et `"" + 7000` vaut la CHAINE "7000". Le credit suivant
+  // aurait produit "70007000". Ce sont precisement les deux comptes que le
+  // Mobile Money credite.
+  assert.equal(soldeNumerique('') + 7000, 7000);
+  assert.equal(typeof (soldeNumerique('') + 7000), 'number');
+  assert.equal(soldeNumerique(null), 0);
+  assert.equal(soldeNumerique(undefined), 0);
+  assert.equal(soldeNumerique('abc'), 0);
+  assert.equal(soldeNumerique('785000'), 785000, 'un solde stocke en texte reste lisible');
+  assert.equal(soldeNumerique(890000), 890000);
 });
 
 test('le compte credite suit l operateur du paiement', async () => {
@@ -542,4 +563,69 @@ test('la variable morte callbackUrl a disparu de l initiation', () => {
     !/const callbackUrl\s*=/.test(initiate),
     'la variable construite puis jamais utilisee doit rester supprimee',
   );
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   10. PLAFONDS DES OPERATEURS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+test('PLAFOND : Airtel refuse au-dela de 500 000 F, avec le VRAI motif', () => {
+  // Grille officielle Airtel Money Gabon et article 3.5 des conditions
+  // d'abonnement : « Le plafond des transactions Airtel money est de 500 000 F CFA ».
+  assert.equal(PLAFONDS_PAR_DEFAUT.airtel, 500_000);
+
+  const r = controlerPlafond(700_000, 'airtel', {});
+  assert.equal(r.accepte, false);
+  assert.equal(r.plafond, 500_000);
+  // Le motif doit dire la verite : ce n'est PAS un probleme de solde client.
+  assert.match(r.motif, /plafond/i);
+  assert.match(r.motif, /pas un probl[eè]me de solde/i);
+  assert.match(r.motif, /virement bancaire/i);
+});
+
+test('PLAFOND : 500 000 F pile passe, 500 001 F non', () => {
+  assert.equal(controlerPlafond(500_000, 'airtel', {}).accepte, true);
+  assert.equal(controlerPlafond(500_001, 'airtel', {}).accepte, false);
+});
+
+test('PLAFOND : Moov accepte jusqu a 1 000 000 F par operation', () => {
+  // Grille officielle Moov Money Gabon : paiement maximal par operation = 1 000 000 F.
+  assert.equal(PLAFONDS_PAR_DEFAUT.moov, 1_000_000);
+  assert.equal(controlerPlafond(1_000_000, 'moov', {}).accepte, true);
+  assert.equal(controlerPlafond(1_000_001, 'moov', {}).accepte, false);
+});
+
+test('PLAFOND : entre 500 000 et 1 000 000, Moov passe mais previent', () => {
+  // Moov Money Online plafonne aussi a 1 000 000 F/jour ET PAR CLIENT : une
+  // facture d un million consomme 100 % du plafond quotidien du payeur.
+  const r = controlerPlafond(800_000, 'moov', {});
+  assert.equal(r.accepte, true);
+  assert.ok(r.avertissement, 'un montant eleve doit etre annonce fragile');
+  assert.match(r.avertissement, /1 000 000 F par jour/);
+});
+
+test('PLAFOND : un petit montant passe sans bruit', () => {
+  const r = controlerPlafond(7_000, 'moov', {});
+  assert.equal(r.accepte, true);
+  assert.equal(r.avertissement, undefined);
+  assert.equal(r.motif, undefined);
+});
+
+test('PLAFOND : les grilles operateur changent — les valeurs sont surchargeables', () => {
+  // Une grille tarifaire evolue sans previvenir et personne ne doit attendre un
+  // deploiement : les plafonds se corrigent par variable d environnement.
+  const env = { SINGPAY_PLAFOND_AIRTEL: '1500000' };
+  assert.equal(controlerPlafond(700_000, 'airtel', env).accepte, true);
+  assert.equal(controlerPlafond(1_600_000, 'airtel', env).accepte, false);
+  // Une surcharge absurde est ignoree au profit du defaut.
+  assert.equal(controlerPlafond(700_000, 'airtel', { SINGPAY_PLAFOND_AIRTEL: 'zero' }).accepte, false);
+  assert.equal(controlerPlafond(700_000, 'airtel', { SINGPAY_PLAFOND_AIRTEL: '-5' }).accepte, false);
+});
+
+test('l endpoint d initiation refuse le montant AVANT d appeler la passerelle', () => {
+  const initiate = readFileSync(new URL('../api/singpay-initiate.js', import.meta.url), 'utf8');
+  const posControle = initiate.indexOf('controlerPlafond(montant');
+  const posAppel = initiate.indexOf('await fetch(endpoint');
+  assert.ok(posControle > 0, 'le controle de plafond doit exister');
+  assert.ok(posControle < posAppel, 'il doit precedeer l appel reseau a SingPay');
 });

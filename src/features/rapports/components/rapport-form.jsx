@@ -11,7 +11,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import {
-  X, Save, Send, Loader2, FileSpreadsheet,
+  X, Save, Send, Loader2,
   Printer, FileUp, AlertTriangle, Clock,
 } from 'lucide-react';
 import { toast } from 'sonner';
