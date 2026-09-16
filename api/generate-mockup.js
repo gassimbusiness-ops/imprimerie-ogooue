@@ -1,45 +1,40 @@
 /**
- * Vercel Serverless Function — generation de la SCENE d'un mockup.
+ * Vercel Serverless Function — generation d'un mockup produit.
  *
  * ═══════════════════════════════════════════════════════════════════════════
- * CE QUE CET ENDPOINT FAIT, ET CE QU'IL NE FERA PLUS JAMAIS
+ * DEUX MODES, ET POURQUOI IL EN FAUT DEUX
  *
- *   Il genere UNIQUEMENT le support nu : le t-shirt, sa couleur, sa lumiere,
- *   ses plis. Le logo du client n'entre pas ici, ne sort pas d'ici, et une
- *   requete qui en porte un est REFUSEE.
+ *   MODE « ia » (defaut) — le logo du client part au modele comme IMAGE DE
+ *   REFERENCE (`image[]` sur /v1/images/edits) et le modele rend un mockup 3D
+ *   complet : t-shirt, casquette, tasse, banderole, avec le marquage dessus.
+ *   C'est le mode de VENTE : on montre au client, au comptoir, un objet
+ *   credible pour lui faire dire oui. Le bon a tirer se fait ailleurs.
  *
- *   Le logo est incruste ensuite, dans le navigateur, pixel pour pixel, par
- *   `src/features/mockup-ia/composition.js`. Il n'est jamais redessine.
+ *   MODE « incrustation » — l'IA ne fabrique que le support nu et le logo est
+ *   colle par-dessus en Canvas 2D, pixel pour pixel
+ *   (`src/features/mockup-ia/composition.js`). Zero franc, hors ligne, exact.
+ *   C'est la SECONDE option : celle du bon a tirer et du support deja
+ *   photographie. Elle n'a pas ete supprimee, elle n'est plus le defaut.
+ *
+ * L'ecran choisit. Cet endpoint sert les deux.
  * ═══════════════════════════════════════════════════════════════════════════
  *
- * POURQUOI CE REFUS EST ECRIT DANS LE CODE, ET PAS SEULEMENT DANS UN COMMENTAIRE
+ * HISTORIQUE — CE QUI A CHANGE LE 16/09/2026
  *
- * La version precedente de ce fichier faisait, ligne 63 :
- *
- *     formData.append('image', logoBlob, 'logo.png');   // → /v1/images/edits
- *
- * Le parametre `image` de `/v1/images/edits` est LA TOILE A TRANSFORMER, pas une
- * reference a recopier. Le code demandait donc au modele de transformer le logo
- * du client EN photographie de t-shirt. Le modele obeissait : il resynthetisait
- * l'image entiere, logo compris, de memoire.
- *
- * Mesures independantes :
- *  - Photoroom, 06/07/2026, 850 produits, 10 annotateurs humains : 27,2 % de
- *    fidelite produit, et « logo and text distortion was the most common failure,
- *    affecting 20,1 % of all base-model generations » ;
- *  - Qwen-Image Technical Report (arXiv 2508.02324), glyphe rare : 3,55 %.
- *
- * Un logo de client de Moanda est, par construction, un glyphe rare. Aucun prompt
- * ne corrige ca : un modele de diffusion echantillonne dans un espace latent
- * continu, il n'a aucun mecanisme de copie. Le garde-fou `logo` ci-dessous est
- * donc structurel : c'est lui qui empeche la regression, pas la bonne volonte.
+ * La version du 15/09 refusait en HTTP 400 toute requete portant un logo. Ce
+ * refus reposait sur une mesure (Photoroom, 06/07/2026 : 27,2 % de fidelite
+ * produit, 20,1 % de distorsion de logo) faite sur un modele ANTERIEUR. Le
+ * modele courant, `gpt-image-2.5-sunburst`, est documente par OpenAI comme
+ * « optimized for quality » et « for workflows where editing precision matters
+ * most ». Opposer une mesure faite sur un autre modele n'est pas une preuve :
+ * le refus est leve, et la question est tranchee par des generations reelles.
  *
  * ── LE NOM DU MODELE ──────────────────────────────────────────────────────
- * Il vit dans une variable d'environnement, comme `api/_lib/modeles.js` le fait
- * pour Anthropic, et pour la meme raison : le 14/09/2026 toute l'IA texte de
- * l'application etait morte sur un `not_found_error` HTTP 404 parce qu'un nom de
- * modele ecrit en dur avait ete retire par le fournisseur. Un nom de modele est
- * une configuration, jamais une constante.
+ * Il vit dans `OPENAI_IMAGE_MODEL`, comme `api/_lib/modeles.js` le fait pour
+ * Anthropic, et pour la meme raison : le 14/09/2026 toute l'IA texte de
+ * l'application etait morte sur un `not_found_error` HTTP 404 parce qu'un nom
+ * de modele ecrit en dur avait ete retire par le fournisseur. Un nom de modele
+ * est une configuration, jamais une constante.
  *
  * (Ce bloc devrait vivre dans `api/_lib/modeles.js` a cote de son equivalent
  * Anthropic. Il est ici parce que ce chantier n'a pas le droit de toucher
@@ -49,26 +44,20 @@ import { exigerSession } from './_lib/session.js';
 import { limiteDepassee } from './_lib/limite.js';
 
 /**
- * Defaut au 15/09/2026, releve sur `developers.openai.com/api/docs/models`.
+ * Defaut au 16/09/2026, releve sur `developers.openai.com/api/docs/models`.
  *
- * OpenAI publie deux modeles d'image courants :
- *   - `gpt-image-2.5-sunburst` — « for workflows where editing precision matters most »
- *   - `gpt-image-2.5-flare`    — « for fast, high-quality everyday image generation »
+ *   - `gpt-image-2.5-sunburst` — modele de base, « optimized for quality »,
+ *     « Choose Sunburst for workflows where editing precision matters most »
+ *   - `gpt-image-2.5-flare`    — modele rapide, qualite comparable a GPT Image 2
  *
- * On prend `sunburst` : la scene doit respecter une couleur de support precise et
- * rester vierge de tout marquage, ce qui est un travail de precision. `flare` est
- * un repli valable si la latence devient le probleme au comptoir.
+ * On prend `sunburst` : reproduire un logo fourni EST un travail de precision
+ * d'edition. `flare` reste un repli si la latence devient le probleme.
  *
- * ⚠️ Calendrier de deprecation verifie le 15/09/2026 sur
- * `developers.openai.com/api/docs/deprecations` :
- *   - `gpt-image-1`        → arret le 23 OCTOBRE 2026  (annonce le 22/04/2026)
+ * ⚠️ Calendrier de deprecation (`developers.openai.com/api/docs/deprecations`) :
+ *   - `gpt-image-1`        → arret le 23 OCTOBRE 2026
  *   - `gpt-image-1-mini`, `gpt-image-1.5`, `chatgpt-image-latest`
- *                          → arret le 1er DECEMBRE 2026 (annonce le 02/06/2026)
+ *                          → arret le 1er DECEMBRE 2026
  *   - `dall-e-2`, `dall-e-3` → ARRETES depuis le 12 MAI 2026
- *
- * Le cahier des charges datait l'arret de `gpt-image-1` au 1er decembre : c'est
- * cinq semaines trop tard. Et le repli `dall-e-3` de l'ancien code etait deja
- * mort au moment ou il a ete ecrit. Les deux sont corriges ici.
  *
  * Pour changer de modele : poser `OPENAI_IMAGE_MODEL` dans Vercel. Aucun
  * deploiement de code n'est necessaire.
@@ -80,24 +69,129 @@ function modeleImage() {
   return m && m.trim() ? m.trim() : MODELE_IMAGE_PAR_DEFAUT;
 }
 
-/** Tailles carrees acceptees. 1024 suffit pour un apercu de comptoir. */
-const TAILLES_AUTORISEES = new Set(['1024x1024', '1536x1024', '1024x1536']);
-/** `xhigh` et `max` existent chez OpenAI ; ils sont volontairement hors de portee ici. */
-const QUALITES_AUTORISEES = new Set(['low', 'medium', 'high']);
+/**
+ * ── LE PARAMETRE DE FIDELITE — LISEZ CECI AVANT D'Y TOUCHER ────────────────
+ *
+ * `input_fidelity` existe bien, ses valeurs admises sont `"high"` et `"low"`
+ * (source : `openai-python/src/openai/types/image_edit_params.py`, champ
+ * `input_fidelity: Optional[Literal["high", "low"]]`, et le cookbook
+ * `generate_images_with_high_input_fidelity` qui l'emploie avec
+ * `model="gpt-image-1"`).
+ *
+ * MAIS il n'est PAS accepte par gpt-image-2 ni gpt-image-2.5. L'API repond :
+ *
+ *     HTTP 400 — image_generation_user_error
+ *     code: invalid_input_fidelity_model
+ *     "The model 'gpt-image-2' does not support the 'input_fidelity' parameter."
+ *
+ * Raison : ces modeles traitent TOUTES leurs images d'entree en haute fidelite,
+ * d'office. La fidelite n'y est donc pas « au maximum permis » parce qu'on la
+ * demande — elle l'est parce qu'on ne peut pas la baisser.
+ *
+ * Consequence pour ce fichier : on n'envoie le parametre QUE pour les modeles
+ * ou il est documente comme accepte. Et si un modele inconnu le refuse quand
+ * meme, on rejoue une fois sans lui plutot que de rendre une erreur au
+ * comptoir. C'est exactement le garde-fou qui manquait le 14/09.
+ */
+const MODELES_AVEC_INPUT_FIDELITY = /^gpt-image-1(\.5)?(-mini)?$/;
+
+function fidelitePourModele(modele) {
+  return MODELES_AVEC_INPUT_FIDELITY.test(modele) ? 'high' : null;
+}
+
+/**
+ * Tailles acceptees. Documentees pour les modeles GPT Image ; `auto` laisse le
+ * modele choisir. On ne laisse pas passer une chaine libre : une taille exotique
+ * change le prix sans que personne au comptoir ne le voie.
+ */
+const TAILLES_AUTORISEES = new Set(['1024x1024', '1536x1024', '1024x1536', 'auto']);
+
+/**
+ * Qualites. `xhigh` et `max` sont documentes pour gpt-image-2.5 ; ils sont
+ * ouverts ici parce que le texte fin d'un logo en profite, mais l'ecran garde
+ * `medium` par defaut — c'est lui qui affiche le cout avant le clic.
+ */
+const QUALITES_AUTORISEES = new Set(['low', 'medium', 'high', 'xhigh', 'max']);
+
+/**
+ * Formats d'image acceptes en entree par /v1/images/edits pour les modeles GPT
+ * (« png, webp, or jpg », jusqu'a 16 images). Le SVG n'en fait PAS partie :
+ * l'ecran le rasterise avant l'envoi.
+ */
+const MIMES_REFERENCE = new Set(['image/png', 'image/jpeg', 'image/webp']);
+
+/**
+ * Plafond de la reference envoyee. OpenAI accepte 50 Mo par image, mais le corps
+ * d'une requete Vercel plafonne a 4,5 Mo — c'est LUI la contrainte reelle, et
+ * un depassement se manifeste par un 413 opaque cote client. On coupe avant.
+ */
+const TAILLE_REFERENCE_MAX = 3 * 1024 * 1024;
+
+/** Nombre maximum d'images de reference (logo + photo de support eventuelle). */
+const REFERENCES_MAX = 4;
+
+/**
+ * Decode une data URL `data:image/png;base64,...` en { mime, buffer }.
+ * Retourne `{ erreur }` plutot que de lever : une exception ici rendrait un 500
+ * muet la ou l'utilisateur a besoin de savoir que son fichier est en cause.
+ */
+function decoderDataUrl(valeur, etiquette) {
+  if (typeof valeur !== 'string' || !valeur.startsWith('data:')) {
+    return { erreur: `${etiquette} : format attendu « data:image/png;base64,… ».` };
+  }
+  const separateur = valeur.indexOf(',');
+  const entete = valeur.slice(5, separateur);
+  if (separateur < 0 || !entete.endsWith(';base64')) {
+    return { erreur: `${etiquette} : seul l'encodage base64 est accepte.` };
+  }
+  const mime = entete.slice(0, -';base64'.length).toLowerCase();
+  if (!MIMES_REFERENCE.has(mime)) {
+    return {
+      erreur: `${etiquette} : le format « ${mime || 'inconnu'} » n'est pas accepte comme reference. `
+        + 'Formats admis par OpenAI pour l\'edition : PNG, JPEG, WebP. '
+        + 'Un SVG doit etre rasterise avant l\'envoi.',
+    };
+  }
+  let buffer;
+  try {
+    buffer = Buffer.from(valeur.slice(separateur + 1), 'base64');
+  } catch {
+    return { erreur: `${etiquette} : donnees base64 illisibles.` };
+  }
+  if (!buffer.length) return { erreur: `${etiquette} : image vide.` };
+  if (buffer.length > TAILLE_REFERENCE_MAX) {
+    return {
+      erreur: `${etiquette} : ${Math.round(buffer.length / 1024)} Ko, au-dela du plafond de `
+        + `${Math.round(TAILLE_REFERENCE_MAX / 1024)} Ko (limite de corps de requete Vercel : 4,5 Mo). `
+        + 'Reduisez la definition du logo avant l\'envoi.',
+    };
+  }
+  return { mime, buffer };
+}
 
 /**
  * Message d'erreur exploitable a partir d'une reponse OpenAI.
- * Meme motif que `messageErreurAnthropic` : un 404 sur cet endpoint a une seule
- * cause plausible, autant la dire plutot que de renvoyer « Erreur API : 404 ».
+ * Un 404 sur cet endpoint a une seule cause plausible, autant la dire plutot
+ * que de renvoyer « Erreur API : 404 ».
  */
 function messageErreurOpenAI(statut, corps) {
+  const code = corps?.error?.code;
+  if (code === 'invalid_input_fidelity_model') {
+    return `Le modele « ${modeleImage()} » n'accepte pas le parametre input_fidelity `
+      + '(il traite deja ses images d\'entree en haute fidelite). '
+      + 'Le service a rejoue la requete sans ce parametre ; si ce message apparait, '
+      + 'c\'est que la seconde tentative a echoue elle aussi.';
+  }
   if (statut === 404) {
     return `Le modele d'image « ${modeleImage()} » n'existe pas ou n'est pas accessible a cette cle. `
       + 'Corriger la variable OPENAI_IMAGE_MODEL dans Vercel. '
-      + '(Rappel : gpt-image-1 est arrete depuis le 23/10/2026, dall-e-3 depuis le 12/05/2026.)';
+      + '(Rappel : gpt-image-1 est arrete le 23/10/2026, dall-e-3 depuis le 12/05/2026.)';
   }
   if (statut === 401) return 'Cle API OpenAI invalide ou revoquee.';
   if (statut === 429) return 'Quota OpenAI atteint. Reessayer dans quelques minutes.';
+  if (statut === 413) {
+    return 'Images de reference trop lourdes pour le service. Reduire la definition du logo.';
+  }
   if (statut >= 500) return 'Service OpenAI indisponible. Reessayer plus tard.';
   // On remonte le type annonce par OpenAI, jamais le corps complet : il peut
   // contenir un echo de la requete, donc des donnees de l'entreprise.
@@ -108,6 +202,33 @@ function messageErreurOpenAI(statut, corps) {
   return `Erreur API OpenAI : ${statut}`;
 }
 
+/**
+ * Appelle /v1/images/edits. Si le modele refuse `input_fidelity`, rejoue une
+ * fois sans lui. `construireFormData` est une fabrique : un FormData consomme
+ * n'est pas rejouable.
+ */
+async function appelerEdits(apiKey, construireFormData, fidelite) {
+  let reponse = await fetch('https://api.openai.com/v1/images/edits', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${apiKey}` },
+    body: construireFormData(fidelite),
+  });
+  if (reponse.ok || !fidelite) return { reponse, fideliteEnvoyee: fidelite };
+
+  let corps = null;
+  try { corps = await reponse.clone().json(); } catch { corps = null; }
+  if (corps?.error?.code !== 'invalid_input_fidelity_model') {
+    return { reponse, fideliteEnvoyee: fidelite };
+  }
+  console.warn('[Mockup] input_fidelity refuse par le modele, nouvel essai sans.');
+  reponse = await fetch('https://api.openai.com/v1/images/edits', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${apiKey}` },
+    body: construireFormData(null),
+  });
+  return { reponse, fideliteEnvoyee: null };
+}
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', process.env.APP_ORIGIN || '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -116,15 +237,10 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  // ── Verrou ajoute le 13/09/2026 ──────────────────────────────────────────
+  // ── Verrou ajoute le 13/09/2026, conserve tel quel ───────────────────────
   // Cet endpoint etait ouvert a Internet : CORS '*', aucune authentification,
   // aucun plafond. N'importe qui connaissant l'URL disposait d'un proxy IA
   // facture sur le compte de l'entreprise.
-  //
-  // La fenetre passe de 6 a 4 par minute : l'ecran ne lance plus 3 requetes par
-  // clic (les 3 « vues » de l'ancien code etaient 3 images sans rapport entre
-  // elles — le t-shirt de face et celui de cote n'etaient pas le meme t-shirt).
-  // Un clic = une scene.
   if (limiteDepassee(req, { max: 4, fenetreMs: 60_000 })) {
     return res.status(429).json({ error: 'Trop de requetes. Reessayez dans une minute.' });
   }
@@ -133,42 +249,26 @@ export default async function handler(req, res) {
 
   try {
     const corps = (req.body && typeof req.body === 'object') ? req.body : {};
-
-    // ══ GARDE-FOU STRUCTUREL ═════════════════════════════════════════════
-    // Si un appelant envoie un logo, c'est que quelqu'un a reintroduit le bug
-    // d'origine. On refuse, et on dit pourquoi — plutot que d'accepter en
-    // silence et de rendre un logo redessine que personne ne verifiera.
-    const champsInterdits = ['logoUrl', 'logoBase64', 'logo', 'logoFile', 'design', 'designUrl'];
-    const present = champsInterdits.find((c) => corps[c] !== undefined && corps[c] !== null && corps[c] !== '');
-    if (present) {
-      return res.status(400).json({
-        error: `Le champ « ${present} » n'est pas accepte : le logo du client ne doit JAMAIS `
-          + 'passer par le modele d\'image, il serait redessine de memoire et non recopie '
-          + '(20,1 % des generations presentent une distorsion de logo — benchmark Photoroom, '
-          + '850 produits, 06/07/2026). Cet endpoint ne produit que la scene du support nu ; '
-          + 'le logo est incruste ensuite dans le navigateur, pixel pour pixel.',
-        code: 'logo_interdit',
-      });
-    }
-
-    const { prompt, qualite, taille, supportRefUrl } = corps;
+    const {
+      prompt, qualite, taille, supportRefUrl, logoBase64, referencesBase64,
+    } = corps;
 
     if (typeof prompt !== 'string' || !prompt.trim()) {
       return res.status(400).json({
-        error: 'Prompt de scene requis. Il est construit par '
-          + '`src/features/mockup-ia/moteur-mockup.js` (construirePromptScene) et affiche '
-          + 'a l\'utilisateur avant l\'envoi : aucune generation facturee sur un prompt non relu.',
+        error: 'Prompt requis. Il est construit par '
+          + '`src/features/mockup-ia/moteur-mockup.js` et affiche a l\'utilisateur avant '
+          + 'l\'envoi : aucune generation facturee sur un prompt non relu.',
       });
     }
-    if (prompt.length > 1200) {
-      return res.status(400).json({ error: 'Prompt de scene trop long (max 1200 caracteres).' });
+    if (prompt.length > 2000) {
+      return res.status(400).json({ error: 'Prompt trop long (max 2000 caracteres).' });
     }
 
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
       return res.status(500).json({
         error: 'Cle API OpenAI non configuree (OPENAI_API_KEY). '
-          + 'L\'apercu reste possible sans IA : importez une photo du support.',
+          + 'Le mode incrustation reste disponible : il ne passe par aucun service.',
       });
     }
 
@@ -176,62 +276,90 @@ export default async function handler(req, res) {
     const q = QUALITES_AUTORISEES.has(qualite) ? qualite : 'medium';
     const t = TAILLES_AUTORISEES.has(taille) ? taille : '1024x1024';
 
-    let reponse;
+    /* ── Rassemblement des images de reference ────────────────────────────── */
+    // Ordre volontaire : le LOGO en premier. La documentation OpenAI precise que
+    // « the first image in the list preserves the finest detail and richest
+    // texture » — or c'est le logo, et lui seul, dont le detail se juge.
+    const references = [];
 
-    if (typeof supportRefUrl === 'string' && supportRefUrl.startsWith('http')) {
-      // ── Chemin « photo de reference du support » ────────────────────────
-      // Ici on part d'une photo REELLE d'un support NU du magasin et on demande
-      // au modele de la remettre en scene (autre angle, autre coloris). C'est le
-      // seul usage legitime de `/v1/images/edits` dans ce chantier, et il ne
-      // concerne QUE le support : aucun logo n'y transite.
-      //
-      // Le parametre s'appelle `image[]` : la documentation OpenAI du 15/09/2026
-      // confirme que l'endpoint edits accepte plusieurs images de reference sous
-      // cette forme. (`input_fidelity: "high"` existe sur les modeles gpt-image-1.x
-      // et sert justement a preserver un logo — il n'est pas utilise ici puisque
-      // aucun logo n'est envoye. C'est volontaire : un parametre de fidelite ne
-      // garantit rien, l'incrustation, si.)
-      const refResponse = await fetch(supportRefUrl);
+    if (logoBase64 !== undefined && logoBase64 !== null && logoBase64 !== '') {
+      const d = decoderDataUrl(logoBase64, 'Logo');
+      if (d.erreur) return res.status(400).json({ error: d.erreur });
+      references.push({ ...d, nom: 'logo.png' });
+    }
+
+    if (Array.isArray(referencesBase64)) {
+      for (const [i, valeur] of referencesBase64.entries()) {
+        if (references.length >= REFERENCES_MAX) break;
+        const d = decoderDataUrl(valeur, `Reference ${i + 1}`);
+        if (d.erreur) return res.status(400).json({ error: d.erreur });
+        references.push({ ...d, nom: `reference-${i + 1}.png` });
+      }
+    }
+
+    // Photo reelle d'un support nu du magasin : elle sert de reference de matiere.
+    if (typeof supportRefUrl === 'string' && supportRefUrl.startsWith('http')
+        && references.length < REFERENCES_MAX) {
+      let refResponse;
+      try {
+        refResponse = await fetch(supportRefUrl);
+      } catch {
+        return res.status(400).json({ error: 'Photo de support de reference injoignable.' });
+      }
       if (!refResponse.ok) {
         return res.status(400).json({ error: 'Photo de support de reference illisible.' });
       }
-      const buffer = await refResponse.arrayBuffer();
-      if (buffer.byteLength > 4 * 1024 * 1024) {
+      const buffer = Buffer.from(await refResponse.arrayBuffer());
+      if (buffer.length > TAILLE_REFERENCE_MAX) {
         return res.status(400).json({
-          error: 'Photo de reference trop lourde (max 4 Mo — limite de corps de requete Vercel : 4,5 Mo).',
+          error: `Photo de reference trop lourde (max ${Math.round(TAILLE_REFERENCE_MAX / 1024)} Ko).`,
         });
       }
-      const typeRef = refResponse.headers.get('content-type') || 'image/png';
-      const blob = new Blob([buffer], { type: typeRef });
+      const mime = (refResponse.headers.get('content-type') || 'image/png').split(';')[0].trim();
+      if (!MIMES_REFERENCE.has(mime)) {
+        return res.status(400).json({
+          error: `Photo de reference au format « ${mime} » : seuls PNG, JPEG et WebP sont acceptes.`,
+        });
+      }
+      references.push({ mime, buffer, nom: 'support.png' });
+    }
 
-      const formData = new FormData();
-      formData.append('model', modele);
-      formData.append('image[]', blob, 'support.png');
-      formData.append('prompt', prompt.trim());
-      formData.append('n', '1');
-      formData.append('size', t);
-      formData.append('quality', q);
+    /* ── Appel ────────────────────────────────────────────────────────────── */
 
-      reponse = await fetch('https://api.openai.com/v1/images/edits', {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${apiKey}` },
-        body: formData,
-      });
+    let reponse;
+    let fideliteEnvoyee = null;
+    const mode = references.length ? 'edits' : 'generations';
+
+    if (references.length) {
+      // `/v1/images/edits` accepte un TABLEAU d'images de reference — le champ
+      // multipart se repete sous le nom `image[]` (openai-python :
+      // `image: Required[Union[FileTypes, SequenceNotStr[FileTypes]]]`,
+      // « png, webp, or jpg … up to 16 images »).
+      const fidelite = fidelitePourModele(modele);
+      const construireFormData = (f) => {
+        const fd = new FormData();
+        fd.append('model', modele);
+        for (const r of references) {
+          fd.append('image[]', new Blob([r.buffer], { type: r.mime }), r.nom);
+        }
+        fd.append('prompt', prompt.trim());
+        fd.append('n', '1');
+        fd.append('size', t);
+        fd.append('quality', q);
+        if (f) fd.append('input_fidelity', f);
+        return fd;
+      };
+      const r = await appelerEdits(apiKey, construireFormData, fidelite);
+      reponse = r.reponse;
+      fideliteEnvoyee = r.fideliteEnvoyee;
     } else {
-      // ── Chemin nominal : generation d'une scene vierge ──────────────────
       reponse = await fetch('https://api.openai.com/v1/images/generations', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           Authorization: `Bearer ${apiKey}`,
         },
-        body: JSON.stringify({
-          model: modele,
-          prompt: prompt.trim(),
-          n: 1,
-          size: t,
-          quality: q,
-        }),
+        body: JSON.stringify({ model: modele, prompt: prompt.trim(), n: 1, size: t, quality: q }),
       });
     }
 
@@ -244,9 +372,8 @@ export default async function handler(req, res) {
 
     if (!reponse.ok || data?.error) {
       const message = messageErreurOpenAI(reponse.status, data);
-      console.error('[Mockup] scene:', reponse.status, data?.error?.message || '');
-      // On remonte le statut reel : un 429 doit rester un 429 cote client, sinon
-      // le message « patientez une minute » de api-client.js ne part jamais.
+      // Jamais la cle, jamais le corps complet : seulement statut et message OpenAI.
+      console.error('[Mockup]', mode, reponse.status, data?.error?.code || '', data?.error?.message || '');
       const statut = reponse.status >= 400 && reponse.status < 600 ? reponse.status : 502;
       return res.status(statut).json({ error: message, modele });
     }
@@ -267,16 +394,20 @@ export default async function handler(req, res) {
       modele,
       qualite: q,
       taille: t,
-      // Rappel porte par la reponse elle-meme, pour que rien en aval ne puisse
-      // presenter cette image comme un mockup fini.
-      avertissement: 'Scene du support nu uniquement. Le logo du client doit etre incruste '
-        + 'localement — il ne doit jamais etre genere.',
+      mode,
+      references: references.length,
+      inputFidelity: fideliteEnvoyee,
+      avertissement: references.length
+        ? 'Mockup de VENTE. Le logo a ete redessine par le modele a partir de la reference '
+          + 'fournie : verifier l\'orthographe et les couleurs avant de le montrer, et ne jamais '
+          + 's\'en servir comme bon a tirer.'
+        : 'Scene du support nu uniquement : le logo doit etre incruste localement.',
     });
   } catch (err) {
     console.error('[Mockup] Erreur:', err?.message);
     return res.status(500).json({
-      error: 'Erreur interne du service de scene. L\'apercu reste possible sans IA : '
-        + 'importez une photo du support.',
+      error: 'Erreur interne du service de mockup. Le mode incrustation reste disponible : '
+        + 'il ne passe par aucun service.',
     });
   }
 }

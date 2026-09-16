@@ -2,41 +2,47 @@
  * Moteur de mockup — logique pure. Aucun appel reseau, aucun acces au DOM.
  *
  * ═══════════════════════════════════════════════════════════════════════════
- * L'ARCHITECTURE EN UNE PHRASE
+ * DEUX MODES, ET CE QUI LES SEPARE
  *
- *   L'IA fabrique le t-shirt et la lumiere. Le logo vient du fichier du client,
- *   il n'est JAMAIS redessine.
+ *   MODE « ia » (defaut a l'ecran) — VENDRE.
+ *   Le logo du client part au modele comme IMAGE DE REFERENCE et le modele rend
+ *   un objet 3D complet, marquage compris. Le but est de faire dire oui a un
+ *   client au comptoir : un rendu spectaculaire y vaut mieux qu'une incrustation
+ *   exacte mais plate. Le logo EST redessine — c'est assume, et c'est pour ca
+ *   que ce mode n'est pas un bon a tirer.
+ *
+ *   MODE « incrustation » — PROUVER.
+ *   L'IA ne fabrique que le support nu ; le logo est colle par-dessus en
+ *   Canvas 2D, pixel pour pixel (`composition.js`). Exact, hors ligne, 0 F.
+ *   C'est le mode du bon a tirer, et du support deja photographie.
+ *
  * ═══════════════════════════════════════════════════════════════════════════
+ * CE QUI A CHANGE LE 16/09/2026, ET POURQUOI
  *
- * POURQUOI ON NE FAIT PLUS L'INVERSE
+ * Le 15/09, le mode « ia » etait interdit par le serveur (HTTP 400 sur toute
+ * requete portant un logo). Deux raisons a la volte-face :
  *
- * L'ancien `api/generate-mockup.js:63` faisait :
+ *  1. L'USAGE. Le mockup sert la vente, pas la production. L'exigence de
+ *     fidelite au pixel etait une contrainte que l'outil s'etait donnee seul.
  *
- *     formData.append('image', logoBlob, 'logo.png');   // → /v1/images/edits
+ *  2. LA MESURE. Le chiffre oppose (27,2 % de fidelite produit — Photoroom,
+ *     06/07/2026, 850 produits) portait sur un modele ANTERIEUR. Le modele
+ *     courant, `gpt-image-2.5-sunburst`, est documente par OpenAI comme
+ *     « optimized for quality » et destine aux « workflows where editing
+ *     precision matters most ». Une mesure faite sur un autre modele n'est pas
+ *     une preuve : seules de vraies generations tranchent.
  *
- * Le parametre `image` de `/v1/images/edits` est LA TOILE A TRANSFORMER, pas une
- * reference a recopier. Le code demandait donc, litteralement : « prends ce logo
- * et transforme-le en photo de t-shirt ». Le modele obeissait, et redessinait le
- * logo de memoire. Mesure independante (Photoroom, 06/07/2026, 850 produits,
- * 10 annotateurs humains) : 27,2 % de fidelite produit, et la distorsion de logo
- * est le PREMIER mode d'echec (20,1 % des generations). Sur une forme rare — ce
- * qu'est par construction le logo d'un client de Moanda — la precision mesuree
- * tombe a 3,55 % (Qwen-Image Technical Report, arXiv 2508.02324).
+ * Ce que la documentation OpenAI dit quand meme, et qu'on ne cache pas
+ * (guide `image-prompting`, 16/09/2026) :
  *
- * Aucun prompt ne corrige ca : un modele de diffusion echantillonne dans un espace
- * latent continu, il n'a aucun mecanisme de copie pixel a pixel.
+ *     « If a region must remain pixel-identical, composite the approved edit
+ *       into the original image instead of relying on prompting alone. »
  *
- * LE PIPELINE HYBRIDE (Prodigi, novembre 2025)
- *
- *   1. la scene (le support nu, sa couleur, sa lumiere) vient d'une PHOTO REELLE
- *      du magasin si elle existe, sinon d'une generation IA ;
- *   2. le logo du client est INCRUSTE par calcul par-dessus, pixel pour pixel,
- *      deforme par les plis du tissu et refondu dans les ombres de la scene ;
- *   3. le logo ne transite JAMAIS par le modele. `api/generate-mockup.js` refuse
- *      desormais toute requete qui en porte un — c'est la garantie structurelle.
+ * C'est exactement le mode « incrustation ». Il reste donc, et l'ecran le
+ * propose a cote — parce qu'un bon a tirer, lui, doit etre pixel-identique.
  *
  * Ce module porte les DECISIONS (autoriser, refuser, chiffrer, expliquer). Le
- * dessin proprement dit est dans `composition.js`, l'interface dans `page.jsx`.
+ * dessin est dans `composition.js`, l'interface dans `page.jsx`.
  */
 
 import {
@@ -517,6 +523,137 @@ export function construirePromptScene(params) {
 }
 
 /* ═════════════════════════════════════════════════════════════════════════════
+   5 bis. LE MODE DE RENDU, ET LE PROMPT DU MODE « VENTE »
+   ═════════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Les deux modes, decrits pour l'utilisateur et non pour le developpeur : c'est
+ * ce texte qui s'affiche a l'ecran, a cote du choix.
+ */
+export const MODES_RENDU = [
+  {
+    id: 'ia',
+    label: 'Rendu 3D par l\'IA',
+    resume: 'Le logo est envoye au modele comme reference et l\'objet est rendu en 3D.',
+    aide: 'Le plus vendeur : t-shirt porte, casquette, tasse, banderole. Le modele REDESSINE '
+      + 'le logo — relisez l\'orthographe et les couleurs avant de montrer, et ne vous en servez '
+      + 'jamais comme bon a tirer.',
+    facture: true,
+  },
+  {
+    id: 'incrustation',
+    label: 'Incrustation exacte (2D)',
+    resume: 'Le logo du client est colle par calcul sur le support, pixel pour pixel.',
+    aide: 'Exact et gratuit. C\'est le mode du bon a tirer. Le support peut venir d\'une photo '
+      + 'du magasin (0 F) ou d\'une generation de support nu.',
+    facture: false,
+  },
+];
+
+/** L'ecran ouvre sur le mode vente. */
+export const MODE_PAR_DEFAUT = 'ia';
+
+export function trouverMode(id) {
+  return MODES_RENDU.find((m) => m.id === id) || null;
+}
+
+/**
+ * Traduction des zones de marquage. Les libelles du catalogue sont francais et
+ * partaient bruts dans un prompt anglais sur l'ancien ecran (« A Casquette in
+ * Rouge color ») : le modele devinait. Chaque zone porte donc sa traduction.
+ */
+const ZONES_ANGLAIS = {
+  poitrine_gauche: 'on the upper left chest',
+  poitrine_centre: 'centred on the chest',
+  dos: 'centred on the back',
+  manche: 'on the sleeve',
+  face: 'on the front panel',
+  flanc: 'on the side, facing the camera',
+  pleine: 'centred, filling most of the surface',
+};
+
+/**
+ * Rendu attendu selon la technique reellement pratiquee a l'atelier. Sans ca le
+ * modele produit systematiquement une serigraphie brillante, qui ne ressemble
+ * a aucune des six techniques de la maison.
+ */
+const TECHNIQUES_ANGLAIS = {
+  flex: 'printed as matte cut vinyl, flat solid colours with clean sharp edges, slightly raised on the fabric',
+  sublimation: 'dye-sublimated into the fabric, perfectly flat with no relief and no visible film',
+  transfert_dark: 'heat-transferred, with a very slight matte film edge visible around the artwork',
+  transfert: 'heat-transferred, slightly matte, sitting flat on the surface',
+  impression_grand_format: 'wide-format printed directly on the vinyl, matte finish',
+  impression_pvc: 'directly printed on the PVC card, glossy and perfectly flat',
+};
+
+/**
+ * Construit le prompt du mode VENTE. Contrairement a `construirePromptScene`,
+ * il parle du logo — c'est tout son objet.
+ *
+ * Trois exigences y sont ecrites explicitement, et chacune repare un echec
+ * observe sur des modeles d'image :
+ *
+ *  - « reproduce it exactly … including every accented character » : le logo du
+ *    client type ici porte « OGOOUÉ » avec un accent aigu. Un modele qui
+ *    re-lettre le texte perd l'accent en premier ;
+ *  - « do not add any other text, logo, slogan or watermark » : sans cette
+ *    ligne, le modele meuble les zones vides avec du faux texte ;
+ *  - la couleur du support et la technique sont dites en anglais et en clair,
+ *    parce qu'un libelle francais dans un prompt anglais se fait deviner.
+ */
+export function construirePromptMockupIA(params) {
+  const {
+    supportId, colorisId, angleId = 'face', techniqueId, zoneId,
+    largeurImpressionCm = 0, personnalisation = '',
+  } = params || {};
+  const support = trouverSupport(supportId);
+  if (!support) return '';
+  const coloris = trouverColoris(supportId, colorisId) || support.coloris[0];
+  const angle = trouverAngle(angleId) || ANGLES[0];
+  const zone = trouverZone(supportId, zoneId) || support.zones[0];
+
+  const couleurAnglais = {
+    blanc: 'pure white', noir: 'deep black', bleu: 'royal blue', vert: 'forest green',
+    rose: 'bright pink', violet: 'deep purple', orange: 'bright orange',
+    noir_thermo: 'matte black', a_confirmer: 'neutral grey', a_preciser: 'high-visibility yellow',
+  }[coloris?.id] || 'white';
+
+  const objet = support.anglais3d || support.anglais;
+  const emplacement = ZONES_ANGLAIS[zone?.id] || 'centred on the main surface';
+  const rendu = TECHNIQUES_ANGLAIS[techniqueId] || 'printed on the surface';
+  const taille = largeurImpressionCm > 0
+    ? ` The printed artwork is about ${largeurImpressionCm} cm wide on the real object.`
+    : '';
+  const extra = nettoyer(personnalisation)
+    ? ` Additional requirement from the shop: ${nettoyer(personnalisation)}.`
+    : '';
+
+  const prompt = [
+    'Commercial product mockup photograph for a print shop.',
+    `Show ${objet}, in ${couleurAnglais}, ${angle.anglais}.`,
+    'The attached image is the customer\'s logo.',
+    'Reproduce that logo on the product EXACTLY as provided:',
+    'identical shapes, identical colours, identical typography and identical spelling,',
+    'including every accented character. Do not redraw it in another style,',
+    'do not translate it, do not correct it, do not re-letter it, do not crop it.',
+    `Place the logo ${emplacement}, ${rendu}.${taille}`,
+    'The logo must follow the folds and the perspective of the object,',
+    'and pick up the light of the scene.',
+    'Do not add any other text, logo, slogan, price, label or watermark anywhere in the image.',
+    'Studio lighting, soft shadows, shallow depth of field, clean neutral background,',
+    'photorealistic, high resolution, catalogue quality.',
+    extra,
+  ].join(' ').replace(/\s+/g, ' ').trim();
+
+  return prompt.length > LONGUEUR_PROMPT_MAX_IA
+    ? `${prompt.slice(0, LONGUEUR_PROMPT_MAX_IA - 1).trimEnd()}…`
+    : prompt;
+}
+
+/** Le serveur refuse au-dela de 2000 ; on coupe avant, avec de la marge. */
+export const LONGUEUR_PROMPT_MAX_IA = 1800;
+
+/* ═════════════════════════════════════════════════════════════════════════════
    6. AUTORISATION DU CLIC
    ═════════════════════════════════════════════════════════════════════════════ */
 
@@ -552,8 +689,18 @@ export function validerDemandeMockup(params) {
     compteurDuJour = 0,
     plafond = PLAFOND_GENERATIONS_PAR_JOUR,
     qualite = QUALITE_PAR_DEFAUT,
+    // ⚠️ Le defaut de CETTE FONCTION est le mode historique, pas le defaut de
+    // l'ecran. Raison : un appelant qui ne precise rien attend le comportement
+    // qu'il avait hier. L'ecran, lui, ouvre sur `MODE_PAR_DEFAUT` ('ia') et
+    // passe toujours le mode explicitement.
+    mode = 'incrustation',
   } = params || {};
-  const promptAuto = construirePromptScene({ supportId, colorisId, angleId });
+  const modeIA = mode === 'ia';
+  const promptAuto = modeIA
+    ? construirePromptMockupIA({
+      supportId, colorisId, angleId, techniqueId, zoneId, largeurImpressionCm,
+    })
+    : construirePromptScene({ supportId, colorisId, angleId });
 
   // Le prompt relu/modifie par l'utilisateur prime TOUJOURS sur le prompt genere :
   // c'est lui, et lui seul, qui part au service IA. Nuance : un champ vide n'est
@@ -564,7 +711,9 @@ export function validerDemandeMockup(params) {
   const prompt = aEteEdite ? nettoyer(promptEdite) : promptAuto;
 
   // La scene vient-elle d'une photo reelle ? Alors rien n'est facture.
-  const scene = sceneExistante ? 'photo' : 'ia';
+  // En mode « ia », la photo du magasin ne dispense de rien : c'est le modele
+  // qui produit l'image finale, marquage compris, et il est facture.
+  const scene = (!modeIA && sceneExistante) ? 'photo' : 'ia';
   const cout = scene === 'photo' ? 0 : coutGeneration(qualite);
 
   const base = { prompt, cout, scene, faisabilite: null };
@@ -643,7 +792,7 @@ export function validerDemandeMockup(params) {
       ...base,
       ok: false,
       raison: 'prompt-vide',
-      message: 'Le prompt de scene est vide. Ecrivez ce que l\'IA doit photographier, '
+      message: 'Le prompt est vide. Ecrivez ce que l\'IA doit photographier, '
         + 'ou reinitialisez-le.',
       faisabilite,
     };

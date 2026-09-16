@@ -40,7 +40,8 @@ import { printHTML } from '@/services/export-pdf';
 import {
   SUPPORTS, ANGLES, TECHNIQUES,
   trouverSupport, trouverColoris, trouverZone, trouverTechnique,
-  construirePromptScene, validerDemandeMockup, verifierFaisabilite,
+  construirePromptScene, construirePromptMockupIA, validerDemandeMockup, verifierFaisabilite,
+  MODES_RENDU, MODE_PAR_DEFAUT, trouverMode,
   analyserPixelsLogo, extraireScene, extraireMessageErreur,
   construireRecette, recetteSansImage, deciderEnregistrement,
   verifierPlafond, svgContientDuTexte, coutGeneration, formatFCFA,
@@ -48,7 +49,7 @@ import {
 } from './moteur-mockup.js';
 import {
   chargerImage, urlDepuisFichier, lirePixelsLogo, composerMockup,
-  exporterApercu, detourerFondUni, LARGEUR_APERCU,
+  exporterApercu, detourerFondUni, rasteriserPourReference, LARGEUR_APERCU,
 } from './composition.js';
 
 /* ═════════════════════════════════════════════════════════════════════════════
@@ -176,7 +177,11 @@ function EcranMockup() {
 
   // ── Scene ──
   const [sceneImage, setSceneImage] = useState(null);
-  const [sceneOrigine, setSceneOrigine] = useState(null); // 'photo' | 'photo_importee' | 'ia'
+  const [sceneOrigine, setSceneOrigine] = useState(null); // 'photo' | 'photo_importee' | 'ia' | 'ia_complete'
+  // Mode de rendu. 'ia' = l'objet complet, marquage compris, sort du modele
+  // (mode de VENTE). 'incrustation' = le logo est colle par calcul par-dessus
+  // une scene nue (mode du BON A TIRER, 0 F).
+  const [mode, setMode] = useState(MODE_PAR_DEFAUT);
   const [promptEdite, setPromptEdite] = useState(undefined);
   const [photothequeTestee, setPhotothequeTestee] = useState(false);
 
@@ -209,6 +214,11 @@ function EcranMockup() {
   const technique = useMemo(() => trouverTechnique(techniqueId), [techniqueId]);
 
   useEffect(() => { setCompteur(lireCompteur()); }, []);
+
+  // Changer de mode change la NATURE du prompt (scene nue vs objet marque).
+  // Garder le prompt relu pour l'autre mode enverrait au service un texte qui
+  // ne correspond plus au bouton sur lequel on vient de cliquer.
+  useEffect(() => { setPromptEdite(undefined); }, [mode]);
 
   // Charger les devis et commandes pour le rattachement. Best effort : si la
   // base est injoignable, l'ecran fonctionne quand meme, sans rattachement.
@@ -390,11 +400,6 @@ function EcranMockup() {
 
   /* ── Validation de la demande ───────────────────────────────────────────── */
 
-  const promptAuto = useMemo(
-    () => construirePromptScene({ supportId, colorisId, angleId }),
-    [supportId, colorisId, angleId],
-  );
-
   const largeurImpressionCm = useMemo(() => {
     if (!zone || !support) return 0;
     // La largeur du marquage est une fraction de la largeur de la scene ;
@@ -402,6 +407,16 @@ function EcranMockup() {
     const cm = position.largeur * support.largeurReelleCm;
     return Math.round(Math.min(cm, zone.largeurMaxCm) * 10) / 10;
   }, [position.largeur, support, zone]);
+
+  const promptAuto = useMemo(
+    () => (mode === 'ia'
+      ? construirePromptMockupIA({
+        supportId, colorisId, angleId, techniqueId, zoneId, largeurImpressionCm,
+      })
+      : construirePromptScene({ supportId, colorisId, angleId })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [mode, supportId, colorisId, angleId, techniqueId, zoneId, largeurImpressionCm],
+  );
 
   const demande = useMemo(() => validerDemandeMockup({
     supportId, colorisId, angleId, techniqueId, zoneId,
@@ -414,7 +429,9 @@ function EcranMockup() {
     enCours,
     compteurDuJour: compteur,
     qualité: QUALITE_PAR_DEFAUT,
+    mode,
   }), [
+    mode,
     supportId, colorisId, angleId, techniqueId, zoneId, logoFichier, logoAnalyse,
     largeurImpressionCm, logoImage, promptEdite, sceneImage, sceneOrigine, enCours, compteur,
   ]);
@@ -434,16 +451,19 @@ function EcranMockup() {
 
   const redessiner = useCallback(() => {
     if (!canvasRef.current || !sceneImage) return;
+    // En mode « ia », l'image rendue par le modele PORTE DEJA le marquage.
+    // Recoller le logo par-dessus donnerait deux logos superposes.
+    const iaComplete = sceneOrigine === 'ia_complete';
     const r = composerMockup({
       canvas: canvasRef.current,
       scène: sceneImage,
-      logo: logoImage,
+      logo: iaComplete ? null : logoImage,
       zone,
       position,
     });
     setNoteRendu(r.message || '');
     if (!r.ok && r.message) setErreur(r.message);
-  }, [sceneImage, logoImage, zone, position]);
+  }, [sceneImage, logoImage, zone, position, sceneOrigine]);
 
   useEffect(() => { redessiner(); }, [redessiner]);
 
@@ -462,6 +482,7 @@ function EcranMockup() {
       sceneExistante: null, // on demande explicitement une generation
       enCours: false,
       compteurDuJour: compteur,
+      mode,
     });
     if (!v.ok) { toast.error(v.message); return; }
 
@@ -471,12 +492,30 @@ function EcranMockup() {
     setDecision(null);
 
     try {
+      // En mode « ia », le logo part comme IMAGE DE REFERENCE (`image[]` sur
+      // /v1/images/edits). On le rasterise d'abord : le SVG n'est pas un format
+      // accepte par l'API, et le corps d'une requete Vercel plafonne a 4,5 Mo.
+      let logoBase64;
+      if (mode === 'ia') {
+        const r = rasteriserPourReference(logoImage);
+        if (!r.ok) {
+          setErreur(r.message);
+          toast.error(r.message);
+          return;
+        }
+        logoBase64 = r.dataUrl;
+      }
+
       const reponse = await apiFetch('/api/generate-mockup', {
         method: 'POST',
         body: JSON.stringify({
           prompt: v.prompt,
           qualité: QUALITE_PAR_DEFAUT,
+          // Carre 1024 pour tous les supports : c'est la taille sur laquelle le
+          // cout affiche avant le clic est calcule. Changer la taille sans
+          // changer `COUT_ESTIME_FCFA` ferait mentir le chiffre montre au gerant.
           taille: '1024x1024',
+          ...(logoBase64 ? { logoBase64 } : {}),
         }),
       });
 
@@ -507,8 +546,10 @@ function EcranMockup() {
         return;
       }
       setSceneImage(image);
-      setSceneOrigine('ia');
-      toast.success(`Scène generee (${formatFCFA(v.cout)} facture).`);
+      setSceneOrigine(mode === 'ia' ? 'ia_complete' : 'ia');
+      toast.success(mode === 'ia'
+        ? `Mockup genere (${formatFCFA(v.cout)} facture). Relisez le texte du logo avant de montrer.`
+        : `Scène generee (${formatFCFA(v.cout)} facture).`);
     } catch (e) {
       const m = e?.message || 'Erreur inconnue';
       setErreur(m);
@@ -576,7 +617,8 @@ function EcranMockup() {
       documentType: doc?.type || null,
       documentId: doc?.id || null,
       documentNumero: doc?.numero || '',
-      coutFcfa: sceneOrigine === 'ia' ? coutGeneration(QUALITE_PAR_DEFAUT) : 0,
+      // 'ia' (scene nue) comme 'ia_complete' (objet marque) sont factures.
+      coutFcfa: String(sceneOrigine || '').startsWith('ia') ? coutGeneration(QUALITE_PAR_DEFAUT) : 0,
     });
     if (!r.ok) { toast.error(r.message); return; }
 
@@ -648,7 +690,10 @@ function EcranMockup() {
           <tr><th>Zone de marquage</th><td>${e(zone?.label)}</td></tr>
           <tr><th>Largeur du marquage</th><td>${e(largeurImpressionCm)} cm</td></tr>
           <tr><th>Fichier client</th><td>${e(logoFichier?.name || '—')}</td></tr>
-          <tr><th>Origine de la mise en scène</th><td>${sceneOrigine === 'ia' ? 'Scène generee par IA (support nu uniquement)' : 'Photographie du support reel'}</td></tr>
+          <tr><th>Origine de la mise en scène</th><td>${{
+    ia_complete: 'Mockup genere par IA, marquage compris — document commercial, PAS un bon a tirer',
+    ia: 'Scène generee par IA (support nu), logo incruste pixel pour pixel',
+  }[sceneOrigine] || 'Photographie du support reel, logo incruste pixel pour pixel'}</td></tr>
         </table>
         <div style="text-align:center;margin:12px 0">
           <img src="${exp.dataUrl}" style="max-width:150mm;max-height:150mm;border:1px solid #e5e7eb" />
@@ -925,6 +970,35 @@ function EcranMockup() {
 
           {/* 5 — La scène */}
           <Etape numero="5" titre="Mise en scène du support" fait={pretAApercevoir}>
+            {/* ── LE CHOIX DU MODE ───────────────────────────────────────────
+                Il est en haut de l'etape, avant tout bouton : c'est lui qui
+                decide de ce que fait le bouton d'en dessous. ─────────────── */}
+            <div className="grid gap-2 sm:grid-cols-2">
+              {MODES_RENDU.map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => setMode(m.id)}
+                  aria-pressed={mode === m.id}
+                  className={`rounded-lg border p-3 text-left transition ${
+                    mode === m.id
+                      ? 'border-primary bg-primary/5 ring-1 ring-primary'
+                      : 'border-muted hover:bg-muted/40'
+                  }`}
+                >
+                  <span className="flex items-center gap-1.5 text-sm font-semibold">
+                    {m.id === 'ia'
+                      ? <Sparkles className="h-3.5 w-3.5" />
+                      : <Palette className="h-3.5 w-3.5" />}
+                    {m.label}
+                  </span>
+                  <span className="mt-1 block text-[11px] text-muted-foreground">{m.resume}</span>
+                </button>
+              ))}
+            </div>
+            <Alerte type={mode === 'ia' ? 'attention' : 'info'}>
+              {trouverMode(mode)?.aide}
+            </Alerte>
             {sceneOrigine === 'photo' && (
               <Alerte type="info">
                 Photo reelle du support trouvee dans la photothèque
@@ -959,7 +1033,9 @@ function EcranMockup() {
 
             <details className="rounded-lg border bg-muted/30 p-3">
               <summary className="cursor-pointer text-xs font-medium">
-                Prompt de la scène — relisez-le, c&apos;est lui qui part au service IA
+                {mode === 'ia'
+                  ? 'Prompt du mockup — relisez-le, c\u2019est lui qui part au service IA'
+                  : 'Prompt de la scène — relisez-le, c\u2019est lui qui part au service IA'}
               </summary>
               <textarea
                 className="mt-2 h-28 w-full rounded border bg-background p-2 font-mono text-[11px]"
@@ -971,8 +1047,9 @@ function EcranMockup() {
                   Reinitialiser
                 </Button>
                 <span className="text-[11px] text-muted-foreground">
-                  Ce prompt ne decrit QUE le support nu. Le logo n&apos;y figure pas et n&apos;est
-                  jamais envoye.
+                  {mode === 'ia'
+                    ? 'Ce prompt decrit l\u2019objet ET le marquage. Le logo est joint a la requete comme image de reference.'
+                    : 'Ce prompt ne decrit QUE le support nu. Le logo n\u2019y figure pas et n\u2019est jamais envoye.'}
                 </span>
               </div>
             </details>
@@ -983,8 +1060,14 @@ function EcranMockup() {
               disabled={enCours || !plafond.ok}
             >
               {enCours
-                ? <><Loader2 className="h-4 w-4 animate-spin" /> Generation de la scène…</>
-                : <><Sparkles className="h-4 w-4" /> Générer la scène par IA — {formatFCFA(coutProchaineGeneration)}</>}
+                ? <><Loader2 className="h-4 w-4 animate-spin" /> {mode === 'ia' ? 'Generation du mockup…' : 'Generation de la scène…'}</>
+                : (
+                  <>
+                    <Sparkles className="h-4 w-4" />
+                    {mode === 'ia' ? 'Générer le mockup 3D' : 'Générer la scène par IA'}
+                    {' — '}{formatFCFA(coutProchaineGeneration)}
+                  </>
+                )}
             </Button>
 
             {/* 🔴 Le bouton grise dit TOUJOURS pourquoi, juste en dessous. */}
@@ -1053,7 +1136,10 @@ function EcranMockup() {
                   <span className="text-muted-foreground">Technique</span><span>{technique?.label}</span>
                   <span className="text-muted-foreground">Largeur marquage</span><span>{largeurImpressionCm} cm</span>
                   <span className="text-muted-foreground">Origine de la scène</span>
-                  <span>{sceneOrigine === 'ia' ? 'Generee par IA (support nu)' : 'Photo reelle'}</span>
+                  <span>{{
+                    ia_complete: 'Mockup IA (logo redessine)',
+                    ia: 'Generee par IA (support nu)',
+                  }[sceneOrigine] || 'Photo reelle'}</span>
                   <span className="text-muted-foreground">Logo</span>
                   <span>{logoFichier?.name || '— aucun —'}</span>
                 </div>

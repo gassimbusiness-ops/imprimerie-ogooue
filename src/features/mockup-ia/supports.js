@@ -115,6 +115,8 @@ export const SUPPORTS = [
     label: 'T-shirt adulte',
     categorie: 'Textile',
     anglais: 'plain adult cotton t-shirt, laid flat, viewed from above',
+    // Mode « vente » : le support est mis en scene en 3D, porte ou pose.
+    anglais3d: 'a cotton t-shirt worn by a model, photographed in a studio, three-dimensional with natural folds and realistic fabric drape',
     largeurReelleCm: 50,
     techniques: ['flex', 'sublimation', 'transfert_dark', 'transfert'],
     angles: ['face', 'trois_quarts'],
@@ -138,6 +140,8 @@ export const SUPPORTS = [
     label: 'T-shirt enfant',
     categorie: 'Textile',
     anglais: 'plain children cotton t-shirt, laid flat, viewed from above',
+    // Mode « vente » : le support est mis en scene en 3D, porte ou pose.
+    anglais3d: 'a children\'s cotton t-shirt worn by a child model, photographed in a studio, three-dimensional with natural folds',
     largeurReelleCm: 36,
     techniques: ['flex', 'sublimation', 'transfert_dark', 'transfert'],
     angles: ['face', 'trois_quarts'],
@@ -155,6 +159,8 @@ export const SUPPORTS = [
     label: 'Polo',
     categorie: 'Textile',
     anglais: 'plain pique cotton polo shirt with collar, laid flat, viewed from above',
+    // Mode « vente » : le support est mis en scene en 3D, porte ou pose.
+    anglais3d: 'a pique cotton polo shirt with a buttoned collar, worn by a model, photographed in a studio, three-dimensional with natural folds',
     largeurReelleCm: 52,
     techniques: ['flex', 'sublimation', 'transfert_dark', 'transfert'],
     angles: ['face', 'trois_quarts'],
@@ -176,6 +182,8 @@ export const SUPPORTS = [
     label: 'Casquette',
     categorie: 'Textile',
     anglais: 'plain baseball cap, front view, curved visor',
+    // Mode « vente » : le support est mis en scene en 3D, porte ou pose.
+    anglais3d: 'a baseball cap with a curved visor, photographed in a studio on a neutral stand, three-dimensional with visible seams and stitching',
     largeurReelleCm: 22,
     techniques: ['flex', 'transfert', 'transfert_dark'],
     angles: ['face', 'trois_quarts'],
@@ -198,6 +206,8 @@ export const SUPPORTS = [
     label: 'Tasse simple',
     categorie: 'Objet',
     anglais: 'plain white ceramic mug, handle on the right',
+    // Mode « vente » : le support est mis en scene en 3D, porte ou pose.
+    anglais3d: 'a glossy white ceramic mug with the handle on the right, photographed in a studio on a table, three-dimensional with realistic ceramic reflections',
     largeurReelleCm: 20, // developpe du flanc imprimable
     techniques: ['sublimation'],
     angles: ['face', 'trois_quarts'],
@@ -213,6 +223,8 @@ export const SUPPORTS = [
     label: 'Tasse magique',
     categorie: 'Objet',
     anglais: 'plain black thermochromic ceramic mug, handle on the right',
+    // Mode « vente » : le support est mis en scene en 3D, porte ou pose.
+    anglais3d: 'a matte black thermochromic ceramic mug with the handle on the right, photographed in a studio on a table, three-dimensional',
     largeurReelleCm: 20,
     techniques: ['sublimation'],
     angles: ['face', 'trois_quarts'],
@@ -235,6 +247,8 @@ export const SUPPORTS = [
     label: 'Badge PVC',
     categorie: 'Objet',
     anglais: 'blank white PVC identification badge card, front view',
+    // Mode « vente » : le support est mis en scene en 3D, porte ou pose.
+    anglais3d: 'a rigid PVC identification badge card held upright in a studio, three-dimensional with a slight angle and realistic plastic sheen',
     largeurReelleCm: 8.5,
     techniques: ['impression_pvc'],
     angles: ['face'],
@@ -250,6 +264,8 @@ export const SUPPORTS = [
     label: 'Banderole / bache',
     categorie: 'Grand format',
     anglais: 'blank white PVC banner stretched flat on a wall, front view',
+    // Mode « vente » : le support est mis en scene en 3D, porte ou pose.
+    anglais3d: 'a large PVC advertising banner stretched tight on a wall outdoors, three-dimensional with eyelets at the corners and realistic vinyl texture',
     largeurReelleCm: 200,
     techniques: ['impression_grand_format'],
     angles: ['face'],
@@ -265,6 +281,8 @@ export const SUPPORTS = [
     label: 'Gilet de travail',
     categorie: 'Textile',
     anglais: 'plain high-visibility work vest with reflective stripes, front view',
+    // Mode « vente » : le support est mis en scene en 3D, porte ou pose.
+    anglais3d: 'a high-visibility work vest with reflective stripes, worn by a model, photographed in a studio, three-dimensional',
     largeurReelleCm: 55,
     // Seule prestation au prix CONFIRME du catalogue : 3 500 F/piece,
     // devis n°093/GA/2024 du 03/12/2024 (client BACOREF, 30 gilets).

@@ -450,6 +450,63 @@ export function exporterApercu(canvas, qualite = 0.82) {
 }
 
 /**
+ * Prepare le logo pour un envoi au modele d'image comme IMAGE DE REFERENCE.
+ *
+ * Trois raisons de passer par le canvas plutot que d'envoyer le fichier brut :
+ *
+ *  1. LE FORMAT. `/v1/images/edits` accepte PNG, JPEG et WebP pour les modeles
+ *     GPT Image — pas le SVG. Un logo de client arrive souvent en SVG ; le
+ *     dessiner dans un canvas le rasterise.
+ *  2. LE POIDS. OpenAI tolere 50 Mo par image, mais le corps d'une requete
+ *     Vercel plafonne a 4,5 Mo : c'est LUI la contrainte, et un depassement se
+ *     manifeste par un 413 opaque. On borne le cote a `cote` pixels.
+ *  3. LA TRANSPARENCE. On garde le PNG (et donc l'alpha) : un logo aplati sur
+ *     un fond blanc arriverait au modele avec un rectangle blanc autour, qu'il
+ *     reproduirait consciencieusement sur le t-shirt.
+ *
+ * @returns {{ok: boolean, dataUrl: string|null, octets: number, message: string}}
+ */
+export function rasteriserPourReference(image, { cote = 1024 } = {}) {
+  try {
+    if (!image || !image.naturalWidth) {
+      return { ok: false, dataUrl: null, octets: 0, message: 'Logo non charge.' };
+    }
+    const L = image.naturalWidth;
+    const H = image.naturalHeight;
+    const facteur = Math.min(1, cote / Math.max(L, H));
+    const l = Math.max(1, Math.round(L * facteur));
+    const h = Math.max(1, Math.round(H * facteur));
+
+    const canvas = document.createElement('canvas');
+    canvas.width = l;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      return { ok: false, dataUrl: null, octets: 0, message: 'Canvas indisponible sur ce poste.' };
+    }
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    ctx.drawImage(image, 0, 0, l, h);
+
+    const dataUrl = canvas.toDataURL('image/png');
+    if (!dataUrl || !dataUrl.startsWith('data:image/png')) {
+      return { ok: false, dataUrl: null, octets: 0, message: 'Rasterisation du logo vide.' };
+    }
+    // Taille reelle apres decodage base64, pour que l'appelant puisse refuser
+    // AVANT de payer un aller-retour reseau.
+    const octets = Math.floor((dataUrl.length - dataUrl.indexOf(',') - 1) * 3 / 4);
+    return { ok: true, dataUrl, octets, message: '' };
+  } catch (e) {
+    return {
+      ok: false, dataUrl: null, octets: 0,
+      message: e?.name === 'SecurityError'
+        ? 'Logo bloque : il vient d\'un autre domaine et ne peut pas etre relu par le navigateur.'
+        : `Preparation du logo impossible : ${e?.message || 'erreur'}`,
+    };
+  }
+}
+
+/**
  * Detourage du fond uni d'un logo (le client arrive avec un JPG sur fond blanc).
  *
  * Remplissage par diffusion depuis les quatre coins, avec alpha progressif sur la
