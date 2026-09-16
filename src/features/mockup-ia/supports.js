@@ -32,13 +32,13 @@
 export const TECHNIQUES = [
   {
     id: 'flex',
-    label: 'Flex (vinyle decoupe)',
+    label: 'Flex (vinyle découpe)',
     // Le flex est du vinyle de couleur unie, decoupe puis presse. Il ne peut
     // physiquement pas produire un degrade ni une photo.
     aplatSeul: true,
     detailMinMm: 2,
     supportSombreOk: true,
-    aide: 'Vinyle de couleur unie decoupe au plotter. Aplats uniquement, pas de degrade ni de photo.',
+    aide: 'Vinyle de couleur unie découpe au plotter. Aplats uniquement, pas de degrade ni de photo.',
   },
   {
     id: 'sublimation',

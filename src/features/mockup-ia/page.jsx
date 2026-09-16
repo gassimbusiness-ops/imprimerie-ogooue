@@ -52,7 +52,7 @@ import {
 } from './composition.js';
 
 /* ═════════════════════════════════════════════════════════════════════════════
-   Frontiere d'erreur — l'ecran s'affiche TOUJOURS
+   Frontiere d'erreur — l'écran s'affiche TOUJOURS
    ═════════════════════════════════════════════════════════════════════════════ */
 
 class FrontiereErreur extends React.Component {
@@ -74,7 +74,7 @@ class FrontiereErreur extends React.Component {
       return (
         <div className="rounded-xl border border-red-200 bg-red-50 p-6">
           <h2 className="flex items-center gap-2 text-lg font-bold text-red-700">
-            <AlertTriangle className="h-5 w-5" /> L&apos;ecran Mockups a rencontre une erreur
+            <AlertTriangle className="h-5 w-5" /> L&apos;écran Mockups a rencontre une erreur
           </h2>
           <p className="mt-2 text-sm text-red-700">
             Le reste de l&apos;application fonctionne normalement. Message technique :
@@ -154,7 +154,7 @@ function Alerte({ type = 'info', children }) {
 }
 
 /* ═════════════════════════════════════════════════════════════════════════════
-   L'ecran
+   L'écran
    ═════════════════════════════════════════════════════════════════════════════ */
 
 function EcranMockup() {
@@ -413,7 +413,7 @@ function EcranMockup() {
     sceneExistante: sceneImage ? (sceneOrigine || 'photo') : null,
     enCours,
     compteurDuJour: compteur,
-    qualite: QUALITE_PAR_DEFAUT,
+    qualité: QUALITE_PAR_DEFAUT,
   }), [
     supportId, colorisId, angleId, techniqueId, zoneId, logoFichier, logoAnalyse,
     largeurImpressionCm, logoImage, promptEdite, sceneImage, sceneOrigine, enCours, compteur,
@@ -436,7 +436,7 @@ function EcranMockup() {
     if (!canvasRef.current || !sceneImage) return;
     const r = composerMockup({
       canvas: canvasRef.current,
-      scene: sceneImage,
+      scène: sceneImage,
       logo: logoImage,
       zone,
       position,
@@ -475,7 +475,7 @@ function EcranMockup() {
         method: 'POST',
         body: JSON.stringify({
           prompt: v.prompt,
-          qualite: QUALITE_PAR_DEFAUT,
+          qualité: QUALITE_PAR_DEFAUT,
           taille: '1024x1024',
         }),
       });
@@ -490,25 +490,25 @@ function EcranMockup() {
         return;
       }
 
-      const scene = extraireScene(corps);
-      if (!scene.ok) {
-        setErreur(scene.message);
-        toast.error(scene.message);
+      const scène = extraireScene(corps);
+      if (!scène.ok) {
+        setErreur(scène.message);
+        toast.error(scène.message);
         return;
       }
 
       // La generation est facturee des que le serveur a repondu 200.
       setCompteur(incrementerCompteur());
 
-      const { image, message } = await chargerImage(scene.image);
+      const { image, message } = await chargerImage(scène.image);
       if (!image) {
-        setErreur(message || 'Scene illisible.');
-        toast.error(message || 'Scene illisible.');
+        setErreur(message || 'Scène illisible.');
+        toast.error(message || 'Scène illisible.');
         return;
       }
       setSceneImage(image);
       setSceneOrigine('ia');
-      toast.success(`Scene generee (${formatFCFA(v.cout)} facture).`);
+      toast.success(`Scène generee (${formatFCFA(v.cout)} facture).`);
     } catch (e) {
       const m = e?.message || 'Erreur inconnue';
       setErreur(m);
@@ -552,13 +552,13 @@ function EcranMockup() {
           // Le bucket `mockups` n'a jamais ete verifie (question ouverte du
           // cahier des charges §9.2-1). On le dit, on ne bloque pas : la recette
           // suffit a regenerer l'apercu a l'identique depuis une photo.
-          console.warn('[mockup] depot de l\'apercu impossible :', error.message);
-          toast.warning(`Apercu non archive (${error.message}). La recette, elle, est enregistree.`);
+          console.warn('[mockup] depot de l\'aperçu impossible :', error.message);
+          toast.warning(`Aperçu non archive (${error.message}). La recette, elle, est enregistree.`);
         } else {
           apercuRef = nom;
         }
       } catch (e) {
-        console.warn('[mockup] depot de l\'apercu :', e?.message);
+        console.warn('[mockup] depot de l\'aperçu :', e?.message);
       }
     }
 
@@ -596,7 +596,7 @@ function EcranMockup() {
           toast.success(`Rattache a ${doc.numero}.`);
         } catch (e) {
           toast.warning(`Mockup enregistre, mais le rattachement a ${doc.numero} a echoue `
-            + `(${e?.message || 'erreur'}). Reessayez depuis l'ecran Devis.`);
+            + `(${e?.message || 'erreur'}). Reessayez depuis l'écran Devis.`);
         }
       }
     } catch (e) {
@@ -614,7 +614,7 @@ function EcranMockup() {
       a.href = exp.dataUrl;
       a.download = `apercu_${supportId}_${colorisId}_${Date.now()}.jpg`;
       a.click();
-      toast.success('Apercu telecharge (JPEG — c\'est ce qui s\'envoie le mieux sur WhatsApp).');
+      toast.success('Aperçu telecharge (JPEG — c\'est ce qui s\'envoie le mieux sur WhatsApp).');
     } catch (e) {
       toast.error(`Telechargement impossible : ${e?.message || 'erreur'}`);
     }
@@ -630,7 +630,7 @@ function EcranMockup() {
     const exp = exporterApercu(canvasRef.current);
     if (!exp.ok) { toast.error(exp.message); return; }
     if (decision !== 'valide') {
-      toast.error('Validez l\'apercu avant de l\'exporter : un mockup non valide ne doit pas '
+      toast.error('Validez l\'aperçu avant de l\'exporter : un mockup non valide ne doit pas '
         + 'circuler chez le client.');
       return;
     }
@@ -648,15 +648,15 @@ function EcranMockup() {
           <tr><th>Zone de marquage</th><td>${e(zone?.label)}</td></tr>
           <tr><th>Largeur du marquage</th><td>${e(largeurImpressionCm)} cm</td></tr>
           <tr><th>Fichier client</th><td>${e(logoFichier?.name || '—')}</td></tr>
-          <tr><th>Origine de la mise en scene</th><td>${sceneOrigine === 'ia' ? 'Scene generee par IA (support nu uniquement)' : 'Photographie du support reel'}</td></tr>
+          <tr><th>Origine de la mise en scène</th><td>${sceneOrigine === 'ia' ? 'Scène generee par IA (support nu uniquement)' : 'Photographie du support reel'}</td></tr>
         </table>
         <div style="text-align:center;margin:12px 0">
           <img src="${exp.dataUrl}" style="max-width:150mm;max-height:150mm;border:1px solid #e5e7eb" />
         </div>
         <div class="confidential">${e(MENTION_RESERVE)}</div>
         <p style="font-size:9px;color:#6b7280;margin-top:8px">
-          Le logo de cet apercu provient du fichier fourni par le client : il n'a pas ete redessine.
-          L'apercu est une simulation d'ecran, il ne constitue pas le fichier d'impression.
+          Le logo de cet aperçu provient du fichier fourni par le client : il n'a pas ete redessiné.
+          L'aperçu est une simulation d'écran, il ne constitue pas le fichier d'impression.
         </p>
         <div style="margin-top:18px;border-top:1px solid #e5e7eb;padding-top:10px;font-size:10px">
           <strong>Bon a tirer</strong> — Nom et signature du client :
@@ -719,8 +719,8 @@ function EcranMockup() {
           <div className="min-w-0">
             <h2 className="text-2xl font-bold">Mockups</h2>
             <p className="text-sm text-white/75">
-              L&apos;IA fait le support et la lumiere. <strong>Le logo vient du fichier du client :
-              il n&apos;est jamais redessine.</strong>
+              L&apos;IA fait le support et la lumière. <strong>Le logo vient du fichier du client :
+              il n&apos;est jamais redessiné.</strong>
             </p>
           </div>
         </div>
@@ -923,8 +923,8 @@ function EcranMockup() {
             <Alerte key={a.code} type="attention">{a.message}</Alerte>
           ))}
 
-          {/* 5 — La scene */}
-          <Etape numero="5" titre="Mise en scene du support" fait={pretAApercevoir}>
+          {/* 5 — La scène */}
+          <Etape numero="5" titre="Mise en scène du support" fait={pretAApercevoir}>
             {sceneOrigine === 'photo' && (
               <Alerte type="info">
                 Photo reelle du support trouvee dans la photothèque
@@ -939,7 +939,7 @@ function EcranMockup() {
               <Alerte type="attention">
                 Aucune photo de <strong>{support?.label} {coloris?.label}</strong> dans la photothèque.
                 Deposez <code>{cheminPhotothèque}</code> dans <code>public/mockups/</code> —
-                c&apos;est gratuit, hors ligne et repetable — ou faites generer la scene par l&apos;IA
+                c&apos;est gratuit, hors ligne et repetable — ou faites générer la scène par l&apos;IA
                 ci-dessous.
               </Alerte>
             )}
@@ -959,7 +959,7 @@ function EcranMockup() {
 
             <details className="rounded-lg border bg-muted/30 p-3">
               <summary className="cursor-pointer text-xs font-medium">
-                Prompt de la scene — relisez-le, c&apos;est lui qui part au service IA
+                Prompt de la scène — relisez-le, c&apos;est lui qui part au service IA
               </summary>
               <textarea
                 className="mt-2 h-28 w-full rounded border bg-background p-2 font-mono text-[11px]"
@@ -983,8 +983,8 @@ function EcranMockup() {
               disabled={enCours || !plafond.ok}
             >
               {enCours
-                ? <><Loader2 className="h-4 w-4 animate-spin" /> Generation de la scene…</>
-                : <><Sparkles className="h-4 w-4" /> Generer la scene par IA — {formatFCFA(coutProchaineGeneration)}</>}
+                ? <><Loader2 className="h-4 w-4 animate-spin" /> Generation de la scène…</>
+                : <><Sparkles className="h-4 w-4" /> Générer la scène par IA — {formatFCFA(coutProchaineGeneration)}</>}
             </Button>
 
             {/* 🔴 Le bouton grise dit TOUJOURS pourquoi, juste en dessous. */}
@@ -1002,14 +1002,14 @@ function EcranMockup() {
           </Etape>
         </div>
 
-        {/* ══════ Colonne droite — apercu ══════ */}
+        {/* ══════ Colonne droite — aperçu ══════ */}
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="flex items-center gap-2 text-lg font-bold">
-              <Eye className="h-5 w-5 text-primary" /> Apercu
+              <Eye className="h-5 w-5 text-primary" /> Aperçu
             </h2>
-            {decision === 'valide' && <Badge className="bg-emerald-600">Valide</Badge>}
-            {decision === 'rejete' && <Badge variant="destructive">Rejete — rien enregistre</Badge>}
+            {decision === 'valide' && <Badge className="bg-emerald-600">Validé</Badge>}
+            {decision === 'rejete' && <Badge variant="destructive">Rejeté — rien enregistre</Badge>}
           </div>
 
           {erreur && <Alerte type="blocage">{erreur}</Alerte>}
@@ -1020,9 +1020,9 @@ function EcranMockup() {
                 <div className="mb-4 rounded-full bg-muted p-4">
                   <ImageIcon className="h-10 w-10 text-muted-foreground/40" />
                 </div>
-                <p className="font-medium text-muted-foreground">Aucune scene</p>
+                <p className="font-medium text-muted-foreground">Aucune scène</p>
                 <p className="mt-1 max-w-xs text-sm text-muted-foreground/70">
-                  Deposez une photo du support, ou faites generer la scene par l&apos;IA.
+                  Deposez une photo du support, ou faites générer la scène par l&apos;IA.
                 </p>
               </CardContent>
             </Card>
@@ -1052,7 +1052,7 @@ function EcranMockup() {
                   <span className="text-muted-foreground">Zone</span><span>{zone?.label}</span>
                   <span className="text-muted-foreground">Technique</span><span>{technique?.label}</span>
                   <span className="text-muted-foreground">Largeur marquage</span><span>{largeurImpressionCm} cm</span>
-                  <span className="text-muted-foreground">Origine de la scene</span>
+                  <span className="text-muted-foreground">Origine de la scène</span>
                   <span>{sceneOrigine === 'ia' ? 'Generee par IA (support nu)' : 'Photo reelle'}</span>
                   <span className="text-muted-foreground">Logo</span>
                   <span>{logoFichier?.name || '— aucun —'}</span>
@@ -1099,7 +1099,7 @@ function EcranMockup() {
               {enregistre && (
                 <Alerte type="info">
                   Recette enregistree sous <code>{enregistre.id}</code>. Aucune image en base :
-                  l&apos;apercu se recalcule depuis la recette en quelques millisecondes.
+                  l&apos;aperçu se recalcule depuis la recette en quelques millisecondes.
                 </Alerte>
               )}
 

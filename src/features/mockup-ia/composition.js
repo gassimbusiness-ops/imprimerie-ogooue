@@ -254,7 +254,7 @@ export function composerMockup({
   forceOmbre = 0.85,
 } = {}) {
   if (!canvas || !scene || !scene.naturalWidth) {
-    return { ok: false, degrade: false, message: 'Scene absente : rien a composer.' };
+    return { ok: false, degrade: false, message: 'Scène absente : rien a composer.' };
   }
 
   let ctx;
@@ -273,7 +273,7 @@ export function composerMockup({
   if (!logo || !logo.naturalWidth) {
     // La scene seule est un resultat valable : le gerant voit deja le support
     // et le coloris. On le dit, on ne casse rien.
-    return { ok: true, degrade: true, message: 'Scene affichee sans logo : importez le fichier du client.' };
+    return { ok: true, degrade: true, message: 'Scène affichee sans logo : importez le fichier du client.' };
   }
 
   const L = canvas.width;
@@ -313,7 +313,7 @@ export function composerMockup({
       return {
         ok: true, degrade: true,
         message: 'Logo appose sans simulation de relief (calque intermediaire indisponible). '
-          + 'L\'apercu reste fidele au fichier, il est juste moins realiste.',
+          + 'L\'aperçu reste fidèle au fichier, il est juste moins réaliste.',
       };
     } catch {
       return { ok: false, degrade: true, message: `Incrustation impossible : ${e?.message || 'erreur'}` };
@@ -351,7 +351,7 @@ export function composerMockup({
       ctxCalque.putImageData(logoImage, 0, 0);
     } else {
       degrade = true;
-      messageDegrade = 'Relief du tissu non calcule : le logo est pose a plat. Fidele, moins realiste.';
+      messageDegrade = 'Relief du tissu non calcule : le logo est pose a plat. Fidele, moins réaliste.';
     }
 
     // Calque 4 — masque de la zone imprimable.
@@ -431,11 +431,11 @@ function dessinerZone(ctx, z, L, H) {
 export function exporterApercu(canvas, qualite = 0.82) {
   try {
     if (!canvas || !canvas.width) {
-      return { ok: false, dataUrl: null, message: 'Aucun apercu a exporter.' };
+      return { ok: false, dataUrl: null, message: 'Aucun aperçu a exporter.' };
     }
     const dataUrl = canvas.toDataURL('image/jpeg', qualite);
     if (!dataUrl || !dataUrl.startsWith('data:image/')) {
-      return { ok: false, dataUrl: null, message: 'Export de l\'apercu vide.' };
+      return { ok: false, dataUrl: null, message: 'Export de l\'aperçu vide.' };
     }
     return { ok: true, dataUrl, message: '' };
   } catch (e) {

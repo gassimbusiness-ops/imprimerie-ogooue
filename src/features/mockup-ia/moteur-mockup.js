@@ -168,7 +168,7 @@ export function validerFichierLogo(fichier) {
       ok: false,
       raison: 'absent',
       message: 'Aucun logo importe. Deposez le fichier du client — c\'est lui, et lui seul, '
-        + 'qui sera imprime sur l\'apercu.',
+        + 'qui sera imprime sur l\'aperçu.',
       estSvg: false,
     };
   }
@@ -303,8 +303,8 @@ export function analyserPixelsLogo(donnees) {
  * commande deja produite. A Moanda, une reclamation de ce type se raconte.
  */
 export const MENTION_RESERVE =
-  'Apercu indicatif — simulation. Les couleurs sont reproduites dans le nuancier '
-  + 'disponible en atelier et peuvent differer de l\'ecran. Le rendu definitif depend '
+  'Aperçu indicatif — simulation. Les couleurs sont reproduites dans le nuancier '
+  + 'disponible en atelier et peuvent differer de l\'écran. Le rendu définitif depend '
   + 'du support et de la technique.';
 
 /** Definition minimale acceptable, en points par pouce, a la taille d'impression. */
@@ -393,7 +393,7 @@ export function verifierFaisabilite(params) {
       bloquants.push({
         code: 'flex-photo',
         message: `Ce visuel est une photo (${analyseLogo.nbCouleurs} teintes distinctes) : `
-          + 'le flex est du vinyle de couleur unie decoupe, il ne peut pas la reproduire. '
+          + 'le flex est du vinyle de couleur unie découpe, il ne peut pas la reproduire. '
           + 'Il faut du transfert (ou de la sublimation sur support clair).',
       });
     } else if (analyseLogo.aDegrade) {
@@ -574,7 +574,7 @@ export function validerDemandeMockup(params) {
       ...base,
       ok: false,
       raison: 'en-cours',
-      message: 'Apercu en cours — patientez, ne relancez pas. '
+      message: 'Aperçu en cours — patientez, ne relancez pas. '
         + `Chaque generation IA est facturee (~${formatFCFA(coutGeneration(qualite))}).`,
     };
   }
@@ -688,7 +688,7 @@ export function extraireMessageErreur(reponse = {}, corps = null) {
  */
 export function extraireScene(corps = null) {
   if (!corps || typeof corps !== 'object') {
-    return { ok: false, image: null, message: 'Reponse illisible du service de scene.' };
+    return { ok: false, image: null, message: 'Reponse illisible du service de scène.' };
   }
   const img = corps.imageBase64;
   if (typeof img === 'string' && img.startsWith('data:image/')) {
@@ -700,8 +700,8 @@ export function extraireScene(corps = null) {
   return {
     ok: false,
     image: null,
-    message: 'Le service a repondu sans image. Rien n\'est affiche : un apercu vide '
-      + 'vaut moins que pas d\'apercu. Reessayez, ou utilisez une photo de support.',
+    message: 'Le service a repondu sans image. Rien n\'est affiche : un aperçu vide '
+      + 'vaut moins que pas d\'aperçu. Reessayez, ou utilisez une photo de support.',
   };
 }
 
@@ -820,7 +820,7 @@ export function recetteSansImage(recette) {
         ok: false,
         message: `Le champ « ${cle} » contient une image en base64. `
           + 'Aucune image ne va dans la base : elle serait retelechargee a chaque '
-          + 'ouverture de l\'ecran Devis. Enregistrement refuse.',
+          + 'ouverture de l\'écran Devis. Enregistrement refuse.',
       };
     }
     if (typeof valeur === 'string' && valeur.length > 600) {
@@ -873,7 +873,7 @@ export function deciderEnregistrement(decision) {
     return {
       enregistrer: false,
       message: 'Mockup rejete : rien n\'a ete enregistre, rien n\'est rattache au devis. '
-        + 'Reglez la position ou changez de support, puis relancez l\'apercu.',
+        + 'Reglez la position ou changez de support, puis relancez l\'aperçu.',
     };
   }
   return {
