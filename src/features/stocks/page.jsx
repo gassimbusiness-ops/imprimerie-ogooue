@@ -19,7 +19,7 @@ import {
 import {
   Boxes, Search, Plus, Edit2, Trash2, PackagePlus, PackageMinus,
   AlertTriangle, Filter, Eye, EyeOff, ArrowDown, ArrowUp,
-  Package, Truck, MapPin, Clock, DollarSign, History, X, Download, FileText,
+  Package, Truck, MapPin, Clock, Banknote, History, X, Download, FileText,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { AIButton } from '@/components/ui/ai-button';
@@ -124,13 +124,13 @@ function StockDetail({ article, mouvements, open, onClose, canWrite, onEdit, onD
             )}
             {showFinancials && (
               <div className="flex items-center gap-2">
-                <DollarSign className="h-4 w-4 text-muted-foreground" />
+                <Banknote className="h-4 w-4 text-muted-foreground" />
                 <span>{fmt(article.prix_unitaire)} F / {article.unite}</span>
               </div>
             )}
             {showFinancials && (
               <div className="flex items-center gap-2">
-                <DollarSign className="h-4 w-4 text-muted-foreground" />
+                <Banknote className="h-4 w-4 text-muted-foreground" />
                 <span>Valeur: {fmt(article.prix_unitaire * article.quantite)} F</span>
               </div>
             )}
@@ -473,7 +473,7 @@ export default function Stocks() {
           { label: 'Alertes stock', value: stats.alertes, icon: AlertTriangle, color: stats.alertes > 0 ? 'bg-amber-500/10 text-amber-600' : 'bg-emerald-500/10 text-emerald-600' },
           { label: 'En rupture', value: stats.rupture, icon: PackageMinus, color: stats.rupture > 0 ? 'bg-red-500/10 text-red-600' : 'bg-emerald-500/10 text-emerald-600' },
           // Masquer la valeur totale pour les employés (donnée financière sensible)
-          ...(user?.role !== 'employe' ? [{ label: 'Valeur totale', value: `${fmt(stats.totalValue)} F`, icon: DollarSign, color: 'bg-blue-500/10 text-blue-600', isText: true, sub: stats.machinesValue > 0 ? `dont machines : ${fmt(stats.machinesValue)} F` : null }] : []),
+          ...(user?.role !== 'employe' ? [{ label: 'Valeur totale', value: `${fmt(stats.totalValue)} F`, icon: Banknote, color: 'bg-blue-500/10 text-blue-600', isText: true, sub: stats.machinesValue > 0 ? `dont machines : ${fmt(stats.machinesValue)} F` : null }] : []),
         ].map(({ label, value, icon: Icon, color, isText, sub }) => (
           <Card key={label}>
             <CardContent className="p-3">

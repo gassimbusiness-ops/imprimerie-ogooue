@@ -11,7 +11,7 @@ import {
 import {
   Search, ShoppingCart, Plus, Minus, Trash2, ShoppingBag, Send,
   Shirt, BookOpen, Printer, Camera, FileText, Scissors, Package, Tag,
-  Clock, DollarSign, LayoutGrid, Coffee, ChevronLeft, ChevronRight, X, ZoomIn, Truck, Star,
+  Clock, Banknote, LayoutGrid, Coffee, ChevronLeft, ChevronRight, X, ZoomIn, Truck, Star,
 } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { toast } from 'sonner';
@@ -55,7 +55,7 @@ const CAT_GRADIENT = {
 };
 const CAT_ICON = {
   Textile: Shirt, Accessoire: Coffee, Papeterie: BookOpen,
-  Impression: DollarSign, Marketing: Tag, Signalétique: LayoutGrid,
+  Impression: Banknote, Marketing: Tag, Signalétique: LayoutGrid,
   Autre: Package,
 };
 

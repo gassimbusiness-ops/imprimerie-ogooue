@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   ClipboardList, Plus, Search, Calendar, CheckCircle2, XCircle,
-  Clock, User, FileText, DollarSign, GraduationCap, Briefcase,
+  Clock, User, FileText, Banknote, GraduationCap, Briefcase,
   Home, Zap, Wrench, ShoppingCart, MoreHorizontal, TrendingUp,
   Wallet, Building2,
 } from 'lucide-react';
@@ -25,7 +25,7 @@ function fmt(n) { return new Intl.NumberFormat('fr-FR').format(Math.round(n || 0
 /* ── Types de demandes RH ── */
 const TYPES_RH = {
   conge: { label: 'Congé', icon: Calendar, color: 'bg-blue-100 text-blue-700', category: 'rh' },
-  avance: { label: 'Avance salaire', icon: DollarSign, color: 'bg-emerald-100 text-emerald-700', category: 'rh' },
+  avance: { label: 'Avance salaire', icon: Banknote, color: 'bg-emerald-100 text-emerald-700', category: 'rh' },
   formation: { label: 'Formation', icon: GraduationCap, color: 'bg-violet-100 text-violet-700', category: 'rh' },
   document: { label: 'Document', icon: FileText, color: 'bg-amber-100 text-amber-700', category: 'rh' },
   autre_rh: { label: 'Autre (RH)', icon: Briefcase, color: 'bg-slate-100 text-slate-700', category: 'rh' },
@@ -334,7 +334,25 @@ export default function DemandesRH() {
                   )}
                   {isAdmin && estApprouvee(d) && d.montant > 0 && (
                     <div className="flex gap-1 shrink-0">
-                      <button onClick={() => handleDecision(d, STATUT_RH.PAYEE)} className="rounded-lg p-2 text-blue-600 hover:bg-blue-50" title="Marquer payée"><DollarSign className="h-5 w-5" /></button>
+                      {/*
+                        Bouton libelle, et pas une icone de dollar.
+                        Deux raisons, toutes deux constatees le 16/09/2026 sur l ecran reel :
+                        1. L imprimerie facture en FRANCS CFA. Un signe $ sur un bouton qui
+                           debite un compte en XAF est une erreur de devise affichee au geant.
+                        2. C etait une icone SANS TEXTE : le libelle « Marquer payee » ne vivait
+                           que dans l infobulle. Un clic sur ce petit rond cree un vrai mouvement
+                           financier et debite un compte. Le geste le plus couteux de l ecran
+                           etait le moins explicite.
+                        Le montant est ecrit SUR le bouton : on ne debite pas un montant qu on
+                        n a pas lu.
+                      */}
+                      <button
+                        onClick={() => handleDecision(d, STATUT_RH.PAYEE)}
+                        className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs font-medium text-blue-700 hover:bg-blue-100"
+                        title={`Marquer payée — ${(d.montant || 0).toLocaleString('fr-FR')} F CFA seront débités`}
+                      >
+                        Marquer payée · {(d.montant || 0).toLocaleString('fr-FR')} F
+                      </button>
                     </div>
                   )}
                 </div>

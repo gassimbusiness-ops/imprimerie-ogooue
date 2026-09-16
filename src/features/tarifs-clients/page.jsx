@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Tag, Plus, Edit2, Trash2, Search, User, Percent, DollarSign } from 'lucide-react';
+import { Tag, Plus, Edit2, Trash2, Search, User, Percent, Banknote } from 'lucide-react';
 import { toast } from 'sonner';
 
 function fmt(n) { return new Intl.NumberFormat('fr-FR').format(Math.round(n || 0)); }
@@ -88,7 +88,7 @@ export default function TarifsClients() {
         {[
           { label: 'Tarifs', value: stats.total, icon: Tag, color: 'bg-primary/10 text-primary' },
           { label: 'Clients', value: stats.clients, icon: User, color: 'bg-blue-500/10 text-blue-600' },
-          { label: 'Produits', value: stats.produits, icon: DollarSign, color: 'bg-emerald-500/10 text-emerald-600' },
+          { label: 'Produits', value: stats.produits, icon: Banknote, color: 'bg-emerald-500/10 text-emerald-600' },
         ].map(({ label, value, icon: Icon, color }) => (
           <Card key={label}><CardContent className="p-3"><div className="flex items-center gap-2">
             <div className={`flex h-8 w-8 items-center justify-center rounded-lg ${color}`}><Icon className="h-4 w-4" /></div>

@@ -13,7 +13,7 @@ import {
   ResponsiveContainer, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
 } from 'recharts';
 import {
-  TrendingUp, TrendingDown, ShoppingCart, DollarSign, Users, Boxes,
+  TrendingUp, TrendingDown, ShoppingCart, Banknote, Users, Boxes,
   AlertTriangle, Package, CreditCard, PieChart as PieChartIcon, Download,
   FileText, ArrowUpRight, ArrowDownRight, Wallet, BarChart3, UserCheck,
   PackageMinus, Eye, Filter,
@@ -29,7 +29,7 @@ const TABS = [
   { id: 'ventes', label: 'Ventes', icon: ShoppingCart },
   { id: 'stocks', label: 'Stocks', icon: Boxes },
   { id: 'clients', label: 'Clients', icon: Users },
-  { id: 'finance', label: 'Finance', icon: DollarSign },
+  { id: 'finance', label: 'Finance', icon: Banknote },
   { id: 'exports', label: 'Exports', icon: Download },
   { id: 'ia', label: 'Analyse IA', icon: BarChart3 },
 ];
@@ -359,7 +359,7 @@ export default function RapportsAnalyses() {
                 label: 'Chiffre d\'affaires',
                 value: `${fmt(ventesData.ca)} F`,
                 variation: ventesData.variationCA,
-                icon: DollarSign,
+                icon: Banknote,
                 color: 'border-l-emerald-500',
               },
               {
@@ -515,7 +515,7 @@ export default function RapportsAnalyses() {
           {/* KPIs */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
             {[
-              { label: 'Valeur totale', value: `${fmt(stocksData.valeurTotale)} F`, icon: DollarSign, color: 'border-l-blue-500' },
+              { label: 'Valeur totale', value: `${fmt(stocksData.valeurTotale)} F`, icon: Banknote, color: 'border-l-blue-500' },
               { label: 'En alerte', value: stocksData.enAlerte.length, icon: AlertTriangle, color: 'border-l-amber-500' },
               { label: 'En rupture', value: stocksData.enRupture.length, icon: PackageMinus, color: 'border-l-red-500' },
               { label: 'Articles masqués', value: stocksData.masques, icon: Eye, color: 'border-l-gray-400' },
@@ -754,7 +754,7 @@ export default function RapportsAnalyses() {
             {[
               { label: 'Recettes (mois)', value: `${fmt(financeData.recettes)} F`, icon: TrendingUp, color: 'border-l-emerald-500' },
               { label: 'Dépenses (mois)', value: `${fmt(financeData.depenses)} F`, icon: TrendingDown, color: 'border-l-red-500' },
-              { label: 'Marge brute', value: `${fmt(financeData.marge)} F`, icon: DollarSign, color: 'border-l-blue-500' },
+              { label: 'Marge brute', value: `${fmt(financeData.marge)} F`, icon: Banknote, color: 'border-l-blue-500' },
               { label: 'Solde caisse net', value: `${fmt(financeData.soldeCaisse)} F`, icon: Wallet, color: 'border-l-violet-500' },
             ].map(({ label, value, icon: Icon, color }) => (
               <Card key={label} className={`border-l-4 ${color}`}>

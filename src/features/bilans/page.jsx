@@ -6,7 +6,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import {
-  TrendingUp, TrendingDown, DollarSign, BarChart3, PieChart as PieIcon,
+  TrendingUp, TrendingDown, Banknote, BarChart3, PieChart as PieIcon,
   Calendar, ArrowUpRight, ArrowDownRight, Minus, Download,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';

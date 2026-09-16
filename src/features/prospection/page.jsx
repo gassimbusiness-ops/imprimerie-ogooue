@@ -16,7 +16,7 @@ import {
   Target, Search, Plus, Edit2, Trash2, Phone, Mail, Building2,
   MapPin, ArrowRight, UserPlus, TrendingUp, ChevronRight, Eye,
   Calendar, MessageCircle, X, Clock, Send, Copy, Megaphone,
-  Filter, History, DollarSign, ChevronDown, AlertCircle, Sparkles,
+  Filter, History, Banknote, ChevronDown, AlertCircle, Sparkles,
   Users, FileText, ShoppingCart,
 } from 'lucide-react';
 import { toast } from 'sonner';

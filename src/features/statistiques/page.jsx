@@ -32,7 +32,7 @@ import {
   TrendingUp,
   TrendingDown,
   Calendar,
-  DollarSign,
+  Banknote,
   BarChart3,
   PieChart as PieIcon,
   Wallet,
@@ -546,7 +546,7 @@ Parle en français, sans markdown, de manière directe et professionnelle. Max 1
               title="Chiffre d'affaires"
               value={`${fmt(stats.totalRec)} F`}
               trend={stats.trend}
-              icon={DollarSign}
+              icon={Banknote}
               iconBg="bg-emerald-500/10"
               iconColor="text-emerald-600"
             />

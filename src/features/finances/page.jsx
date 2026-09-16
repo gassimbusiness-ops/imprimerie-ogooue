@@ -21,7 +21,7 @@ import {
 } from '@/components/ui/select';
 import {
   Landmark, Plus, Edit2, Trash2, CreditCard, Users2, TrendingUp,
-  Receipt, CircleDollarSign, ArrowUpRight, ArrowDownLeft, ArrowLeftRight,
+  Receipt, Coins, ArrowUpRight, ArrowDownLeft, ArrowLeftRight,
   Calendar, Building2, Globe, Wallet, Banknote, RefreshCw, AlertTriangle,
   Download, CheckCircle2,
 } from 'lucide-react';

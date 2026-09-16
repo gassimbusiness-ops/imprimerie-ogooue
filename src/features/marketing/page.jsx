@@ -14,7 +14,7 @@ import {
 } from '@/components/ui/select';
 import {
   Megaphone, Plus, Edit2, Trash2, Calendar, TrendingUp, Target,
-  DollarSign, ArrowRight, Link2, Search, Eye,
+  Banknote, ArrowRight, Link2, Search, Eye,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -169,7 +169,7 @@ export default function Marketing() {
           { label: 'Total', value: stats.total, icon: Megaphone, color: 'bg-primary/10 text-primary' },
           { label: 'En cours', value: stats.en_cours, icon: TrendingUp, color: 'bg-amber-500/10 text-amber-600' },
           { label: 'Planifiées', value: stats.planifiees, icon: Calendar, color: 'bg-blue-500/10 text-blue-600' },
-          { label: 'Budget total', value: `${stats.budgetTotal.toLocaleString('fr-FR')} F`, icon: DollarSign, color: 'bg-emerald-500/10 text-emerald-600' },
+          { label: 'Budget total', value: `${stats.budgetTotal.toLocaleString('fr-FR')} F`, icon: Banknote, color: 'bg-emerald-500/10 text-emerald-600' },
         ].map(({ label, value, icon: Icon, color }) => (
           <Card key={label}><CardContent className="p-3">
             <div className="flex items-center gap-2">
@@ -246,7 +246,7 @@ export default function Marketing() {
                           <span className="flex items-center gap-1"><Calendar className="h-3 w-3" />{new Date(a.dateDebut).toLocaleDateString('fr-FR')}</span>
                         )}
                         {a.budget && (
-                          <span className="flex items-center gap-1"><DollarSign className="h-3 w-3" />{Number(a.budget).toLocaleString('fr-FR')} F</span>
+                          <span className="flex items-center gap-1"><Banknote className="h-3 w-3" />{Number(a.budget).toLocaleString('fr-FR')} F</span>
                         )}
                       </div>
                       {a.cible && <p className="text-[10px] text-muted-foreground"><span className="font-medium">Cible :</span> {a.cible}</p>}

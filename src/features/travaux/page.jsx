@@ -10,7 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   Hammer, Plus, Edit2, Trash2, Search, FolderOpen, Calendar,
-  DollarSign, CheckCircle2, Clock, BarChart3, ChevronRight, ChevronDown,
+  Banknote, CheckCircle2, Clock, BarChart3, ChevronRight, ChevronDown,
   LayoutGrid, List, GripVertical, User, AlertTriangle, Flag,
 } from 'lucide-react';
 import { toast } from 'sonner';
@@ -350,7 +350,7 @@ export default function Travaux() {
         {[
           { label: 'Projets', value: stats.total, icon: FolderOpen, color: 'bg-primary/10 text-primary' },
           { label: 'En cours', value: stats.en_cours, icon: Clock, color: 'bg-blue-500/10 text-blue-600' },
-          { label: 'Budget total', value: `${fmt(stats.budget)} F`, icon: DollarSign, color: 'bg-emerald-500/10 text-emerald-600' },
+          { label: 'Budget total', value: `${fmt(stats.budget)} F`, icon: Banknote, color: 'bg-emerald-500/10 text-emerald-600' },
           { label: 'Depense', value: `${fmt(stats.depense)} F`, icon: BarChart3, color: 'bg-red-500/10 text-red-600' },
         ].map(({ label, value, icon: Icon, color }) => (
           <Card key={label}><CardContent className="p-3"><div className="flex items-center gap-2">

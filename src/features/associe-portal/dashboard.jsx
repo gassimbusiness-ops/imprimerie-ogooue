@@ -8,7 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { apiFetch } from '@/services/api-client';
 import {
-  TrendingUp, Users, Boxes, BookOpen, DollarSign,
+  TrendingUp, Users, Boxes, BookOpen, Banknote,
   PieChart, BarChart3, Package, Eye, Building2, Wallet,
   Hammer, Moon, Loader2, Sparkles, Calculator,
 } from 'lucide-react';

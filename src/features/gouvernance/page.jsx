@@ -15,7 +15,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid,
 } from 'recharts';
 import {
-  Crown, TrendingUp, Landmark, DollarSign, Users, Plus, ArrowDownCircle,
+  Crown, TrendingUp, Landmark, Banknote, Users, Plus, ArrowDownCircle,
   Building2, Wallet, CreditCard, PiggyBank, Shield, History,
   Edit3, AlertTriangle, FileText, Filter, Search, ChevronDown,
   ChevronUp, Eye, Download, Pencil, Calculator, Edit2, Trash2,

@@ -13,7 +13,7 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select';
 import {
-  BookOpen, Search, Plus, Edit2, Trash2, Tag, DollarSign,
+  BookOpen, Search, Plus, Edit2, Trash2, Tag, Banknote,
   Package, Clock, LayoutGrid, List, ChevronLeft, ChevronRight,
   X, ZoomIn, Upload, Eye, Shirt, Coffee,
   Sparkles, FileDown, Brain, Loader2, ChevronDown,
@@ -69,7 +69,7 @@ const CAT_GRADIENT = {
 };
 const CAT_ICON = {
   Textile: Shirt, Accessoire: Coffee, Papeterie: BookOpen,
-  Impression: DollarSign, Marketing: Tag, Signalétique: LayoutGrid,
+  Impression: Banknote, Marketing: Tag, Signalétique: LayoutGrid,
   Autre: Package,
 };
 
