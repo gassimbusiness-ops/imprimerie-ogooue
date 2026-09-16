@@ -366,7 +366,7 @@ export function analyserPixelsLogo(donnees) {
 }
 
 /* ═════════════════════════════════════════════════════════════════════════════
-   4. LE GARDE-FOU COMMERCIAL — le moteur doit REFUSER, pas embellir
+   4. LE GARDE-FOU COMMERCIAL — il INFORME, il n'interdit pas l'apercu
    ═════════════════════════════════════════════════════════════════════════════ */
 
 /**
@@ -407,15 +407,53 @@ export function verifierDefinition(params) {
       dpi,
       ok: false,
       message: `Ce fichier fait ${px} px de large ; imprime en ${cm} cm il donne ${dpi} px/pouce `
-        + `(minimum conseille ${DPI_MINIMUM}). Le rendu sera flou. Demandez le fichier d'origine au client.`,
+        + `(minimum conseille ${DPI_MINIMUM}). Le marquage imprime sera flou — l'apercu, lui, se fait `
+        + 'quand meme. Demandez le fichier d\'origine au client avant de lancer la production.',
     };
   }
   return { dpi, ok: true, message: '' };
 }
 
 /**
- * Le coeur du garde-fou : ce que la technique ne sait PAS faire est refuse,
- * pas embelli. Trois regles bloquantes, deux avertissements.
+ * Titre commun des notes d'atelier. Une seule chaine, a l'ecran comme au PDF :
+ * le client et le gerant doivent lire exactement la meme phrase.
+ *
+ * Il ne dit NI « impossible » NI « refus » : c'est une note technique a prevoir,
+ * pas un verdict sur la vente (cf. la decision du 17/09/2026 ci-dessous).
+ */
+export const TITRE_NOTE_ATELIER = 'Note technique — a prevoir en atelier';
+
+/**
+ * Ce que l'atelier sait ou ne sait pas faire — POUR INFORMATION.
+ *
+ * ⛔ DECISION DU 17/09/2026, ET ELLE EST STRUCTURANTE.
+ *
+ * Cette fonction ne decide plus si l'apercu peut etre genere. Elle decrit la
+ * PRODUCTION ; l'apercu, lui, est un document COMMERCIAL. Le gerant, capture a
+ * l'appui :
+ *
+ *   « Le mockup, c'est pas forcement une impression, c'est juste un apercu au
+ *     client ou entreprise de comment sera leur impression. Donc faut pas qu'il
+ *     nous mette des blocages comme la actuellement. »
+ *
+ * L'ecran affichait « ❌ Impossible en atelier » et grisait la generation quand
+ * le logo du client etait une photo et la technique du flex. Or c'est justement
+ * l'apercu qui sert a dire au client « en flex ca ne passe pas, on part sur du
+ * transfert » : le bloquer fait perdre la conversation avant de l'avoir eue.
+ *
+ * Ce qui reste vrai : l'imprimerie ne doit rien promettre qu'elle ne sait pas
+ * tenir. Les constats techniques ne disparaissent donc PAS — ils changent de
+ * statut et de formulation :
+ *
+ *   `reserves`        ce que la technique choisie ne sait pas faire. Chacune
+ *                     porte son `alternative` : on ne dit jamais « impossible »
+ *                     sans dire « prevoir du transfert ». Elles n'empechent
+ *                     JAMAIS de generer l'apercu.
+ *   `avertissements`  ce qui degradera le rendu ou manque pour chiffrer.
+ *
+ * `ok` garde son sens d'origine — « l'atelier sait le produire tel quel » — et
+ * sert au chiffrage et au bon a tirer. Il ne doit plus servir a autoriser un
+ * clic : `apercuPossible` est la pour ca, et il vaut toujours `true`.
  *
  * @param {object} p
  * @param {string} p.supportId
@@ -425,7 +463,9 @@ export function verifierDefinition(params) {
  * @param {number} [p.largeurImpressionCm]
  * @param {number} [p.largeurLogoPx]
  * @param {number} [p.detailMinPx]        plus petit detail mesure dans le logo, en px
- * @returns {{ok: boolean, bloquants: Array<{code,message}>, avertissements: Array<{code,message}>, message: string}}
+ * @returns {{ok: boolean, apercuPossible: true,
+ *            reserves: Array<{code,message,alternative}>,
+ *            avertissements: Array<{code,message}>, message: string}}
  */
 export function verifierFaisabilite(params) {
   const {
@@ -437,7 +477,7 @@ export function verifierFaisabilite(params) {
     largeurLogoPx = 0,
     detailMinPx = 0,
   } = params || {};
-  const bloquants = [];
+  const reserves = [];
   const avertissements = [];
 
   const support = trouverSupport(supportId);
@@ -445,37 +485,50 @@ export function verifierFaisabilite(params) {
   const coloris = trouverColoris(supportId, colorisId);
 
   if (!support) {
-    bloquants.push({ code: 'support-inconnu', message: 'Support inconnu : choisissez un support du catalogue.' });
+    reserves.push({
+      code: 'support-inconnu',
+      message: 'Support inconnu : la faisabilite en atelier n\'a pas pu etre verifiee.',
+      alternative: 'Choisissez un support du catalogue pour obtenir les notes techniques.',
+    });
   }
+  // Pas de technique choisie ≠ technique impossible. On montre l'apercu — c'est
+  // meme l'ordre normal d'un rendez-vous client : on regarde, puis on arbitre.
   if (!technique) {
-    bloquants.push({ code: 'technique-inconnue', message: 'Technique de marquage non choisie.' });
-  }
-
-  if (support && technique && !support.techniques.includes(technique.id)) {
-    bloquants.push({
-      code: 'technique-hors-support',
-      message: `L'atelier ne fait pas de ${technique.label.toLowerCase()} sur ${support.label.toLowerCase()}. `
-        + `Techniques possibles : ${support.techniques.map((t) => trouverTechnique(t)?.label || t).join(', ')}.`,
+    avertissements.push({
+      code: 'technique-absente',
+      message: 'Technique de marquage non encore choisie : l\'apercu se fait, '
+        + 'mais le devis ne pourra pas etre chiffre tant qu\'elle n\'est pas arretee.',
     });
   }
 
-  // ── Regle 1 : flex + degrade ou photo → BLOQUANT ─────────────────────────
+  if (support && technique && !support.techniques.includes(technique.id)) {
+    reserves.push({
+      code: 'technique-hors-support',
+      message: `L'atelier ne fait pas de ${technique.label.toLowerCase()} sur ${support.label.toLowerCase()}.`,
+      alternative: `Techniques possibles sur ce support : ${support.techniques.map((t) => trouverTechnique(t)?.label || t).join(', ')}.`,
+    });
+  }
+
+  // ── Note 1 : flex + degrade ou photo ─────────────────────────────────────
   // Le flex est du vinyle de couleur unie decoupe au plotter. Il n'existe
-  // aucun reglage qui lui fasse produire un degrade.
+  // aucun reglage qui lui fasse produire un degrade. C'est une note de
+  // production : elle se dit au client, elle n'empeche pas de lui montrer le
+  // rendu voulu.
   if (technique?.aplatSeul && analyseLogo) {
     if (analyseLogo.estPhoto) {
-      bloquants.push({
+      reserves.push({
         code: 'flex-photo',
-        message: `Ce visuel est une photo (${analyseLogo.nbCouleurs} teintes distinctes) : `
-          + 'le flex est du vinyle de couleur unie découpe, il ne peut pas la reproduire. '
-          + 'Il faut du transfert (ou de la sublimation sur support clair).',
+        message: `Ce visuel ne se fera pas en flex : c'est une photo (${analyseLogo.nbCouleurs} teintes distinctes), `
+          + 'et le flex est du vinyle de couleur unie decoupe au plotter.',
+        alternative: 'Prevoir du transfert (ou de la sublimation sur support clair). '
+          + 'L\'apercu ci-contre montre le rendu voulu, pas la technique.',
       });
     } else if (analyseLogo.aDegrade) {
-      bloquants.push({
+      reserves.push({
         code: 'flex-degrade',
-        message: `Ce visuel contient un degrade (${analyseLogo.nbCouleurs} teintes distinctes) : `
-          + 'le flex ne fait que des aplats de couleur unie. '
-          + 'Il faut du transfert, ou un logo simplifie en aplats.',
+        message: `Ce visuel ne se fera pas en flex : il contient un degrade (${analyseLogo.nbCouleurs} teintes distinctes), `
+          + 'et le flex ne fait que des aplats de couleur unie.',
+        alternative: 'Prevoir du transfert, ou un logo simplifie en aplats.',
       });
     } else if (analyseLogo.nbCouleurs > 4) {
       avertissements.push({
@@ -486,20 +539,21 @@ export function verifierFaisabilite(params) {
     }
   }
 
-  // ── Regle 2 : sublimation + support sombre → BLOQUANT ────────────────────
+  // ── Note 2 : sublimation + support sombre ────────────────────────────────
   // L'encre de sublimation se diffuse DANS la fibre : elle ne peut pas etre
   // plus claire que le support. La tasse magique est la seule derogation
   // documentee (revetement thermosensible prevu pour ca).
   if (technique?.id === 'sublimation' && coloris?.sombre && !coloris?.sublimationDerogee) {
-    bloquants.push({
+    reserves.push({
       code: 'sublimation-support-sombre',
-      message: `Sublimation impossible sur ${support?.label || 'ce support'} ${coloris.label.toLowerCase()} : `
-        + 'l\'encre se diffuse dans la fibre et n\'apparait pas sur un support sombre. '
-        + 'Il faut du flex ou du transfert « dark » — qui laisse un lisere de film visible.',
+      message: `La sublimation ne prend pas sur ${support?.label || 'ce support'} ${coloris.label.toLowerCase()} : `
+        + 'l\'encre se diffuse dans la fibre et n\'apparait pas sur un support sombre.',
+      alternative: 'Prevoir du flex, du transfert « dark » (qui laisse un lisere de film visible), '
+        + 'ou proposer le meme visuel sur un coloris clair.',
     });
   }
 
-  // ── Regle 3 : detail sous le seuil physique de la technique → AVERTISSEMENT
+  // ── Note 3 : detail sous le seuil physique de la technique ───────────────
   if (technique && detailMinPx > 0 && largeurLogoPx > 0 && largeurImpressionCm > 0) {
     const mmParPixel = (largeurImpressionCm * 10) / largeurLogoPx;
     const detailMm = detailMinPx * mmParPixel;
@@ -527,10 +581,18 @@ export function verifierFaisabilite(params) {
   }
 
   return {
-    ok: bloquants.length === 0,
-    bloquants,
+    // « l'atelier sait le produire tel quel » — sert au chiffrage et au bon a
+    // tirer, PLUS JAMAIS a autoriser un clic.
+    ok: reserves.length === 0,
+    // Un apercu commercial se produit toujours : c'est une simulation, pas une
+    // commande. Cette constante est la pour que la separation soit lisible dans
+    // le code appelant, et testable.
+    apercuPossible: true,
+    reserves,
     avertissements,
-    message: bloquants.length ? bloquants[0].message : '',
+    message: reserves.length
+      ? `${reserves[0].message} ${reserves[0].alternative || ''}`.trim()
+      : '',
   };
 }
 
@@ -1107,6 +1169,19 @@ export function construirePromptMockupIA(params) {
  * Ordre des controles : du plus bloquant au plus specifique. `enCours` passe en
  * premier — c'est le double-clic, et il est FACTURE.
  *
+ * ⛔ CE QUI BLOQUE ICI, ET RIEN D'AUTRE (decision du 17/09/2026) :
+ *
+ *   - une generation deja en cours (facturee deux fois sinon) ;
+ *   - le plafond du jour (de l'argent) ;
+ *   - une INFORMATION MANQUANTE pour composer l'image : support, coloris, zone,
+ *     fichier logo lisible, prompt non vide ;
+ *   - une regle du 16/09 : bloc de texte vide, texte client recopie dans le
+ *     prompt, description de scene qui reclame du texte.
+ *
+ * Ce qui ne bloque PLUS : la faisabilite en atelier. Elle est renvoyee dans
+ * `faisabilite` (reserves + avertissements) pour etre AFFICHEE, jamais pour
+ * refuser. Un mockup est un apercu commercial, pas un bon a tirer.
+ *
  * @returns {{ok, raison, message, prompt, cout, scene, faisabilite}}
  */
 export function validerDemandeMockup(params) {
@@ -1217,20 +1292,16 @@ export function validerDemandeMockup(params) {
     return { ...base, ok: false, raison: fichier.raison, message: fichier.message };
   }
 
+  // ── La faisabilite atelier ACCOMPAGNE la demande, elle ne la refuse plus ──
+  // Decision du 17/09/2026. Elle est calculee ici pour etre affichee a l'ecran
+  // et reprise dans le PDF du client comme note technique — mais un visuel que
+  // le flex ne sait pas decouper n'empeche pas de MONTRER au client a quoi
+  // ressemblera son t-shirt. Voir l'en-tete de `verifierFaisabilite`.
   const faisabilite = verifierFaisabilite({
     supportId, colorisId, techniqueId, analyseLogo,
     largeurImpressionCm: largeurImpressionCm || zone.largeurMaxCm,
     largeurLogoPx, detailMinPx,
   });
-  if (!faisabilite.ok) {
-    return {
-      ...base,
-      ok: false,
-      raison: 'technique-impossible',
-      message: faisabilite.message,
-      faisabilite,
-    };
-  }
 
   if (!prompt) {
     return {

@@ -103,6 +103,22 @@ async function saisir(v, element, valeur) {
   await v.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
 }
 
+/**
+ * Choisit une option dans un <select> controle par React.
+ * Meme piege que `saisir` : React ignore l'evenement si la valeur n'a pas ete
+ * posee par le setter natif du prototype.
+ */
+async function choisir(v, element, valeur) {
+  const poser = Object.getOwnPropertyDescriptor(
+    globalThis.HTMLSelectElement.prototype, 'value',
+  ).set;
+  await v.act(async () => {
+    poser.call(element, valeur);
+    element.dispatchEvent(new globalThis.Event('change', { bubbles: true }));
+  });
+  await v.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
    1. L'ECRAN VIT
    ═══════════════════════════════════════════════════════════════════════════ */
@@ -314,5 +330,88 @@ test('Mockups — un numero tape dans la scene est refuse A L ECRAN', async () =
     );
     assert.match(texte, /bloc de texte/i, 'le refus doit dire où le saisir à la place');
     assert.deepEqual(v.erreurs.map(String), [], 'une exception est partie pendant l’interaction');
+  } finally { await v.demonter(); }
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   5. LA FAISABILITE ATELIER INFORME — ELLE NE BLOQUE PLUS L'ECRAN
+
+   Decision du 17/09/2026, capture du gerant a l'appui : l'ecran affichait
+   « ❌ Impossible en atelier » en rouge et refusait de generer. Le mockup est
+   un apercu commercial, pas un bon a tirer : la note reste, le blocage part.
+
+   Le cas reproduit ici est celui qui ne demande AUCUN fichier logo — donc
+   reellement jouable dans jsdom : sublimation sur t-shirt noir. La physique
+   est la meme que pour la photo en flex (l'atelier ne sait pas le produire
+   tel quel), et c'est le meme chemin de code qui decide.
+
+   ⚠️ `v.texte` est un instantane PRIS AU MONTAGE. Apres toute interaction, on
+   relit `v.conteneur.textContent` — lecon du 16/09.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+test('Mockups — sublimation sur noir : NOTE technique, plus aucun « Impossible en atelier »', async () => {
+  const v = await rendreEcran({ ecran: ECRAN, donnees: BASE });
+  try {
+    // 1. Coloris Noir (bouton), 2. technique Sublimation (menu deroulant).
+    const noir = bouton(v.conteneur, 'Noir');
+    assert.ok(noir, 'le coloris « Noir » est introuvable');
+    await cliquer(v, noir);
+
+    const selects = [...v.conteneur.querySelectorAll('select')];
+    const technique = selects.find((s) => [...s.options].some((o) => o.value === 'sublimation'));
+    assert.ok(technique, 'le menu des techniques est introuvable');
+    await choisir(v, technique, 'sublimation');
+
+    // ⚠️ Relecture APRES interaction : `v.texte` date du montage.
+    const texte = v.conteneur.textContent || '';
+
+    assert.doesNotMatch(
+      texte, /Impossible en atelier/i,
+      'l’écran refuse encore la vente au lieu d’informer — c’est le défaut du 17/09',
+    );
+    assert.match(
+      texte, /Note technique/i,
+      'la note d’atelier a disparu : elle doit rester, elle protège d’une promesse intenable',
+    );
+    assert.match(texte, /sombre/i, 'la raison physique doit rester lisible');
+    assert.match(
+      texte, /n’empêchent pas l’aperçu|n'empêchent pas l'aperçu/,
+      'l’écran doit dire explicitement que la note ne bloque pas l’aperçu',
+    );
+    assert.deepEqual(v.erreurs.map(String), [], 'une exception est partie pendant l’interaction');
+    assert.deepEqual(v.journal.ecritures, [], 'changer de coloris ne doit rien écrire en base');
+  } finally { await v.demonter(); }
+});
+
+test('Mockups — sublimation sur noir : le bouton de generation reste cliquable', async () => {
+  const v = await rendreEcran({ ecran: ECRAN, donnees: BASE });
+  try {
+    await cliquer(v, bouton(v.conteneur, 'Noir'));
+    const selects = [...v.conteneur.querySelectorAll('select')];
+    const technique = selects.find((s) => [...s.options].some((o) => o.value === 'sublimation'));
+    await choisir(v, technique, 'sublimation');
+
+    const generer = [...v.conteneur.querySelectorAll('button')]
+      .find((b) => /Générer/i.test(b.textContent || ''));
+    assert.ok(generer, 'le bouton de génération est introuvable');
+    assert.equal(
+      generer.disabled, false,
+      'le bouton reste grisé sur un verdict d’atelier : c’est exactement ce que le gérant a signalé',
+    );
+  } finally { await v.demonter(); }
+});
+
+test('Mockups — l absence de photo de support ne se presente plus comme un probleme', async () => {
+  const v = await rendreEcran({ ecran: ECRAN, donnees: BASE });
+  try {
+    // La doublure d'<img> repond « illisible » : c'est l'etat d'un poste sans
+    // photothèque, celui du magasin aujourd'hui.
+    await v.act(async () => { await new Promise((r) => setTimeout(r, 0)); });
+    const texte = v.conteneur.textContent || '';
+    assert.match(texte, /photothèque/i);
+    assert.match(
+      texte, /générée par l’IA|générée par l'IA/,
+      'l’écran doit dire que l’IA prend le relais, pas laisser croire à un blocage',
+    );
   } finally { await v.demonter(); }
 });

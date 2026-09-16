@@ -365,39 +365,54 @@ test('plafond : le restant est correct et jamais negatif', () => {
 });
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   8. TECHNIQUE IMPOSSIBLE — CAS EXIGE
+   8. TECHNIQUE HORS DE PORTEE DE L'ATELIER — NOTE, PAS REFUS
+   ═══════════════════════════════════════════════════════════════════════════
+
+   ⚠️ CE BLOC A CHANGE DE CONTRAT LE 17/09/2026, sur demande du gerant.
+
+   Le constat technique reste mesure et affiche mot pour mot — c'est lui qui
+   evite la promesse intenable. Ce qui change, c'est sa consequence : il ne
+   REFUSE plus l'apercu. Un mockup est un document commercial montre au client
+   avant que la technique soit arretee ; c'est meme lui qui sert a dire « en
+   flex ca ne passe pas, on part sur du transfert ».
+
+   La frontiere complete (ce qui bloque encore vs ce qui informe) est tenue par
+   `tests/mockup-apercu-commercial.test.mjs`.
    ═══════════════════════════════════════════════════════════════════════════ */
 
-test('flex + degrade : REFUS bloquant, avec la raison physique et l\'alternative', () => {
+test('flex + degrade : NOTE technique conservee, avec la raison physique et l\'alternative', () => {
   const r = validerDemandeMockup(demandeValide({
     techniqueId: 'flex',
     analyseLogo: analyserPixelsLogo(pixelsDegrade()),
   }));
-  assert.equal(r.ok, false);
-  assert.equal(r.raison, 'technique-impossible');
-  assert.match(r.message, /flex/i);
-  assert.match(r.message, /transfert/i);
+  assert.equal(r.ok, true, 'un verdict d\'atelier ne refuse plus un apercu commercial');
+  const note = r.faisabilite.reserves.find((x) => x.code === 'flex-degrade');
+  assert.ok(note, 'la note sur le degrade a disparu — elle doit rester visible');
+  assert.match(note.message, /flex/i);
+  assert.match(note.alternative, /transfert/i);
 });
 
-test('flex + photo : REFUS bloquant', () => {
+test('flex + photo : NOTE technique, l\'apercu reste possible', () => {
   // 200 teintes distinctes : une photo.
   const r = verifierFaisabilite({
     supportId: 'tshirt_adulte', colorisId: 'blanc', techniqueId: 'flex',
     analyseLogo: { nbCouleurs: 200, aDegrade: true, estPhoto: true },
   });
-  assert.equal(r.ok, false);
-  assert.equal(r.bloquants[0].code, 'flex-photo');
+  assert.equal(r.ok, false, 'l\'atelier ne sait pas le produire tel quel : ca, ca ne change pas');
+  assert.equal(r.apercuPossible, true, 'mais l\'apercu, lui, doit rester possible');
+  assert.equal(r.reserves[0].code, 'flex-photo');
 });
 
-test('sublimation + support sombre : REFUS bloquant avec la raison physique', () => {
+test('sublimation + support sombre : NOTE technique avec la raison physique', () => {
   const r = validerDemandeMockup(demandeValide({
     colorisId: 'noir',
     techniqueId: 'sublimation',
   }));
-  assert.equal(r.ok, false);
-  assert.equal(r.raison, 'technique-impossible');
-  assert.match(r.message, /sombre/i);
-  assert.match(r.message, /dark/i);
+  assert.equal(r.ok, true, 'le client doit pouvoir voir son t-shirt noir avant d\'arbitrer');
+  const note = r.faisabilite.reserves.find((x) => x.code === 'sublimation-support-sombre');
+  assert.ok(note);
+  assert.match(note.message, /sombre/i);
+  assert.match(note.alternative, /dark/i);
 });
 
 test('sublimation + support clair : autorisee', () => {
@@ -415,13 +430,14 @@ test('tasse magique : derogation documentee, la sublimation reste possible sur l
   assert.equal(r.ok, true, 'le revetement thermosensible est concu pour la sublimation');
 });
 
-test('technique hors du perimetre du support : refus nomme, avec ce qui est possible', () => {
+test('technique hors du perimetre du support : note nommee, avec ce qui est possible', () => {
   const r = verifierFaisabilite({
     supportId: 'tasse_simple', colorisId: 'blanc', techniqueId: 'flex',
   });
-  assert.equal(r.ok, false);
-  assert.equal(r.bloquants[0].code, 'technique-hors-support');
-  assert.match(r.bloquants[0].message, /Sublimation/i);
+  assert.equal(r.ok, false, 'l\'atelier ne fait pas de flex sur une tasse : le constat reste');
+  assert.equal(r.apercuPossible, true, 'l\'apercu, lui, reste possible');
+  assert.equal(r.reserves[0].code, 'technique-hors-support');
+  assert.match(r.reserves[0].alternative, /Sublimation/i);
 });
 
 test('detail sous le seuil physique : avertissement chiffre, pas un blocage', () => {
@@ -592,7 +608,9 @@ test('INVARIANT : tout refus porte un message non vide — aucun bouton gris mue
     validerDemandeMockup(demandeValide({ zoneId: '' })),
     validerDemandeMockup(demandeValide({ fichierLogo: null })),
     validerDemandeMockup(demandeValide({ fichierLogo: { name: 'x.cdr', type: '', size: 10 } })),
-    validerDemandeMockup(demandeValide({ techniqueId: 'sublimation', colorisId: 'noir' })),
+    // ⚠️ `sublimation + noir` a quitte cette liste le 17/09/2026 : ce n'est
+    // plus un refus, c'est une note technique. Le cas est couvert par
+    // `tests/mockup-apercu-commercial.test.mjs`.
     validerDemandeMockup(demandeValide({ enCours: true })),
     validerDemandeMockup(demandeValide({ compteurDuJour: 999 })),
     validerDemandeMockup(demandeValide({ promptEdite: '' })),

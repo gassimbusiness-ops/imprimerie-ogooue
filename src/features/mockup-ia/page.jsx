@@ -59,6 +59,7 @@ import {
   validerPromptLibre, LONGUEUR_PROMPT_LIBRE_MAX,
   origineCout, COUT_MESURE_SOURCE,
   MENTION_RESERVE, PLAFOND_GENERATIONS_PAR_JOUR, QUALITE_PAR_DEFAUT,
+  TITRE_NOTE_ATELIER,
 } from './moteur-mockup.js';
 import {
   chargerImage, urlDepuisFichier, lirePixelsLogo, composerMockup,
@@ -757,6 +758,14 @@ function EcranMockup() {
     try {
       const e = (v) => String(v ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
       const doc = documents.find((x) => x.cle === documentChoisi) || null;
+      // ── Les notes d'atelier vont chez le client, mais comme NOTE TECHNIQUE.
+      // Jamais comme un refus : le PDF est une proposition commerciale, et une
+      // note qui dit « prevoir du transfert » ouvre la discussion la ou
+      // « impossible » la ferme (decision du 17/09/2026).
+      const notesAtelier = [
+        ...faisabilite.reserves.map((r) => `${r.message} ${r.alternative || ''}`.trim()),
+        ...faisabilite.avertissements.map((a) => a.message),
+      ];
       const html = `
         <h2>Proposition de mockup</h2>
         <table>
@@ -775,6 +784,9 @@ function EcranMockup() {
     ia_complete: 'Mockup genere par IA (logo redessine par le modele) — document commercial, PAS un bon a tirer. Les textes, eux, sont composes par l\'application',
     ia: 'Scène generee par IA (support nu), logo et textes composes par l\'application',
   }[sceneOrigine] || 'Photographie du support reel, logo et textes composes par l\'application'}</td></tr>
+          ${notesAtelier.length ? `<tr><th>${e(TITRE_NOTE_ATELIER)}</th><td>${notesAtelier
+    .map((n) => e(n))
+    .join('<br/>')}</td></tr>` : ''}
         </table>
         <div style="text-align:center;margin:12px 0">
           <img src="${exp.dataUrl}" style="max-width:150mm;max-height:150mm;border:1px solid #e5e7eb" />
@@ -1144,10 +1156,27 @@ function EcranMockup() {
             )}
           </Etape>
 
-          {/* Garde-fou technique */}
-          {faisabilite.bloquants.map((b) => (
-            <Alerte key={b.code} type="blocage"><strong>Impossible en atelier.</strong> {b.message}</Alerte>
+          {/* ── NOTES D'ATELIER ────────────────────────────────────────────
+              ⛔ Elles INFORMENT, elles ne bloquent pas (decision du
+              17/09/2026). Un mockup est un apercu commercial : il se montre
+              AVANT que la technique soit arretee, et c'est souvent lui qui
+              sert a dire « en flex ca ne passe pas, on part sur du
+              transfert ». Le rouge et le mot « impossible » ont ete retires
+              pour cette raison — le constat, lui, reste, avec son
+              alternative. ─────────────────────────────────────────────── */}
+          {faisabilite.reserves.map((r) => (
+            <Alerte key={r.code} type="attention">
+              <strong>{TITRE_NOTE_ATELIER}.</strong> {r.message}
+              {r.alternative ? <> <strong>{r.alternative}</strong></> : null}
+            </Alerte>
           ))}
+          {faisabilite.reserves.length > 0 && (
+            <Alerte type="info">
+              Ces notes n&apos;empêchent pas l&apos;aperçu : il montre au client le rendu voulu,
+              pas la technique. Elles sont reprises dans le PDF comme note technique, pour
+              que rien ne soit promis que l&apos;atelier ne sache tenir.
+            </Alerte>
+          )}
           {faisabilite.avertissements.map((a) => (
             <Alerte key={a.code} type="attention">{a.message}</Alerte>
           ))}
@@ -1193,12 +1222,15 @@ function EcranMockup() {
             {sceneOrigine === 'photo_importee' && (
               <Alerte type="info">Photo importee a la main. Aucun cout.</Alerte>
             )}
+            {/* Pas d'alerte « attention » ici : l'absence de photo n'est pas un
+                probleme, c'est le cas courant. L'IA sait faire la scène — on le
+                dit d'abord, et l'astuce de la photothèque vient ensuite. */}
             {photothequeTestee && !sceneImage && (
-              <Alerte type="attention">
-                Aucune photo de <strong>{support?.label} {coloris?.label}</strong> dans la photothèque.
-                Deposez <code>{cheminPhototheque}</code> dans <code>public/mockups/</code> —
-                c&apos;est gratuit, hors ligne et repetable — ou faites générer la scène par l&apos;IA
-                ci-dessous.
+              <Alerte type="info">
+                Pas de photo de <strong>{support?.label} {coloris?.label}</strong> dans la
+                photothèque : <strong>la scène sera générée par l&apos;IA</strong> avec le bouton
+                ci-dessous. Pour la rendre gratuite et identique a chaque fois, deposez
+                <code> {cheminPhototheque}</code> dans <code>public/mockups/</code>.
               </Alerte>
             )}
 
