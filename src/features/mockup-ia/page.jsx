@@ -1,8 +1,17 @@
 /**
  * Ecran Mockups — pipeline hybride.
  *
- *   L'IA fait le t-shirt et la lumiere. Le logo vient du fichier du client,
- *   il n'est jamais redessine.
+ *   L'IA FAIT LA SCENE ET LE LOGO. LE TEXTE EST COMPOSE PAR L'APPLICATION,
+ *   PAR-DESSUS. Dans les deux modes, sans exception.
+ *
+ * Le logo, lui, depend du mode : redessine par le modele en « Rendu 3D IA »
+ * (mode de vente), incruste pixel pour pixel en « Incrustation exacte » (mode
+ * du bon a tirer). Le texte, non : il est toujours dessine ici.
+ *
+ * Pourquoi cette separation — mesure du 16/09/2026, 6 generations reelles :
+ * le modele a rendu l'orthographe juste 6/6 et le numero exact 3/3, mais il a
+ * PUREMENT OMIS un bloc demande sur la banderole, sans erreur ni avertissement.
+ * Un caractere faux se voit ; un bloc absent, non.
  *
  * Les decisions sont dans `moteur-mockup.js` (pur, teste sous `node --test`),
  * le dessin dans `composition.js`. Ce fichier ne fait que de l'affichage et de
@@ -42,7 +51,7 @@ import {
   trouverSupport, trouverColoris, trouverZone, trouverTechnique,
   construirePromptScene, construirePromptMockupIA, validerDemandeMockup, verifierFaisabilite,
   MODES_RENDU, MODE_PAR_DEFAUT, trouverMode,
-  ROLES_TEXTE, COULEURS_TEXTE, trouverCouleurTexte, validerTextes,
+  ROLES_TEXTE, COULEURS_TEXTE, validerTextes, preparerTextesPourRendu,
   TEXTES_MAX, LONGUEUR_TEXTE_MAX,
   analyserPixelsLogo, extraireScene, extraireMessageErreur,
   construireRecette, recetteSansImage, deciderEnregistrement,
@@ -283,13 +292,13 @@ function EcranMockup() {
   // Des que Gassim depose sa photo de t-shirt blanc sous
   // `public/mockups/tshirt_adulte_blanc_face.jpg`, elle est utilisee
   // automatiquement, sans reseau et sans un franc de cout.
-  const cheminPhotothèque = `/mockups/${supportId}_${colorisId}_${angleId}.jpg`;
+  const cheminPhototheque = `/mockups/${supportId}_${colorisId}_${angleId}.jpg`;
 
   useEffect(() => {
     let vivant = true;
     setPhotothequeTestee(false);
     (async () => {
-      const { image } = await chargerImage(cheminPhotothèque, { delaiMs: 6000 });
+      const { image } = await chargerImage(cheminPhototheque, { delaiMs: 6000 });
       if (!vivant) return;
       setPhotothequeTestee(true);
       if (image) {
@@ -303,7 +312,7 @@ function EcranMockup() {
     })();
     return () => { vivant = false; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cheminPhotothèque]);
+  }, [cheminPhototheque]);
 
   /* ── Import du logo ─────────────────────────────────────────────────────── */
 
@@ -435,22 +444,23 @@ function EcranMockup() {
     [textes, techniqueId],
   );
 
-  // Les textes du rendu portent leur couleur resolue : `composition.js` dessine,
-  // il ne cherche pas une couleur dans un catalogue.
+  // Les textes du rendu portent leur couleur resolue ET la geometrie de leur
+  // zone : `composition.js` dessine, il ne consulte aucun catalogue.
   const textesRendu = useMemo(
-    () => textesVerif.textes.map((t) => ({ ...t, hex: trouverCouleurTexte(t.couleurId).hex })),
-    [textesVerif],
+    () => preparerTextesPourRendu(textesVerif.textes, { supportId, zoneIdDefaut: zoneId }),
+    [textesVerif, supportId, zoneId],
   );
 
+  // ⛔ Aucun texte utilisateur n'entre dans le prompt, dans AUCUN des deux modes.
+  // Le modele fait la scene et le logo ; les blocs de texte sont dessines par
+  // l'application par-dessus (decision du 16/09/2026, cf. moteur-mockup.js).
   const promptAuto = useMemo(
     () => (mode === 'ia'
       ? construirePromptMockupIA({
         supportId, colorisId, angleId, techniqueId, zoneId, largeurImpressionCm,
-        textes: textesVerif.textes,
       })
       : construirePromptScene({ supportId, colorisId, angleId })),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [mode, supportId, colorisId, angleId, techniqueId, zoneId, largeurImpressionCm, textesVerif],
+    [mode, supportId, colorisId, angleId, techniqueId, zoneId, largeurImpressionCm],
   );
 
   const demande = useMemo(() => validerDemandeMockup({
@@ -464,11 +474,15 @@ function EcranMockup() {
     enCours,
     compteurDuJour: compteur,
     qualite: QUALITE_PAR_DEFAUT,
+    // Les textes servent a deux controles : bloc vide refuse, et aucun contenu
+    // client recopie a la main dans le prompt editable.
+    textes,
     mode,
   }), [
     mode,
     supportId, colorisId, angleId, techniqueId, zoneId, logoFichier, logoAnalyse,
     largeurImpressionCm, logoImage, promptEdite, sceneImage, sceneOrigine, enCours, compteur,
+    textes,
   ]);
 
   // Les avertissements sont calcules meme quand la demande est bloquee ailleurs :
@@ -486,18 +500,20 @@ function EcranMockup() {
 
   const redessiner = useCallback(() => {
     if (!canvasRef.current || !sceneImage) return;
-    // En mode « ia », l'image rendue par le modele PORTE DEJA le marquage.
-    // Recoller le logo par-dessus donnerait deux logos superposes.
+    // En mode « ia », l'image rendue par le modele PORTE DEJA le logo.
+    // Le recoller par-dessus donnerait deux logos superposes.
     const iaComplete = sceneOrigine === 'ia_complete';
     const r = composerMockup({
       canvas: canvasRef.current,
       scene: sceneImage,
       logo: iaComplete ? null : logoImage,
+      logoDejaDansLaScene: iaComplete,
       zone,
       position,
-      // En rendu IA le texte est DEJA dans l'image produite par le modele :
-      // le redessiner par-dessus ferait deux fois le meme texte.
-      textes: iaComplete ? [] : textesRendu,
+      // 🔴 LE TEXTE EST COMPOSE ICI DANS LES DEUX MODES. Le modele n'en recoit
+      // plus aucun : le 16/09, un bloc demande a ete purement omis par le
+      // modele, sans erreur ni avertissement. `fillText` ne peut rien omettre.
+      textes: textesRendu,
     });
     setNoteRendu(r.message || '');
     if (!r.ok && r.message) setErreur(r.message);
@@ -520,6 +536,7 @@ function EcranMockup() {
       sceneExistante: null, // on demande explicitement une generation
       enCours: false,
       compteurDuJour: compteur,
+      textes,
       mode,
     });
     if (!v.ok) { toast.error(v.message); return; }
@@ -568,17 +585,17 @@ function EcranMockup() {
         return;
       }
 
-      const scène = extraireScene(corps);
-      if (!scène.ok) {
-        setErreur(scène.message);
-        toast.error(scène.message);
+      const sceneRecue = extraireScene(corps);
+      if (!sceneRecue.ok) {
+        setErreur(sceneRecue.message);
+        toast.error(sceneRecue.message);
         return;
       }
 
       // La generation est facturee des que le serveur a repondu 200.
       setCompteur(incrementerCompteur());
 
-      const { image, message } = await chargerImage(scène.image);
+      const { image, message } = await chargerImage(sceneRecue.image);
       if (!image) {
         setErreur(message || 'Scène illisible.');
         toast.error(message || 'Scène illisible.');
@@ -587,7 +604,8 @@ function EcranMockup() {
       setSceneImage(image);
       setSceneOrigine(mode === 'ia' ? 'ia_complete' : 'ia');
       toast.success(mode === 'ia'
-        ? `Mockup genere (${formatFCFA(v.cout)} facture). Relisez le texte du logo avant de montrer.`
+        ? `Mockup genere (${formatFCFA(v.cout)} facture). Relisez le texte DU LOGO avant de montrer `
+          + '— vos blocs de texte, eux, sont dessines par l\'application.'
         : `Scène generee (${formatFCFA(v.cout)} facture).`);
     } catch (e) {
       const m = e?.message || 'Erreur inconnue';
@@ -729,17 +747,24 @@ function EcranMockup() {
           <tr><th>Zone de marquage</th><td>${e(zone?.label)}</td></tr>
           <tr><th>Largeur du marquage</th><td>${e(largeurImpressionCm)} cm</td></tr>
           <tr><th>Fichier client</th><td>${e(logoFichier?.name || '—')}</td></tr>
+          ${textesRendu.length ? `<tr><th>Textes marqués</th><td>${textesRendu
+    .map((t) => `« ${e(t.contenu)} » — ${e(t.hauteurCm)} cm, ${e(t.zone?.label || zone?.label || '')}`)
+    .join('<br/>')}</td></tr>` : ''}
           <tr><th>Origine de la mise en scène</th><td>${{
-    ia_complete: 'Mockup genere par IA, marquage compris — document commercial, PAS un bon a tirer',
-    ia: 'Scène generee par IA (support nu), logo incruste pixel pour pixel',
-  }[sceneOrigine] || 'Photographie du support reel, logo incruste pixel pour pixel'}</td></tr>
+    ia_complete: 'Mockup genere par IA (logo redessine par le modele) — document commercial, PAS un bon a tirer. Les textes, eux, sont composes par l\'application',
+    ia: 'Scène generee par IA (support nu), logo et textes composes par l\'application',
+  }[sceneOrigine] || 'Photographie du support reel, logo et textes composes par l\'application'}</td></tr>
         </table>
         <div style="text-align:center;margin:12px 0">
           <img src="${exp.dataUrl}" style="max-width:150mm;max-height:150mm;border:1px solid #e5e7eb" />
         </div>
         <div class="confidential">${e(MENTION_RESERVE)}</div>
         <p style="font-size:9px;color:#6b7280;margin-top:8px">
-          Le logo de cet aperçu provient du fichier fourni par le client : il n'a pas ete redessiné.
+          ${sceneOrigine === 'ia_complete'
+    ? 'Le logo de cet aperçu a ete redessiné par le modèle a partir du fichier du client : relire avant signature.'
+    : 'Le logo de cet aperçu provient du fichier fourni par le client : il n\'a pas ete redessiné.'}
+          Les blocs de texte sont composés par l'application, caractère par caractère, à partir de la saisie —
+          ils ne peuvent être ni omis ni reformulés.
           L'aperçu est une simulation d'écran, il ne constitue pas le fichier d'impression.
         </p>
         <div style="margin-top:18px;border-top:1px solid #e5e7eb;padding-top:10px;font-size:10px">
@@ -803,8 +828,8 @@ function EcranMockup() {
           <div className="min-w-0">
             <h2 className="text-2xl font-bold">Mockups</h2>
             <p className="text-sm text-white/75">
-              L&apos;IA fait le support et la lumière. <strong>Le logo vient du fichier du client :
-              il n&apos;est jamais redessiné.</strong>
+              L&apos;IA fait la scène et le logo. <strong>Le texte est composé par
+              l&apos;application, par-dessus</strong> — il ne peut être ni omis, ni reformulé.
             </p>
           </div>
         </div>
@@ -1088,13 +1113,12 @@ function EcranMockup() {
             {textesVerif.avertissements.map((a) => (
               <Alerte key={a.code} type="attention">{a.message}</Alerte>
             ))}
-            {mode === 'ia' && textesVerif.textes.length > 0 && (
-              <Alerte type="attention">
-                En rendu 3D, le texte est <strong>redessine par le modele</strong>, pas recopie.
-                C&apos;est le point le plus fragile de ce mode. Relisez chaque chiffre et chaque
-                accent sur l&apos;apercu ; si un caractere est faux, repassez en
-                <strong> incrustation exacte</strong> — la, le texte est dessine par
-                l&apos;application et ne peut pas changer.
+            {textesVerif.textes.length > 0 && (
+              <Alerte type="info">
+                Ces blocs ne partent <strong>jamais</strong> au modèle : ils sont dessinés par
+                l&apos;application par-dessus l&apos;image, caractère par caractère, dans les deux
+                modes. Le 16/09, un bloc demandé au modèle a été <strong>purement omis</strong>,
+                sans erreur ni avertissement — c&apos;est ce que cette règle supprime.
               </Alerte>
             )}
           </Etape>
@@ -1141,7 +1165,7 @@ function EcranMockup() {
             {sceneOrigine === 'photo' && (
               <Alerte type="info">
                 Photo reelle du support trouvee dans la photothèque
-                (<code>{cheminPhotothèque}</code>). Aucun reseau, aucun cout, resultat identique
+                (<code>{cheminPhototheque}</code>). Aucun reseau, aucun cout, resultat identique
                 a chaque fois.
               </Alerte>
             )}
@@ -1151,7 +1175,7 @@ function EcranMockup() {
             {photothequeTestee && !sceneImage && (
               <Alerte type="attention">
                 Aucune photo de <strong>{support?.label} {coloris?.label}</strong> dans la photothèque.
-                Deposez <code>{cheminPhotothèque}</code> dans <code>public/mockups/</code> —
+                Deposez <code>{cheminPhototheque}</code> dans <code>public/mockups/</code> —
                 c&apos;est gratuit, hors ligne et repetable — ou faites générer la scène par l&apos;IA
                 ci-dessous.
               </Alerte>
@@ -1187,8 +1211,8 @@ function EcranMockup() {
                 </Button>
                 <span className="text-[11px] text-muted-foreground">
                   {mode === 'ia'
-                    ? 'Ce prompt decrit l\u2019objet ET le marquage. Le logo est joint a la requete comme image de reference.'
-                    : 'Ce prompt ne decrit QUE le support nu. Le logo n\u2019y figure pas et n\u2019est jamais envoye.'}
+                    ? 'Ce prompt decrit l\u2019objet et place le logo, joint a la requete comme image de reference. Il ne demande AUCUN texte : vos blocs sont dessines par l\u2019application par-dessus l\u2019image.'
+                    : 'Ce prompt ne decrit QUE le support nu. Ni le logo ni vos textes n\u2019y figurent, et ils ne sont jamais envoyes.'}
                 </span>
               </div>
             </details>
@@ -1265,6 +1289,38 @@ function EcranMockup() {
 
           {noteRendu && <Alerte type="attention">{noteRendu}</Alerte>}
 
+          {/* 🔴 LA SAISIE VERBATIM, A COTE DE L'APERCU.
+              C'est contre CE bloc que l'apercu se relit, caractere par caractere.
+              Il reste affiche meme si l'apercu, lui, est parfait : c'est la
+              comparaison qui protege, pas la confiance dans l'image. */}
+          {textesRendu.length > 0 && (
+            <div className="rounded-xl border p-4">
+              <p className="mb-2 flex items-center gap-1.5 text-sm font-semibold">
+                <Type className="h-4 w-4" /> Texte demandé — à comparer à l&apos;aperçu
+              </p>
+              <ul className="space-y-1.5">
+                {textesRendu.map((t) => (
+                  <li key={t.id} className="flex flex-wrap items-baseline gap-2 text-xs">
+                    <span
+                      className="inline-block h-3 w-3 shrink-0 rounded-sm border border-gray-300"
+                      style={{ backgroundColor: t.hex }}
+                    />
+                    <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[12px] font-bold">
+                      {t.contenu}
+                    </span>
+                    <span className="text-muted-foreground">
+                      {t.hauteurCm} cm · {t.zone?.label || zone?.label || 'zone courante'}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-2 text-[11px] text-muted-foreground">
+                Ces blocs sont dessinés par l&apos;application, pas par l&apos;IA : ils ne peuvent
+                être ni omis, ni reformulés. L&apos;aperçu doit les montrer à l&apos;identique.
+              </p>
+            </div>
+          )}
+
           {pretAApercevoir && (
             <>
               <div className="rounded-xl border p-4 text-sm">
@@ -1276,11 +1332,13 @@ function EcranMockup() {
                   <span className="text-muted-foreground">Largeur marquage</span><span>{largeurImpressionCm} cm</span>
                   <span className="text-muted-foreground">Origine de la scène</span>
                   <span>{{
-                    ia_complete: 'Mockup IA (logo redessine)',
+                    ia_complete: 'Mockup IA (logo redessine) · texte compose par l’application',
                     ia: 'Generee par IA (support nu)',
                   }[sceneOrigine] || 'Photo reelle'}</span>
                   <span className="text-muted-foreground">Logo</span>
                   <span>{logoFichier?.name || '— aucun —'}</span>
+                  <span className="text-muted-foreground">Textes marqués</span>
+                  <span>{textesRendu.length ? `${textesRendu.length} bloc(s), composés par l’application` : '— aucun —'}</span>
                 </div>
               </div>
 

@@ -59,15 +59,26 @@ export function chargerImage(src, { delaiMs = 15000 } = {}) {
       fini = true;
       resolve({ image, message });
     };
+    // Le minuteur est CONSERVE et annule des que l'image repond. Sans ca il
+    // restait arme jusqu'au bout (15 s) apres chaque chargement reussi : sans
+    // consequence visible dans un navigateur, mais il maintient la boucle
+    // d'evenements en vie et rallonge d'autant tout test qui monte l'ecran.
+    let minuteur = null;
     try {
       const img = new Image();
       if (/^https?:/i.test(src)) img.crossOrigin = 'anonymous';
-      img.onload = () => terminer(img, '');
-      img.onerror = () => terminer(null, 'Image illisible (format non supporte, fichier corrompu, '
-        + 'ou acces refuse par le serveur distant).');
+      img.onload = () => { clearTimeout(minuteur); terminer(img, ''); };
+      img.onerror = () => {
+        clearTimeout(minuteur);
+        terminer(null, 'Image illisible (format non supporte, fichier corrompu, '
+          + 'ou acces refuse par le serveur distant).');
+      };
+      // Le minuteur est arme AVANT `src` : une doublure de test qui repond
+      // synchroniquement laisserait sinon un minuteur orphelin derriere elle.
+      minuteur = setTimeout(() => terminer(null, 'Chargement de l\'image trop long — abandonne.'), delaiMs);
       img.src = src;
-      setTimeout(() => terminer(null, 'Chargement de l\'image trop long — abandonne.'), delaiMs);
     } catch (e) {
+      clearTimeout(minuteur);
       terminer(null, `Chargement impossible : ${e?.message || 'erreur inconnue'}`);
     }
   });
@@ -238,6 +249,8 @@ function echantillonner(src, largeur, hauteur, x, y, sortie, dst) {
  * @param {HTMLImageElement}  p.logo     logo du client, tel quel
  * @param {object} p.zone                {cx, cy, wMax, hMax} normalises
  * @param {object} p.position            {x, y, largeur, rotation} normalises sur la scene
+ * @param {Array}  [p.textes]            blocs prepares — dessines ici, dans les DEUX modes
+ * @param {boolean} [p.logoDejaDansLaScene] vrai en mode « Rendu 3D IA »
  * @param {number} [p.forceRelief]       0 a 1 — amplitude de la deformation par les plis
  * @param {number} [p.opacite]           0 a 1 — le motif n'est jamais a 1, le tissu absorbe
  * @param {number} [p.forceOmbre]        0 a 1 — reinjection des ombres de la scene
@@ -249,11 +262,17 @@ export function composerMockup({
   logo,
   zone,
   position,
-  // Blocs de texte deja normalises par `normaliserTextes` (moteur-mockup.js).
-  // En mode incrustation ils sont DESSINES ici, donc exacts au caractere pres :
-  // c'est la seule facon de garantir qu'un numero de telephone imprime est le
-  // numero saisi. En mode « ia » ils ne passent pas par ici du tout.
+  // Blocs de texte prepares par `preparerTextesPourRendu` (moteur-mockup.js).
+  // Ils sont DESSINES ici, donc exacts au caractere pres — et c'est vrai DANS
+  // LES DEUX MODES depuis le 16/09/2026 : « Rendu 3D IA » comme « Incrustation
+  // exacte ». Le modele d'image ne recoit plus aucun texte. C'est la seule
+  // facon de garantir qu'un numero imprime est le numero saisi, et surtout
+  // qu'un bloc demande n'est jamais omis en silence.
   textes = [],
+  // Mode « Rendu 3D IA » : le logo est DEJA dans l'image rendue par le modele.
+  // Le recoller ici en donnerait deux. Ce drapeau evite surtout d'afficher au
+  // gerant un avertissement « sans logo » alors que le logo est bien la.
+  logoDejaDansLaScene = false,
   forceRelief = 0.55,
   opacite = 0.92,
   forceOmbre = 0.85,
@@ -275,11 +294,21 @@ export function composerMockup({
     return { ok: false, degrade: false, message: `Rendu de la scene impossible : ${e?.message || 'erreur'}` };
   }
 
+  const L = canvas.width;
+  const H = canvas.height;
+  const z = zone || ZONE_REPLI;
+
   if (!logo || !logo.naturalWidth) {
     // La scene seule est un resultat valable : le gerant voit deja le support
     // et le coloris. On le dit, on ne casse rien. Les textes, eux, se dessinent
     // sans logo — un marquage « nom + telephone » se vend tres bien seul.
-    const nb = dessinerTextes(ctx, textes, zone, canvas.width, canvas.height);
+    // C'est aussi le chemin du mode « Rendu 3D IA », ou le logo est deja dans
+    // l'image produite par le modele : seuls les textes restent a composer.
+    const nb = dessinerTextes(ctx, textes, z, L, H);
+    if (logoDejaDansLaScene) {
+      // Rien n'est degrade : le logo vient du modele, le texte vient d'ici.
+      return { ok: true, degrade: false, message: '' };
+    }
     return {
       ok: true,
       degrade: true,
@@ -289,11 +318,7 @@ export function composerMockup({
     };
   }
 
-  const L = canvas.width;
-  const H = canvas.height;
-
   // ── Cadre du logo, borne a la zone imprimable ────────────────────────────
-  const z = zone || { cx: 0.5, cy: 0.45, wMax: 0.5, hMax: 0.4 };
   const pos = position || { x: z.cx, y: z.cy, largeur: Math.min(0.25, z.wMax), rotation: 0 };
   const largeurLogo = Math.max(8, Math.min(pos.largeur, z.wMax) * L);
   const hauteurLogo = Math.max(8, largeurLogo * (logo.naturalHeight / logo.naturalWidth));
@@ -420,38 +445,85 @@ export function composerMockup({
   // Les textes sont dessines APRES le logo, et sans le traitement de relief :
   // un texte doit rester parfaitement net et parfaitement lisible a l'ecran,
   // c'est lui que le gerant relit caractere par caractere.
-  dessinerTextes(ctx, textes, zone, L, H);
+  dessinerTextes(ctx, textes, z, L, H);
 
   return { ok: true, degrade, message: messageDegrade };
 }
+
+/** Geometrie de repli quand aucune zone n'est connue. */
+const ZONE_REPLI = { id: '_repli', cx: 0.5, cy: 0.45, wMax: 0.5, hMax: 0.4, largeurMaxCm: 20 };
 
 /**
  * Dessine les blocs de texte sur la scene, exactement tels qu'ils ont ete
  * saisis. Aucune correction, aucune capitalisation automatique : ce qui est
  * tape est ce qui s'imprime.
  *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * C'EST ICI QUE LE TEXTE EST FABRIQUE — DANS LES DEUX MODES, DEPUIS LE 16/09.
+ *
+ * Plus aucun texte n'est demande au modele d'image. Mesure du 16/09/2026 : sur
+ * 6 generations reelles, l'orthographe et les chiffres etaient justes, et un
+ * bloc entier a quand meme ete SILENCIEUSEMENT OMIS — le modele a juge qu'il
+ * faisait doublon avec le logo. Un caractere faux se voit ; un bloc absent,
+ * non. `fillText` ne peut ni omettre, ni paraphraser, ni traduire : il dessine
+ * la chaine qu'on lui donne, caractere par caractere.
+ * ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Chaque bloc porte SA zone (`t.zone`, resolue par `preparerTextesPourRendu`) :
+ * un nom sur la poitrine et un numero dans le dos ne s'empilent pas ensemble.
+ * Les blocs d'une meme zone, eux, s'empilent dans l'ordre de saisie.
+ *
+ * @param {object} ctx        contexte 2D
+ * @param {Array}  textes     blocs normalises, avec `contenu`, `hauteurCm`, `hex`, `zone`
+ * @param {object} zoneDefaut zone de marquage courante, pour les blocs sans zone propre
  * @returns {number} nombre de blocs effectivement dessines
  */
-function dessinerTextes(ctx, textes, zone, L, H) {
-  const liste = Array.isArray(textes) ? textes.filter((t) => t && t.contenu) : [];
+export function dessinerTextes(ctx, textes, zoneDefaut, L, H) {
+  const liste = Array.isArray(textes)
+    ? textes.filter((t) => t && typeof t.contenu === 'string' && t.contenu.trim())
+    : [];
   if (!liste.length || !ctx) return 0;
 
-  const z = zone || { cx: 0.5, cy: 0.45, wMax: 0.5, hMax: 0.4 };
+  const largeur = Number(L) > 0 ? Number(L) : 1000;
+  const hauteur = Number(H) > 0 ? Number(H) : 1000;
+  const parDefaut = zoneDefaut || ZONE_REPLI;
+  const curseurs = new Map();
   let dessines = 0;
-
-  // Les blocs s'empilent sous le centre de la zone, dans l'ordre de saisie.
-  let curseurY = (z.cy + z.hMax * 0.32) * H;
 
   for (const t of liste) {
     try {
+      const z = t.zone || parDefaut || ZONE_REPLI;
+      const cle = z.id || `${z.cx}:${z.cy}`;
+      // Les blocs s'empilent sous le centre de LEUR zone, dans l'ordre de saisie.
+      let curseurY = curseurs.has(cle) ? curseurs.get(cle) : (z.cy + (z.hMax || 0.4) * 0.32) * hauteur;
+
       // `hauteurCm` est une hauteur REELLE sur le support. La zone porte sa
       // largeur reelle (`largeurMaxCm`) : le rapport des deux donne la taille
       // a l'ecran, sans jamais supposer une definition d'image.
-      const cmParPixel = (z.largeurMaxCm || 20) / Math.max(1, z.wMax * L);
-      const taillePx = Math.max(9, Math.round((t.hauteurCm || 2) / cmParPixel));
+      const largeurZonePx = Math.max(1, (z.wMax || 0.5) * largeur);
+      const cmParPixel = (z.largeurMaxCm || 20) / largeurZonePx;
+      let taillePx = Math.max(9, Math.round((t.hauteurCm || 2) / cmParPixel));
 
       ctx.save();
-      ctx.font = `700 ${taillePx}px "Helvetica Neue", Arial, sans-serif`;
+      const police = (px) => `700 ${px}px "Helvetica Neue", Arial, sans-serif`;
+      ctx.font = police(taillePx);
+
+      // Un texte plus large que sa zone deborderait sur le reste du support et
+      // promettrait un marquage que l'atelier ne peut pas presser. On reduit
+      // plutot que de laisser deborder — et jamais sous 9 px, illisible.
+      if (typeof ctx.measureText === 'function') {
+        try {
+          let garde = 0;
+          while (taillePx > 9 && garde < 40) {
+            const l = ctx.measureText(t.contenu)?.width || 0;
+            if (!l || l <= largeurZonePx) break;
+            taillePx = Math.max(9, Math.floor(taillePx * 0.92));
+            ctx.font = police(taillePx);
+            garde += 1;
+          }
+        } catch { /* measureText indisponible : on garde la taille demandee */ }
+      }
+
       ctx.textAlign = 'center';
       ctx.textBaseline = 'top';
       ctx.fillStyle = t.hex || '#111111';
@@ -460,11 +532,14 @@ function dessinerTextes(ctx, textes, zone, L, H) {
       ctx.lineWidth = Math.max(1, taillePx * 0.03);
       ctx.strokeStyle = 'rgba(0,0,0,0.18)';
       ctx.globalAlpha = 0.95;
-      ctx.fillText(t.contenu, z.cx * L, curseurY);
-      ctx.strokeText(t.contenu, z.cx * L, curseurY);
+      // ⛔ `t.contenu` part TEL QUEL. Aucune transformation, aucun `toUpperCase`,
+      // aucun reformatage de numero : « 060 44 46 34 » garde ses espaces.
+      ctx.fillText(t.contenu, z.cx * largeur, curseurY);
+      ctx.strokeText(t.contenu, z.cx * largeur, curseurY);
       ctx.restore();
 
       curseurY += taillePx * 1.25;
+      curseurs.set(cle, curseurY);
       dessines += 1;
     } catch {
       // Un bloc illisible ne doit pas emporter les autres ni l'apercu entier.

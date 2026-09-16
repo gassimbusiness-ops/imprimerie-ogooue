@@ -2,7 +2,17 @@
  * Moteur de mockup — logique pure. Aucun appel reseau, aucun acces au DOM.
  *
  * ═══════════════════════════════════════════════════════════════════════════
- * DEUX MODES, ET CE QUI LES SEPARE
+ * LA REGLE, DEPUIS LE 16/09/2026 :
+ *
+ *     L'IA FAIT LA SCENE ET LE LOGO. LE TEXTE EST COMPOSE PAR L'APPLICATION,
+ *     PAR-DESSUS — dans les DEUX modes, sans exception.
+ *
+ * Plus aucun prompt de ce module ne demande de texte ; ils portent au
+ * contraire la consigne explicite de n'en ecrire aucun (`CONSIGNE_AUCUN_TEXTE`).
+ * Le detail de la mesure qui a tranche est en §5, au-dessus de cette consigne.
+ *
+ * ═══════════════════════════════════════════════════════════════════════════
+ * DEUX MODES, ET CE QUI LES SEPARE (c'est le LOGO qui les separe, pas le texte)
  *
  *   MODE « ia » (defaut a l'ecran) — VENDRE.
  *   Le logo du client part au modele comme IMAGE DE REFERENCE et le modele rend
@@ -470,11 +480,68 @@ export function verifierFaisabilite(params) {
    5. LE PROMPT DE SCENE — il ne decrit QUE le support nu
    ═════════════════════════════════════════════════════════════════════════════ */
 
-export const LONGUEUR_PROMPT_MAX = 900;
+// 1200 et non 900 : la consigne « n'ecris aucun texte » fait a elle seule ~340
+// caracteres et elle est NON NEGOCIABLE. A 900, un libelle de support un peu long
+// la faisait passer sous la troncature. Le serveur, lui, refuse au-dela de 2000.
+export const LONGUEUR_PROMPT_MAX = 1200;
+
+/** Le serveur refuse au-dela de 2000 ; on coupe avant, avec de la marge. */
+export const LONGUEUR_PROMPT_MAX_IA = 1950;
+
+/**
+ * ⛔ LA CONSIGNE QUI PORTE LA DECISION DU 16/09/2026.
+ *
+ * Aucun prompt de cette application ne demande plus de texte. Ni nom, ni numero,
+ * ni slogan. Cette ligne-la ne decrit pas le support : elle interdit au modele
+ * d'ajouter du texte DE SA PROPRE INITIATIVE, ce qu'un modele d'image fait
+ * spontanement pour meubler une surface vide.
+ *
+ * Pourquoi cette ligne ne suffit pas, et pourquoi le texte est compose par
+ * l'application par-dessus (`composition.js`) :
+ *
+ *   6 generations reelles ont ete faites le 16/09/2026 avec le vrai logo.
+ *   Orthographe juste 6/6, accent du É 6/6, numero « 060 44 46 34 » exact 3/3.
+ *   MAIS sur la banderole (image 06), un bloc demande — « IMPRIMERIE OGOOUÉ » —
+ *   a ete PUREMENT OMIS : le modele a juge que le mot deja present dans le logo
+ *   suffisait, et n'a rien rendu. Aucune erreur, aucun avertissement.
+ *
+ *   Le mode d'echec n'est donc pas « un chiffre faux » — c'est « un bloc
+ *   absent ». Plus discret, donc plus dangereux : le jour ou c'est le numero
+ *   d'un client qui disparait, personne ne le voit avant la livraison.
+ *
+ * La documentation OpenAI le dit elle-meme (guide `image-prompting`, 16/09/2026) :
+ *
+ *     « If a region must remain pixel-identical, composite the approved edit
+ *       into the original image instead of relying on prompting alone. »
+ *
+ * C'est exactement ce qu'on fait : le modele fait la scene et le logo,
+ * l'application dessine le texte par-dessus.
+ */
+export const CONSIGNE_AUCUN_TEXTE =
+  'Do not write, add, invent or letter ANY text of your own: no words, no letters, '
+  + 'no digits, no phone number, no slogan, no caption, no brand name, no price tag, '
+  + 'no label and no watermark anywhere in the image. '
+  + 'Leave every empty surface empty — text is composited afterwards by the application.';
 
 function nettoyer(v) {
   if (v === null || v === undefined) return '';
   return String(v).replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Borne un prompt SANS jamais rogner la consigne finale.
+ *
+ * Tronquer bêtement la chaîne complète couperait `CONSIGNE_AUCUN_TEXTE`, qui est
+ * en fin de prompt — la seule ligne qui interdit au modèle d'écrire de son propre
+ * chef disparaîtrait silencieusement dès qu'un libellé de support s'allonge.
+ * On borne donc la DESCRIPTION, puis on recolle la consigne.
+ */
+function bornerAvecConsigne(description, consigne, max) {
+  const desc = String(description || '').replace(/\s+/g, ' ').trim();
+  const fin = String(consigne || '').trim();
+  const place = Math.max(0, max - fin.length - 1);
+  const tete = desc.length > place ? `${desc.slice(0, Math.max(0, place - 1)).trimEnd()}…` : desc;
+  return fin ? `${tete} ${fin}`.trim() : tete;
 }
 
 /**
@@ -504,22 +571,22 @@ export function construirePromptScene(params) {
     noir_thermo: 'matte black', a_confirmer: 'neutral grey', a_preciser: 'high-visibility yellow',
   }[coloris?.id] || 'white';
 
-  const prompt = [
+  const description = [
     'Professional product photography for a print shop catalogue.',
     `A ${couleurAnglais} ${support.anglais}, ${angle.anglais}.`,
     // Le point qui compte : la scene doit etre nue.
     'The garment is completely blank: no logo, no text, no print, no embroidery,',
     'no brand label, no decoration of any kind on the fabric.',
     // Lumiere plate : le relief doit venir de la matiere, pas de l'eclairage.
-    // Une ombre portee dure est impossible a corriger ensuite lors de l\'incrustation.
+    // Une ombre portee dure est impossible a corriger ensuite lors de l'incrustation.
     'Flat frontal diffuse studio lighting, no hard shadows, no colour cast,',
     'neutral light grey seamless background, natural fabric texture and soft folds visible,',
     'the printable area is fully visible and not cropped.',
   ].join(' ');
 
-  return prompt.length > LONGUEUR_PROMPT_MAX
-    ? `${prompt.slice(0, LONGUEUR_PROMPT_MAX - 1).trimEnd()}…`
-    : prompt;
+  // La consigne « n'ecris rien de toi-meme » est recollee APRES la troncature :
+  // elle ne peut donc jamais etre rognee par un libelle de support trop long.
+  return bornerAvecConsigne(description, CONSIGNE_AUCUN_TEXTE, LONGUEUR_PROMPT_MAX);
 }
 
 /* ═════════════════════════════════════════════════════════════════════════════
@@ -537,7 +604,8 @@ export const MODES_RENDU = [
     resume: 'Le logo est envoye au modele comme reference et l\'objet est rendu en 3D.',
     aide: 'Le plus vendeur : t-shirt porte, casquette, tasse, banderole. Le modele REDESSINE '
       + 'le logo — relisez l\'orthographe et les couleurs avant de montrer, et ne vous en servez '
-      + 'jamais comme bon a tirer.',
+      + 'jamais comme bon a tirer. Les blocs de texte, eux, ne partent PAS au modele : '
+      + 'ils sont dessines par l\'application par-dessus l\'image.',
     facture: true,
   },
   {
@@ -545,7 +613,8 @@ export const MODES_RENDU = [
     label: 'Incrustation exacte (2D)',
     resume: 'Le logo du client est colle par calcul sur le support, pixel pour pixel.',
     aide: 'Exact et gratuit. C\'est le mode du bon a tirer. Le support peut venir d\'une photo '
-      + 'du magasin (0 F) ou d\'une generation de support nu.',
+      + 'du magasin (0 F) ou d\'une generation de support nu. Logo ET texte sont dessines '
+      + 'par l\'application.',
     facture: false,
   },
 ];
@@ -591,12 +660,20 @@ const TECHNIQUES_ANGLAIS = {
    Demande de Gassim, 16/09/2026 : « ajoute aussi le texte et la
    personnalisation (nom, numero, slogan sur le support) ».
 
-   ⚠️ LE TEXTE EST LE PIRE CAS POUR UN MODELE D'IMAGE. Un logo approximatif
-   passe au comptoir ; un numero de telephone avec un chiffre faux est
-   inutilisable, et dangereux s'il part en presse. C'est pour ca que chaque
-   bloc de texte est stocke tel quel, verbatim, et que l'interface affiche
-   toujours le texte EXACT saisi a cote de l'apercu : le gerant compare
-   caractere par caractere, il ne fait pas confiance a l'image.
+   ⚠️ LE TEXTE NE PASSE PLUS JAMAIS PAR LE MODELE — decision du 16/09/2026.
+
+   Un logo approximatif passe au comptoir ; un numero de telephone avec un
+   chiffre faux est inutilisable, et dangereux s'il part en presse. Mais le mode
+   d'echec mesure n'est meme pas celui-la : sur 6 generations reelles,
+   l'orthographe etait juste 6/6 et le numero exact 3/3 — et un bloc entier
+   (« IMPRIMERIE OGOOUÉ ») a ete SILENCIEUSEMENT OMIS sur la banderole, le
+   modele ayant juge que le mot du logo suffisait.
+
+   Un bloc absent ne se voit pas. Un chiffre faux, si. C'est pour ca que le
+   texte est desormais COMPOSE PAR L'APPLICATION (`composition.js`), dans les
+   deux modes, et que ces structures ne servent plus qu'a ca : le contenu est
+   stocke verbatim, l'ecran l'affiche a cote de l'apercu, et le compositeur le
+   dessine caractere par caractere.
    ───────────────────────────────────────────────────────────────────────── */
 
 export const TEXTES_MAX = 3;
@@ -610,13 +687,21 @@ export const ROLES_TEXTE = [
   { id: 'libre', label: 'Texte libre', exemple: '' },
 ];
 
-/** Couleurs d'impression proposees, avec leur nom anglais pour le prompt. */
+/**
+ * Couleurs d'impression proposees.
+ *
+ * Le champ `anglais` a ete RETIRE le 16/09/2026 : il n'existait que pour dire
+ * au modele de quelle couleur ecrire le texte. Plus aucun texte ne part au
+ * modele, donc plus de traduction — et surtout, plus de piece detachee qui
+ * inviterait a rebrancher le texte sur le prompt. Seul `hex` sert desormais :
+ * c'est `composition.js` qui peint.
+ */
 export const COULEURS_TEXTE = [
-  { id: 'noir', label: 'Noir', hex: '#111111', anglais: 'black' },
-  { id: 'blanc', label: 'Blanc', hex: '#FFFFFF', anglais: 'white' },
-  { id: 'cyan', label: 'Cyan (charte Ogooué)', hex: '#3FA9F5', anglais: 'light cyan blue' },
-  { id: 'magenta', label: 'Magenta', hex: '#E6007E', anglais: 'magenta' },
-  { id: 'jaune', label: 'Jaune', hex: '#FFDD00', anglais: 'yellow' },
+  { id: 'noir', label: 'Noir', hex: '#111111' },
+  { id: 'blanc', label: 'Blanc', hex: '#FFFFFF' },
+  { id: 'cyan', label: 'Cyan (charte Ogooué)', hex: '#3FA9F5' },
+  { id: 'magenta', label: 'Magenta', hex: '#E6007E' },
+  { id: 'jaune', label: 'Jaune', hex: '#FFDD00' },
 ];
 
 export function trouverCouleurTexte(id) {
@@ -651,7 +736,23 @@ export function normaliserTextes(textes) {
  */
 export function validerTextes(textes, { techniqueId } = {}) {
   const liste = normaliserTextes(textes);
-  const brut = Array.isArray(textes) ? textes.filter((t) => t && String(t.contenu || '').trim()) : [];
+  const tous = Array.isArray(textes) ? textes.filter((t) => t && typeof t === 'object') : [];
+  const brut = tous.filter((t) => String(t.contenu || '').trim());
+
+  // ── Bloc vide : REFUS, et on dit lequel ─────────────────────────────────
+  // `normaliserTextes` se contentait de le retirer en silence. Un bloc ouvert et
+  // laisse vide est exactement le geste de quelqu'un qui a ete interrompu : il
+  // croit avoir demande un marquage, l'apercu n'en porte aucun, et rien ne le
+  // signale. C'est le meme mode d'echec que le bloc omis par le modele — on ne
+  // le remplace pas par une version maison.
+  const iVide = tous.findIndex((t) => !String(t.contenu || '').trim());
+  if (iVide >= 0) {
+    return {
+      ok: false, textes: liste, avertissements: [],
+      message: `Le bloc de texte n°${iVide + 1} est vide. Saisissez ce qu'il doit porter `
+        + '(nom, numero, slogan), ou retirez-le. Un bloc vide n\'est jamais marque en silence.',
+    };
+  }
 
   if (brut.length > TEXTES_MAX) {
     return {
@@ -687,54 +788,86 @@ export function validerTextes(textes, { techniqueId } = {}) {
   if (chiffres) {
     avertissements.push({
       code: 'verifier-chiffres',
-      message: `« ${chiffres.contenu} » contient des chiffres. RELISEZ-LES sur l'apercu, `
-        + 'chiffre par chiffre : en rendu IA le texte est redessine, pas recopie. '
-        + 'Un numero faux imprime en serie se paye deux fois.',
+      message: `« ${chiffres.contenu} » contient des chiffres. Ils sont dessines par `
+        + 'l\'application, caractere par caractere, a partir de ce que vous avez tape — '
+        + 'le modele ne les voit jamais. Relisez donc la SAISIE, pas l\'image : '
+        + 'un numero faux imprime en serie se paye deux fois.',
     });
   }
 
   return { ok: true, message: '', textes: liste, avertissements };
 }
 
-/** Rend les blocs de texte en anglais pour le prompt, contenu entre guillemets. */
-function decrireTextes(textes, support) {
-  const liste = normaliserTextes(textes);
-  if (!liste.length) return '';
-  const phrases = liste.map((t) => {
-    const z = support?.zones?.find((zz) => zz.id === t.zoneId);
-    const ou = ZONES_ANGLAIS[z?.id] || 'below the logo';
-    const couleur = trouverCouleurTexte(t.couleurId).anglais;
-    // Les guillemets typographiques encadrent le contenu : le modele doit
-    // comprendre que c'est une chaine a rendre telle quelle, pas une consigne.
-    return `the text "${t.contenu}" in ${couleur}, ${ou}, about ${t.hauteurCm} cm tall`;
-  });
-  return ' Also print on the product: '
-    + `${phrases.join('; ')}. `
-    + 'Render every one of these strings CHARACTER BY CHARACTER exactly as written, '
-    + 'with the same spelling, the same accents, the same spacing and the same digits. '
-    + 'Do not paraphrase them, do not translate them, do not invent extra words, '
-    + 'and do not change a single digit of any phone number.';
+/**
+ * Prepare les blocs de texte pour le compositeur : couleur resolue en hexa, et
+ * geometrie de la zone ou chacun doit etre dessine.
+ *
+ * C'est ICI que se fait le choix de la zone selon le support — `composition.js`
+ * dessine, il ne consulte aucun catalogue. Un bloc sans zone propre retombe sur
+ * la zone de marquage courante.
+ */
+export function preparerTextesPourRendu(textes, params = {}) {
+  const { supportId, zoneIdDefaut = null } = params || {};
+  return normaliserTextes(textes).map((t) => ({
+    ...t,
+    hex: trouverCouleurTexte(t.couleurId).hex,
+    zone: trouverZone(supportId, t.zoneId) || trouverZone(supportId, zoneIdDefaut) || null,
+  }));
+}
+
+/**
+ * Le prompt contient-il un des textes du client ?
+ *
+ * Garde-fou de dernier recours : le prompt est EDITABLE a l'ecran. Rien
+ * n'empeche quelqu'un d'y recopier le numero de telephone « pour aider », et on
+ * retomberait exactement dans le mode d'echec qu'on vient de supprimer — sauf
+ * que cette fois personne ne saurait que le modele a eu le texte.
+ *
+ * Seuls les blocs de 3 caracteres et plus sont testes : « A » ou « Ko » se
+ * retrouvent dans n'importe quel prompt anglais et bloqueraient tout.
+ *
+ * @returns {{trouve: boolean, contenu: string}}
+ */
+export function promptContientTexteClient(prompt, textes) {
+  const p = String(prompt || '').toLowerCase();
+  if (!p) return { trouve: false, contenu: '' };
+  for (const t of normaliserTextes(textes)) {
+    const c = t.contenu.trim();
+    if (c.length < 3) continue;
+    if (p.includes(c.toLowerCase())) return { trouve: true, contenu: c };
+  }
+  return { trouve: false, contenu: '' };
 }
 
 /**
  * Construit le prompt du mode VENTE. Contrairement a `construirePromptScene`,
  * il parle du logo — c'est tout son objet.
  *
- * Trois exigences y sont ecrites explicitement, et chacune repare un echec
- * observe sur des modeles d'image :
+ * ⛔ CE QU'IL NE CONTIENT PLUS, DEPUIS LE 16/09/2026 : AUCUN TEXTE UTILISATEUR.
+ *
+ * Ni les blocs de texte (`textes`), ni la personnalisation libre
+ * (`personnalisation`). Ces deux entrees ne sont meme plus destructurees : un
+ * appelant qui les passe les voit ignorees, et `promptContientTexteClient`
+ * refuse la generation si un contenu client s'est retrouve dans un prompt edite
+ * a la main. Le texte est dessine par `composition.js`, par-dessus l'image.
+ *
+ * Ce qui reste, et pourquoi :
  *
  *  - « reproduce it exactly … including every accented character » : le logo du
  *    client type ici porte « OGOOUÉ » avec un accent aigu. Un modele qui
- *    re-lettre le texte perd l'accent en premier ;
- *  - « do not add any other text, logo, slogan or watermark » : sans cette
- *    ligne, le modele meuble les zones vides avec du faux texte ;
+ *    re-lettre le texte perd l'accent en premier. Mesure du 16/09 : 6/6 sur
+ *    l'orthographe, 6/6 sur l'accent — cette ligne fait son travail ;
+ *  - `CONSIGNE_AUCUN_TEXTE` : sans elle, le modele meuble les zones vides avec
+ *    du faux texte ;
  *  - la couleur du support et la technique sont dites en anglais et en clair,
  *    parce qu'un libelle francais dans un prompt anglais se fait deviner.
  */
 export function construirePromptMockupIA(params) {
   const {
     supportId, colorisId, angleId = 'face', techniqueId, zoneId,
-    largeurImpressionCm = 0, personnalisation = '', textes = [],
+    largeurImpressionCm = 0,
+    // `personnalisation` et `textes` sont VOLONTAIREMENT absents de cette
+    // destructuration. Ne les remettez pas : ce sont des entrees utilisateur.
   } = params || {};
   const support = trouverSupport(supportId);
   if (!support) return '';
@@ -754,11 +887,7 @@ export function construirePromptMockupIA(params) {
   const taille = largeurImpressionCm > 0
     ? ` The printed artwork is about ${largeurImpressionCm} cm wide on the real object.`
     : '';
-  const extra = nettoyer(personnalisation)
-    ? ` Additional requirement from the shop: ${nettoyer(personnalisation)}.`
-    : '';
-
-  const prompt = [
+  const description = [
     'Commercial product mockup photograph for a print shop.',
     `Show ${objet}, in ${couleurAnglais}, ${angle.anglais}.`,
     'The attached image is the customer\'s logo.',
@@ -769,25 +898,15 @@ export function construirePromptMockupIA(params) {
     `Place the logo ${emplacement}, ${rendu}.${taille}`,
     'The logo must follow the shape, the curvature and the perspective of the object,',
     'and pick up the light of the scene.',
-    decrireTextes(textes, support),
-    // Sans blocs de texte, la phrase « apart from the strings listed above »
-    // renverrait a une liste vide : le modele comblerait le flou.
-    (normaliserTextes(textes).length
-      ? 'Apart from the logo and the strings listed above, do not add any other text,'
-      : 'Apart from the logo itself, do not add any text,')
-    + ' logo, slogan, price, label or watermark anywhere in the image.',
+    'The rest of the product surface stays completely bare.',
     'Studio lighting, soft shadows, shallow depth of field, clean neutral background,',
     'photorealistic, high resolution, catalogue quality.',
-    extra,
-  ].join(' ').replace(/\s+/g, ' ').trim();
+  ].join(' ');
 
-  return prompt.length > LONGUEUR_PROMPT_MAX_IA
-    ? `${prompt.slice(0, LONGUEUR_PROMPT_MAX_IA - 1).trimEnd()}…`
-    : prompt;
+  // La consigne « n'ecris rien de toi-meme » est la DERNIERE phrase, et elle est
+  // recollee apres la troncature : aucune rallonge de libelle ne peut la manger.
+  return bornerAvecConsigne(description, CONSIGNE_AUCUN_TEXTE, LONGUEUR_PROMPT_MAX_IA);
 }
-
-/** Le serveur refuse au-dela de 2000 ; on coupe avant, avec de la marge. */
-export const LONGUEUR_PROMPT_MAX_IA = 1950;
 
 /* ═════════════════════════════════════════════════════════════════════════════
    6. AUTORISATION DU CLIC
@@ -825,6 +944,10 @@ export function validerDemandeMockup(params) {
     compteurDuJour = 0,
     plafond = PLAFOND_GENERATIONS_PAR_JOUR,
     qualite = QUALITE_PAR_DEFAUT,
+    // Blocs de texte a marquer. Ils ne partent JAMAIS au modele : ils servent
+    // ici a deux choses seulement — refuser un bloc vide, et verifier qu'aucun
+    // de leurs contenus ne s'est glisse dans le prompt edite a la main.
+    textes = [],
     // ⚠️ Le defaut de CETTE FONCTION est le mode historique, pas le defaut de
     // l'ecran. Raison : un appelant qui ne precise rien attend le comportement
     // qu'il avait hier. L'ecran, lui, ouvre sur `MODE_PAR_DEFAUT` ('ia') et
@@ -930,6 +1053,33 @@ export function validerDemandeMockup(params) {
       raison: 'prompt-vide',
       message: 'Le prompt est vide. Ecrivez ce que l\'IA doit photographier, '
         + 'ou reinitialisez-le.',
+      faisabilite,
+    };
+  }
+
+  // ── Les blocs de texte ───────────────────────────────────────────────────
+  // Un bloc vide est refuse ici aussi, et pas seulement a l'ecran : c'est la
+  // fonction qui autorise le clic, c'est donc elle qui doit porter le refus.
+  const verifTextes = validerTextes(textes, { techniqueId });
+  if (!verifTextes.ok) {
+    return { ...base, ok: false, raison: 'texte-invalide', message: verifTextes.message, faisabilite };
+  }
+
+  // ── Aucun texte client ne part au modele, prompt edite compris ───────────
+  // C'est la barriere mecanique derriere la decision du 16/09/2026. Les
+  // constructeurs de prompt n'emettent plus aucun texte utilisateur ; ce
+  // controle-ci couvre le seul chemin qui reste, la zone de prompt editable.
+  const fuite = promptContientTexteClient(prompt, textes);
+  if (fuite.trouve) {
+    return {
+      ...base,
+      ok: false,
+      raison: 'texte-dans-le-prompt',
+      message: `Le prompt contient « ${fuite.contenu} », qui est un de vos blocs de texte. `
+        + 'Le modele ne doit recevoir AUCUN texte : le 16/09, un bloc demande a ete '
+        + 'purement omis par le modele, sans le moindre avertissement. '
+        + 'Retirez ce texte du prompt — l\'application le dessinera elle-meme, '
+        + 'caractere par caractere, par-dessus l\'image.',
       faisabilite,
     };
   }

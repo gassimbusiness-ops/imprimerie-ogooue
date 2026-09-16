@@ -6,9 +6,20 @@
  *
  *   MODE « ia » (defaut) — le logo du client part au modele comme IMAGE DE
  *   REFERENCE (`image[]` sur /v1/images/edits) et le modele rend un mockup 3D
- *   complet : t-shirt, casquette, tasse, banderole, avec le marquage dessus.
+ *   complet : t-shirt, casquette, tasse, banderole, avec le logo dessus.
  *   C'est le mode de VENTE : on montre au client, au comptoir, un objet
  *   credible pour lui faire dire oui. Le bon a tirer se fait ailleurs.
+ *
+ * ⛔ CE QU'AUCUN DES DEUX MODES N'ENVOIE PLUS, DEPUIS LE 16/09/2026 : DU TEXTE.
+ *
+ *   Le prompt construit par `src/features/mockup-ia/moteur-mockup.js` ne
+ *   demande plus aucun nom, aucun numero, aucun slogan, et porte au contraire
+ *   la consigne explicite de n'en ecrire aucun. Raison mesuree : sur 6
+ *   generations reelles, l'orthographe etait juste 6/6 et le numero exact 3/3,
+ *   mais un bloc entier (« IMPRIMERIE OGOOUÉ ») a ete SILENCIEUSEMENT OMIS sur
+ *   la banderole. Un caractere faux se voit ; un bloc absent, non.
+ *   Les blocs de texte sont desormais dessines par l'application par-dessus
+ *   l'image rendue (`composition.js`), dans les deux modes.
  *
  *   MODE « incrustation » — l'IA ne fabrique que le support nu et le logo est
  *   colle par-dessus en Canvas 2D, pixel pour pixel
@@ -400,8 +411,9 @@ export default async function handler(req, res) {
       avertissement: references.length
         ? 'Mockup de VENTE. Le logo a ete redessine par le modele a partir de la reference '
           + 'fournie : verifier l\'orthographe et les couleurs avant de le montrer, et ne jamais '
-          + 's\'en servir comme bon a tirer.'
-        : 'Scene du support nu uniquement : le logo doit etre incruste localement.',
+          + 's\'en servir comme bon a tirer. Aucun bloc de texte n\'a ete demande au modele : '
+          + 'ils sont composes par l\'application par-dessus cette image.'
+        : 'Scene du support nu uniquement : logo et textes sont composes localement.',
     });
   } catch (err) {
     console.error('[Mockup] Erreur:', err?.message);

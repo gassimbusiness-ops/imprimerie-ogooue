@@ -33,13 +33,47 @@ const PERIODICITE_MOIS = Object.freeze({
 /** Garde-fou identique aux services : 60 echeances = 5 ans de retard. */
 const MAX_ECHEANCES = 60;
 
-/** Avance une date `YYYY-MM-DD` de N mois, calee sur le jour de prelevement. */
+/**
+ * Avance une date `YYYY-MM-DD` de N mois, calee sur le jour de prelevement.
+ *
+ * ⚠️ ARITHMETIQUE PUREMENT ENTIERE — AUCUN OBJET `Date` N EST CONSTRUIT ICI.
+ *
+ * L ancienne version faisait `new Date('2026-08-05')`, puis `setMonth` et
+ * `setDate`. Or `new Date()` sur une chaine `YYYY-MM-DD` interprete la date en
+ * UTC, tandis que `setMonth` / `setDate` travaillent en heure LOCALE. Sur un
+ * decalage negatif, minuit UTC est la veille au soir : `setDate(5)` posait donc
+ * le 5 local, qui retombait sur le 6 en UTC, et `toISOString()` renvoyait
+ * « 2026-08-06 » pour une echeance du 5.
+ *
+ * Mesure sous `TZ=America/Los_Angeles` avant correction :
+ *   attendu  ['2026-07-05', '2026-08-05', '2026-09-05']
+ *   obtenu   ['2026-07-05', '2026-08-06', '2026-09-06']
+ *
+ * C est la meme famille que le decalage d un jour qui a produit l ecart de
+ * 55 300 F entre deux ecrans. Une date metier (`YYYY-MM-DD`, sans heure) ne
+ * doit jamais transiter par UTC — voir l en-tete de `src/lib/dates.js`.
+ *
+ * Moanda est a UTC+1, donc le defaut n y mordait pas aujourd hui. Il mordait
+ * des qu un navigateur ouvrait l ecran depuis un fuseau negatif, et il annoncait
+ * alors une echeance de prelevement au mauvais jour.
+ */
 function avancer(dateStr, nbMois, jourPrelevement) {
-  const d = new Date(dateStr);
-  if (Number.isNaN(d.getTime())) return '';
-  d.setMonth(d.getMonth() + nbMois);
-  d.setDate(Math.min(Number(jourPrelevement) || 5, 28));
-  return d.toISOString().slice(0, 10);
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dateStr || '').trim());
+  if (!m) return '';
+
+  const annee = Number(m[1]);
+  const moisIndex = Number(m[2]) - 1 + (Number(nbMois) || 0);
+
+  // Report d annee, y compris pour un nbMois negatif : Math.floor traite -1 / 12
+  // comme -1 et non 0, la ou une division entiere naive donnerait l annee courante.
+  const anneeFinale = annee + Math.floor(moisIndex / 12);
+  const moisFinal = ((moisIndex % 12) + 12) % 12 + 1;
+
+  // Plafond a 28 comme avant : un prelevement cale au 31 n existe pas en fevrier.
+  const jour = Math.min(Math.max(Number(jourPrelevement) || 5, 1), 28);
+
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${anneeFinale}-${pad(moisFinal)}-${pad(jour)}`;
 }
 
 function mensualiteTheorique(dette) {
