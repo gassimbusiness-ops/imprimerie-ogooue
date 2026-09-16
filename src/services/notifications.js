@@ -30,6 +30,14 @@ const NOTIF_TYPES = {
     label: 'Commande livrée',
     link: '/commandes',
   },
+  commande_annulee: {
+    icon: '❌',
+    label: 'Commande annulée',
+    // `/client/commandes` et non `/commandes` : cette notification ne part
+    // qu'au client, et `/commandes` est une route du personnel — un client qui
+    // clique dessus est renvoye sur son tableau de bord (src/app.jsx:69).
+    link: '/client/commandes',
+  },
   nouveau_message: {
     icon: '💬',
     label: 'Nouveau message',
@@ -69,10 +77,21 @@ const NOTIF_TYPES = {
 
 /**
  * Créer une notification
+ *
+ * ⚠️ NE LEVE JAMAIS. Prévenir est un confort ; l'opération métier qui a
+ * déclenché la notification (annuler une commande, la livrer) doit rester
+ * faite même si la base refuse d'écrire la notification. C'est la raison
+ * d'être du `catch` ci-dessous, et il ne doit pas être retiré.
+ *
+ * En revanche l'échec doit se VOIR : la fonction rend un verdict nommé, que
+ * l'appelant peut afficher. Les appelants qui l'ignorent gardent exactement
+ * l'ancien comportement.
+ *
  * @param {string} type - Un des types dans NOTIF_TYPES
  * @param {string} message - Le texte de la notification
  * @param {string} destinataire - 'admin', 'employe', 'client', 'all_staff', ou un user_id
  * @param {Object} meta - Données supplémentaires (lien, commande_id, etc.)
+ * @returns {Promise<{envoyee: boolean, erreur: string|null}>}
  */
 export async function createNotification(type, message, destinataire, meta = {}) {
   try {
@@ -85,8 +104,10 @@ export async function createNotification(type, message, destinataire, meta = {})
       icon: NOTIF_TYPES[type]?.icon || '🔔',
       meta,
     });
+    return { envoyee: true, erreur: null };
   } catch (err) {
     console.error('Erreur création notification:', err);
+    return { envoyee: false, erreur: String(err?.message || err) };
   }
 }
 
@@ -100,7 +121,23 @@ export async function getNotifications(user) {
     return all
       .filter((n) => {
         if (n.destinataire === user?.id) return true;
-        if (n.destinataire === user?.role) return true;
+        if (n.destinataire === user?.role) {
+          // ⚠️ FUITE DE DONNEES CORRIGEE LE 16/09/2026.
+          //
+          // Cette ligne rendait TRUE des qu une notification visait le ROLE de
+          // l utilisateur. Or api/_lib/singpay-encaissement.js ecrit les
+          // confirmations de paiement avec `destinataire: 'client'` PLUS un
+          // `destinataire_id` nominatif. Tout compte de role `client` voyait
+          // donc « Votre paiement a ete confirme » — et l identifiant de la
+          // commande — de TOUS les autres clients de l imprimerie.
+          //
+          // La regle : une notification qui porte un destinataire_id est
+          // NOMINATIVE, elle n est lue que par son destinataire. Sans
+          // destinataire_id, elle reste une diffusion au role — c est ce dont
+          // notifyPromotion a besoin, et ce comportement ne change pas.
+          if (n.destinataire_id) return n.destinataire_id === user?.id;
+          return true;
+        }
         if (n.destinataire === 'all_staff' && ['admin', 'manager', 'employe'].includes(user?.role)) return true;
         // Admin voit tout sauf les notifs client spécifiques
         if (user?.role === 'admin' && n.destinataire === 'admin') return true;
@@ -185,6 +222,33 @@ export function notifyCommandeLivree(clientId) {
     '📬 Votre commande a été livrée',
     clientId,
     { type: 'commande' }
+  );
+}
+
+/**
+ * 5 bis. Admin → Annulée → Client.
+ *
+ * La seule transition de statut qui ne prévenait personne : une commande
+ * annulée à l'atelier disparaissait de l'écran du client sans un mot, alors
+ * qu'il avait peut-être payé et attendu.
+ *
+ * Le TEXTE n'est pas écrit ici : il dépend de ce qui a réellement été
+ * contre-passé (trésorerie, facture, points). Il est construit par
+ * `messageAnnulationClient()` dans `contre-passation-commande.js`, puis passé
+ * ici. Ne jamais remettre un texte fixe : promettre un remboursement qui n'a
+ * pas été contre-passé est pire que le silence.
+ *
+ * @param {string} clientId
+ * @param {string} message texte construit par `messageAnnulationClient()`
+ * @param {object} [meta]
+ * @returns {Promise<{envoyee: boolean, erreur: string|null}>}
+ */
+export function notifyCommandeAnnulee(clientId, message, meta = {}) {
+  return createNotification(
+    'commande_annulee',
+    message,
+    clientId,
+    { type: 'commande', ...meta }
   );
 }
 

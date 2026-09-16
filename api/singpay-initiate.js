@@ -60,8 +60,49 @@ export default async function handler(req, res) {
   try {
     // Sanitize : meme logique que dans singpayAuth.js (resilient aux commentaires)
     const walletId = (process.env.SINGPAY_WALLET_ID || '').trim().split(/\s/)[0];
-    const callbackUrl = (process.env.SINGPAY_CALLBACK_URL || 'https://imprimerie-ogooue-app.vercel.app/api/singpay-callback').trim().split(/\s/)[0];
     const reference = `OGO-${commandeId.slice(0, 8)}-${Date.now()}`;
+
+    /* ── L'ADRESSE DE RAPPEL NE SE MET PAS ICI ─────────────────────────────
+       Ce bloc construisait une variable `callbackUrl` qui n'était envoyée dans
+       aucun des deux corps de requête. La tentation était de l'ajouter au body.
+       Il ne faut pas : SingPay ne lit aucune adresse de rappel dans la requête
+       de paiement. Elle est une propriété DU PORTEFEUILLE, et la passerelle le
+       dit elle-même — toute réponse de paiement renvoie `transaction.portefeuille`
+       avec le champ `callbackURL` (relevé en base sur les 3 transactions du
+       31/05/2026, déjà correctement renseigné, d'où les `raw_callback` reçus).
+
+       Inventer un nom de champ ici aurait été pire que de n'en envoyer aucun :
+       une passerelle de paiement peut rejeter la requête entière sur un champ
+       inconnu, et on aurait cassé un encaissement qui marchait.
+
+       Le Swagger officiel le confirme champ par champ
+       (https://client.singpay.ga/doc/reference/src/swagger.json, v1.0.0) :
+         - definition `paiement` (endpoints 74 et 62) :
+             amount, reference, client_msisdn, portefeuille, disbursement, isTransfer
+         - definition `ext` :
+             portefeuille, reference, redirect_success, redirect_error, amount,
+             disbursement, logoURL, isTransfer
+         - definition `callback` = { callbackURL }, posée par
+             PUT /v1/portefeuille/api/{walletId}  « Modifier l'URL de la callback »
+
+       ⚠️ `redirect_success` / `redirect_error` ne sont PAS des rappels : ce sont
+       des redirections de NAVIGATEUR. Un client qui ferme son onglet ne les
+       déclenche jamais. Elles ne valent aucune preuve de paiement — c'est
+       exactement pour cela que le rappel serveur-à-serveur est indispensable.
+
+       ⚠️ `disbursement` est marqué « Obligatoire en production » dans le Swagger,
+       et n'est envoyé ni ici ni dans le corps `/ext`. Le portefeuille actuel est
+       un portefeuille de TEST (`goLive: "Wait"`), donc cela ne bloque rien
+       aujourd'hui ; la valeur attendue doit être demandée à SingPay AVANT le
+       GoLive, sous peine de voir les paiements réels refusés au passage en
+       production. Voir livrables_claude/20_PAIEMENTS_MOBILES_GABON.md.
+
+       Où la régler  : espace client SingPay → Portefeuille → Callback URL,
+                       ou `node scripts/test-singpay.mjs callback <url>`
+       Où la vérifier : `node scripts/test-singpay.mjs verifier`  (lecture seule,
+                       compare le portefeuille à SINGPAY_CALLBACK_URL)
+       Qui la traite  : api/singpay-callback.js
+       ──────────────────────────────────────────────────────────────────────── */
 
     // ── Construction du body selon endpoint
     let endpoint;
@@ -129,6 +170,33 @@ export default async function handler(req, res) {
     const externalLink = paymentData.link || null;
     const expiresAt = paymentData.exp || null;
 
+    /* ── ÉTAT RÉEL DU PORTEFEUILLE, TEL QUE LA PASSERELLE LE RENVOIE ────────
+       SingPay joint l'objet `portefeuille` à chaque réponse de paiement. Il
+       porte `goLive` : « Wait » signifie que le portefeuille N'EST PAS EN
+       PRODUCTION et qu'aucun franc ne peut être encaissé.
+
+       C'est l'état du portefeuille branché aujourd'hui (`TEST460`, `goLive:
+       "Wait"`, `airtel_status: "Aucun"`). Les 3 essais du 31/05 ont donc tous
+       échoué — avec le message « le compte client n'a pas suffisamment de
+       balance », qui accuse le client alors que la cause est la configuration.
+       Ce drapeau remonte l'information jusqu'à l'écran au lieu de la laisser
+       dans la console du prestataire.
+
+       ⚠️ On ne teste QUE la valeur « Wait », la seule observée et dont le sens
+       est certain. La valeur que prend `goLive` une fois le portefeuille en
+       production n'est documentée nulle part : écrire `!== 'Accept'` aurait
+       été une devinette, et aurait pu afficher « mode test » sur un
+       portefeuille bien réel. Toute autre valeur donne `null` — on ne sait
+       pas, et on ne prétend pas savoir. */
+    const portefeuille = tx.portefeuille || {};
+    const modeTest = portefeuille.goLive === 'Wait' ? true : null;
+    if (modeTest) {
+      console.warn(
+        '[SingPay] PORTEFEUILLE DE TEST (goLive=%s, code=%s) — aucun encaissement reel possible.',
+        portefeuille.goLive, portefeuille.merchant_code,
+      );
+    }
+
     // ── Persistance dans Supabase (en best-effort : si echec, on log mais on continue
     //    car la transaction SingPay est deja creee et le frontend va polling le statut)
     try {
@@ -187,9 +255,12 @@ export default async function handler(req, res) {
       transactionId,
       externalLink, // non-null si operateur='ext'
       expiresAt,
-      message: operateur === 'ext'
-        ? 'Lien de paiement genere'
-        : 'Paiement initie — confirmez sur votre telephone via USSD',
+      modeTest, // true = portefeuille non passe en production, aucun encaissement possible
+      message: modeTest
+        ? 'Portefeuille SingPay en mode TEST (goLive non validé) — ce paiement ne peut pas aboutir.'
+        : operateur === 'ext'
+          ? 'Lien de paiement genere'
+          : 'Paiement initie — confirmez sur votre telephone via USSD',
     });
 
   } catch (err) {

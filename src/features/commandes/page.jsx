@@ -50,6 +50,7 @@ import {
   notifyCommandeProduction,
   notifyCommandePrete,
   notifyCommandeLivree,
+  notifyCommandeAnnulee,
   notifyFactureDisponible,
   notifyTacheAssignee,
   notifyRappelOperateur,
@@ -63,13 +64,14 @@ import { creerVerrouExecution } from '@/services/execution-unique';
 import {
   doitDeclencherLivraison,
   doitContrePasser,
+  estStatutAnnulee,
   resumerEffets,
   referenceEffet,
   suppressionAutorisee,
   commandesPurgeables,
   ressembleACommandeTest,
 } from '@/services/livraison-commande';
-import { contrePasserCommande } from '@/services/contre-passation-commande';
+import { contrePasserCommande, messageAnnulationClient } from '@/services/contre-passation-commande';
 
 /**
  * Verrou d'execution — une seule transition de statut a la fois PAR COMMANDE.
@@ -139,29 +141,21 @@ const NEXT_STATUT = {
   pret: 'livree',
 };
 
-// Messages de notification client par statut
-const NOTIF_CLIENT_MESSAGES = {
-  validee_attente_paiement: {
-    titre: '✅ Commande validée',
-    message: 'Votre commande a été validée ! Elle est en attente de paiement.',
-  },
-  en_production: {
-    titre: '🖨️ En production',
-    message: 'Votre commande est en cours de production !',
-  },
-  prete: {
-    titre: '📦 Commande prête',
-    message: 'Votre commande est prête à être récupérée !',
-  },
-  livree: {
-    titre: '🎉 Commande livrée',
-    message: 'Commande livrée ! Merci de votre confiance.',
-  },
-  annulee: {
-    titre: '❌ Commande annulée',
-    message: 'Votre commande a été annulée. Contactez-nous pour plus d\'informations.',
-  },
-};
+// ── Ou sont passes les messages de notification client ? ──────────────────
+//
+// Une constante `NOTIF_CLIENT_MESSAGES` vivait ici, DECLAREE ET JAMAIS LUE.
+// Elle contenait cinq textes, dont celui de l'annulation — la preuve que la
+// notification d'annulation avait ete prevue, puis jamais branchee : le client
+// dont la commande etait annulee a l'atelier ne recevait rien.
+//
+// Garder une seconde source de textes a cote de `src/services/notifications.js`
+// ne pouvait que reproduire la panne. Les quatre premiers textes existent deja
+// dans ce service (notifyCommandeValidee / Production / Prete / Livree). Le
+// cinquieme — « Votre commande a été annulée. Contactez-nous pour plus
+// d'informations. » — a ete repris, etoffe et rendu conditionnel : il dit
+// maintenant QUI appeler, OU aller, et ce qu'il advient de l'argent quand
+// celui-ci a ete contre-passe. Voir `messageAnnulationClient()` dans
+// src/services/contre-passation-commande.js.
 
 export default function Commandes() {
   const { hasPermission, user: currentUser, isAdmin, isManager } = useAuth();
@@ -511,6 +505,10 @@ export default function Commandes() {
         const enBase = (await db.commandes.getById(cmd.id)) || cmd;
         const declencheLivraison = doitDeclencherLivraison(enBase, newStatut);
         const contrePassation = doitContrePasser(enBase, newStatut);
+        // Une commande DEJA annulee en base ne re-previent pas le client : le
+        // verrou couvre le double-clic, cette garde couvre le second passage
+        // volontaire (deux appareils, ou un « Annuler » reclique plus tard).
+        const annulationNouvelle = estStatutAnnulee(newStatut) && !estStatutAnnulee(enBase?.statut);
 
         await db.commandes.update(cmd.id, { statut: newStatut, historique_statuts: historique });
 
@@ -519,7 +517,15 @@ export default function Commandes() {
           else if (newStatut === 'en_production') notifyCommandeProduction(cmd.client_id);
           else if (newStatut === 'prete') notifyCommandePrete(cmd.client_id);
           else if (newStatut === 'livree') notifyCommandeLivree(cmd.client_id);
+          // L'annulation est notifiee PLUS BAS, apres la contre-passation :
+          // son texte depend de ce qui a reellement ete repris.
         }
+
+        // Ce que la contre-passation a effectivement repris. Reste `null` si
+        // elle n'a pas eu lieu ou si elle a echoue — le message au client ne
+        // promet alors aucun remboursement.
+        let repris = null;
+        let contrePassationEchouee = false;
 
         if (declencheLivraison) {
           const verdict = await executerEffetsLivraison(enBase);
@@ -533,7 +539,8 @@ export default function Commandes() {
           }
         } else if (contrePassation) {
           try {
-            const { effets } = await contrePasserCommande(enBase, db);
+            const { effets, montantRepris } = await contrePasserCommande(enBase, db);
+            repris = { effets, montantRepris };
             await db.commandes.update(cmd.id, {
               livraison_traitee: false,
               contre_passee_le: new Date().toISOString(),
@@ -545,6 +552,7 @@ export default function Commandes() {
               { duration: 8000 },
             );
           } catch (err) {
+            contrePassationEchouee = true;
             toast.error(
               `Commande annulée, mais la contre-passation a échoué : ${err?.message || err}. `
               + 'L\'argent de cette commande est encore dans la trésorerie — à reprendre à la main.',
@@ -553,6 +561,45 @@ export default function Commandes() {
           }
         } else {
           toast.success(`Commande passee a "${getStatut(newStatut).label}"`);
+        }
+
+        // ── Prevenir le client de l'annulation ──────────────────────────────
+        //
+        // Placee APRES la contre-passation, et jamais avant : le message doit
+        // dire ce qui a REELLEMENT ete repris. Annoncer un remboursement qui
+        // n'a pas eu lieu ferait attendre un client devant le comptoir.
+        //
+        // Aucune exception ne remonte d'ici : annuler une commande est une
+        // operation metier, prevenir est un confort. Si la notification
+        // echoue, l'annulation reste faite — et l'echec se voit, pour que le
+        // gerant decroche son telephone.
+        if (annulationNouvelle && cmd.client_id) {
+          const aAppeler = `${cmd.client_nom || 'le client'} ${cmd.client_tel || ''}`.trim();
+          try {
+            const resultat = await notifyCommandeAnnulee(
+              cmd.client_id,
+              messageAnnulationClient({
+                commande: enBase,
+                effets: repris?.effets || [],
+                montantRepris: repris?.montantRepris || 0,
+                contrePassationEchouee,
+              }),
+              { commande_id: cmd.id, commande_numero: enBase.numero || cmd.numero || '' },
+            );
+            if (!resultat?.envoyee) {
+              toast.error(
+                'Commande annulée, mais le client n\'a pas été prévenu '
+                + `(${resultat?.erreur || 'cause inconnue'}). Appelez-le : ${aAppeler}`,
+                { duration: 15000 },
+              );
+            }
+          } catch (err) {
+            console.error('Notification d\'annulation non envoyée :', err);
+            toast.error(
+              `Commande annulée, mais le client n'a pas été prévenu. Appelez-le : ${aAppeler}`,
+              { duration: 15000 },
+            );
+          }
         }
 
         await load();

@@ -51,13 +51,17 @@ export const SUFFIXE_ANNULATION = ':annulation';
  * @param {object} commande
  * @param {object} deps couche de donnees — `db` en production, une base
  *        factice dans les tests. OBLIGATOIRE : voir l'en-tete du fichier.
- * @returns {Promise<{effets: string[], notes: string[]}>} ce qui a ete contre-passe
+ * @returns {Promise<{effets: string[], notes: string[], montantRepris: number}>}
+ *          ce qui a ete contre-passe. `montantRepris` est la somme REELLEMENT
+ *          sortie des comptes — c'est elle, et pas le montant de la commande,
+ *          qui a le droit d'etre annoncee au client comme lui etant due.
  */
 export async function contrePasserCommande(commande, deps) {
   if (!deps) throw new Error('contrePasserCommande : couche de donnees manquante');
   const effets = [];
   const notes = [];
-  if (!commande?.id) return { effets, notes: ['commande sans identifiant'] };
+  let montantRepris = 0;
+  if (!commande?.id) return { effets, notes: ['commande sans identifiant'], montantRepris };
 
   const libelle = `ANNULATION — commande ${commande.numero || commande.id} (${commande.client_nom || 'client'})`;
 
@@ -104,6 +108,7 @@ export async function contrePasserCommande(commande, deps) {
         notes.push(`compte ${m.compte_id} introuvable : solde non corrigé`);
       }
     }
+    montantRepris += montant;
     effets.push('trésorerie');
   }
 
@@ -212,5 +217,94 @@ export async function contrePasserCommande(commande, deps) {
     }
   }
 
-  return { effets: [...new Set(effets)], notes };
+  return { effets: [...new Set(effets)], notes, montantRepris };
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Ce qu'on dit au client
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Coordonnees de l'imprimerie telles qu'elles figurent deja sur les factures
+ * (src/services/export-pdf.js) et dans le chatbot. Un message qui dit « annulée »
+ * sans dire ou aller ne sert a rien.
+ */
+export const CONTACT_IMPRIMERIE = Object.freeze({
+  telephone: '060 44 46 34',
+  adresse: 'Carrefour Fina, Moanda',
+});
+
+/** Separateur de milliers stable — `Intl` change d'espace selon la version d'ICU. */
+function fmtMontant(n) {
+  return String(Math.round(Number(n) || 0)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
+}
+
+/**
+ * Le message d'annulation envoye au client.
+ *
+ * ── La regle qui gouverne ce texte ────────────────────────────────────────
+ *
+ * Il ne promet QUE ce qui a ete reellement contre-passe. Annoncer un
+ * remboursement quand aucun mouvement n'a ete repris ferait attendre un client
+ * de Moanda devant un guichet pour rien — c'est pire que le silence d'avant.
+ *
+ * Trois situations, trois textes :
+ *   1. de l'argent a ete repris        → on dit combien, et ou le recuperer ;
+ *   2. rien n'a ete repris             → on dit qu'aucun paiement n'est
+ *                                        enregistre, ET quoi faire s'il a
+ *                                        quand meme paye (cash au comptoir non
+ *                                        saisi : ca arrive) ;
+ *   3. la contre-passation a echoue    → on ne promet RIEN, on fait appeler.
+ *
+ * Le message part en UNE SEULE ligne : le panneau de notifications
+ * (src/components/layout/client-layout.jsx:157) rend `n.message` sans
+ * `whitespace-pre-line`, un `\n` y serait invisible.
+ *
+ * @param {object} arg
+ * @param {object} [arg.commande]
+ * @param {string[]} [arg.effets] retour de `contrePasserCommande`
+ * @param {number} [arg.montantRepris] retour de `contrePasserCommande`
+ * @param {boolean} [arg.contrePassationEchouee] la reprise a leve
+ * @returns {string}
+ */
+export function messageAnnulationClient({
+  commande,
+  effets = [],
+  montantRepris = 0,
+  contrePassationEchouee = false,
+} = {}) {
+  const numero = commande?.numero ? ` ${commande.numero}` : '';
+  const tete = `❌ Commande${numero} annulée.`;
+  const { telephone, adresse } = CONTACT_IMPRIMERIE;
+  const listeEffets = Array.isArray(effets) ? effets : [];
+
+  if (contrePassationEchouee) {
+    return `${tete} Appelez l'imprimerie au ${telephone} pour faire le point sur votre `
+      + 'commande et sur tout paiement déjà effectué : nous vérifions votre dossier avec vous.';
+  }
+
+  const morceaux = [tete];
+
+  if (listeEffets.includes('trésorerie') && montantRepris > 0) {
+    morceaux.push(
+      `Votre paiement de ${fmtMontant(montantRepris)} F vous est dû : il a été sorti de nos `
+      + `comptes et vous sera remis. Passez à l'imprimerie (${adresse}) ou appelez le `
+      + `${telephone} pour convenir du remboursement.`,
+    );
+  } else {
+    morceaux.push(
+      `Aucun paiement n'est enregistré pour cette commande, il n'y a donc rien à vous `
+      + `rembourser. Si vous avez déjà versé une somme, appelez le ${telephone} : nous `
+      + `régularisons. Pour relancer cette commande, contactez l'imprimerie (${adresse}).`,
+    );
+  }
+
+  if (listeEffets.includes('facture')) {
+    morceaux.push('La facture correspondante a été annulée.');
+  }
+  if (listeEffets.includes('points de fidélité')) {
+    morceaux.push('Les points de fidélité gagnés sur cette commande ont été retirés.');
+  }
+
+  return morceaux.join(' ');
 }
