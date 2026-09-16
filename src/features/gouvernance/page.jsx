@@ -324,7 +324,19 @@ export default function Gouvernance() {
     if (!dette) return;
     const initial = dette.montant_initial || 2300000;
     const totalRemb = rembList.reduce((s, r) => s + (Number(r.montant) || 0), 0);
-    await db.dettes_associes.update(dette.id, { montant_restant: initial - totalRemb });
+    try {
+      await db.dettes_associes.update(dette.id, { montant_restant: initial - totalRemb });
+    } catch (err) {
+      // Cas le plus couteux du constat C6 : avant, `update()` renvoyait `null`
+      // en silence, le remboursement etait cree, le solde du n'etait PAS
+      // recalcule, et l'ecran affichait « Remboursement enregistre ». La dette
+      // envers Oumar restait durablement fausse, sans aucune trace.
+      throw new Error(
+        `Le remboursement est enregistré, mais le solde de la dette n'a PAS pu être `
+        + `recalculé (${err?.message || err}). Le montant affiché est faux tant que `
+        + `l'opération n'est pas refaite. Rechargez l'écran dès que le réseau revient.`,
+      );
+    }
   };
 
   const handleAddRemboursement = async () => {

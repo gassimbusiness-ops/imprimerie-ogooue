@@ -214,8 +214,9 @@ export default function Messagerie() {
         setNewMessage(response);
         toast.success('Suggestion IA generee');
       }
-    } catch {
-      toast.error('Erreur IA — reessayez');
+    } catch (err) {
+      // Voir api/_lib/modeles.js:46-63 — le message nomme la cause.
+      toast.error(err?.message || 'Erreur IA — reessayez', { duration: 12000 });
     } finally {
       setAiLoading(false);
     }

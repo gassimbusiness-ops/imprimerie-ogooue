@@ -114,48 +114,42 @@ export default function Login() {
 
       const created = await createUser(userData, reg.password);
 
-      // Create fidelity record
-      await db.fidelite_clients.create({
-        client_id: created.id,
-        client_nom: `${reg.prenom.trim()} ${reg.nom.trim()}`,
-        points_actuels: 50,
-        niveau: 'bronze',
-        code_parrainage: codeParrainage,
-        total_points_gagnes: 50,
-        parrainages: [],
-        historique: [{
-          type: 'inscription_complete',
-          points: 50,
-          description: 'Bonus inscription',
-          date: new Date().toISOString(),
-        }],
-      });
+      // ══════════════════════════════════════════════════════════════════════
+      //  APRES CE POINT, LE COMPTE EXISTE : PLUS RIEN NE DOIT POUVOIR ECHOUER
+      //  D'UNE FACON QUI EMPECHE LA CONNEXION.
+      // ══════════════════════════════════════════════════════════════════════
+      //
+      // Constat C8 / 9.1 de l'audit VAGUE 2. Cette fonction contenait :
+      //
+      //     const parrain = existing.find((e) => e.code_parrainage === ...);
+      //
+      // ou `existing` n'etait DECLARE NULLE PART — le `db.employes.list()` qui
+      // l'alimentait avait ete retire pour raison de securite (il telechargeait
+      // les salaires de toute l'equipe dans le navigateur d'un visiteur non
+      // authentifie). Le `ReferenceError` partait APRES `createUser` et APRES
+      // la fiche fidelite, mais AVANT `db.clients.create` et l'auto-connexion.
+      //
+      // Ce que vivait le client : il saisit le code que son ami lui a donne, on
+      // lui dit « erreur, reessayez », il reessaie, on lui dit « un compte avec
+      // cet email existe deja » — et il ne peut jamais se connecter. Sa fiche
+      // client n'existe pas, et le gerant voit un compte fantome.
+      //
+      // Deux corrections :
+      //   1. La fiche client est creee AVANT tout le reste : c'est la donnee
+      //      essentielle, elle ne doit dependre d'aucun confort.
+      //   2. Chaque etape de confort est isolee dans son propre try/catch et
+      //      ne peut plus casser l'inscription. Meme regle que l'amorcage de
+      //      main.jsx depuis l'incident du 14/09.
+      //
+      // Le parrainage : la recherche du parrain ne peut PAS se faire ici sans
+      // reintroduire la fuite de donnees qu'on venait de fermer (il faudrait
+      // lister tous les comptes depuis un navigateur non authentifie). Le code
+      // saisi est donc simplement CONSERVE — sur le compte (`parraine_par`) et
+      // sur la fiche client — et le bonus est attribue a la premiere livraison
+      // par `crediterPointsFidelite()` dans l'ecran Commandes, qui tourne, lui,
+      // dans une session authentifiee.
 
-      // If referral code provided, link to referrer
-      if (reg.codeParrainage.trim()) {
-        const parrain = existing.find((e) => e.code_parrainage === reg.codeParrainage.trim());
-        if (parrain) {
-          await db.notifications_app.create({
-            type: 'parrainage',
-            titre: '🎉 Nouveau filleul !',
-            message: `${reg.prenom.trim()} a rejoint l'Imprimerie Ogooué grâce à vous ! Vous gagnerez 200 points dès sa première commande.`,
-            destinataire: 'client',
-            destinataire_id: parrain.id,
-            lu: false,
-          });
-        }
-      }
-
-      // Notify admin
-      await db.notifications_app.create({
-        type: 'nouveau_client',
-        titre: '👤 Nouveau client inscrit',
-        message: `${reg.prenom.trim()} ${reg.nom.trim()} — ${reg.telephone.trim()}`,
-        destinataire: 'admin',
-        lu: false,
-      });
-
-      // Also create a client record
+      // ── Essentiel : la fiche client ──
       await db.clients.create({
         nom: `${reg.prenom.trim()} ${reg.nom.trim()}`,
         email: reg.email.toLowerCase().trim(),
@@ -164,7 +158,47 @@ export default function Login() {
         entreprise: reg.type === 'entreprise' ? reg.entreprise.trim() : '',
         source: 'inscription_portail',
         user_id: created.id,
+        // Ces deux champs sont lus par crediterPointsFidelite() a la premiere
+        // livraison. Sans eux, le parrainage restait definitivement muet.
+        code_parrainage: codeParrainage,
+        parraine_par: reg.codeParrainage.trim() || null,
       });
+
+      // ── Confort 1 : fiche fidelite ──
+      try {
+        await db.fidelite_clients.create({
+          client_id: created.id,
+          client_nom: `${reg.prenom.trim()} ${reg.nom.trim()}`,
+          points_actuels: 50,
+          niveau: 'bronze',
+          code_parrainage: codeParrainage,
+          parraine_par: reg.codeParrainage.trim() || null,
+          total_points_gagnes: 50,
+          parrainages: [],
+          historique: [{
+            type: 'inscription_complete',
+            points: 50,
+            description: 'Bonus inscription',
+            date: new Date().toISOString(),
+          }],
+        });
+      } catch (err) {
+        console.error('[inscription] fiche fidelite non creee :', err?.message || err);
+      }
+
+      // ── Confort 2 : notification de l'administrateur ──
+      try {
+        await db.notifications_app.create({
+          type: 'nouveau_client',
+          titre: '👤 Nouveau client inscrit',
+          message: `${reg.prenom.trim()} ${reg.nom.trim()} — ${reg.telephone.trim()}`
+            + (reg.codeParrainage.trim() ? ` — parrainé par le code ${reg.codeParrainage.trim()}` : ''),
+          destinataire: 'admin',
+          lu: false,
+        });
+      } catch (err) {
+        console.error('[inscription] notification admin non creee :', err?.message || err);
+      }
 
       toast.success('Compte créé avec succès ! Connexion en cours...');
 

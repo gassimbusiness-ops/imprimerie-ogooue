@@ -59,6 +59,29 @@ import { syncClientFromCommande } from '@/services/sync-clients';
 import { syncCommandeToRapport } from '@/services/sync-commande-rapport';
 import { syncStockFromCommande } from '@/services/sync-stock-commande';
 import { exportBonTravail } from '@/services/export-pdf';
+import { todayISO } from '@/lib/dates';
+import { creerVerrouExecution } from '@/services/execution-unique';
+import {
+  doitDeclencherLivraison,
+  doitContrePasser,
+  resumerEffets,
+  referenceEffet,
+  suppressionAutorisee,
+  commandesPurgeables,
+  ressembleACommandeTest,
+} from '@/services/livraison-commande';
+import { contrePasserCommande } from '@/services/contre-passation-commande';
+
+/**
+ * Verrou d'execution — une seule transition de statut a la fois PAR COMMANDE.
+ *
+ * Le `disabled` du bouton protege l'utilisateur ; ce verrou protege l'argent.
+ * Il couvre les chemins que `disabled` ne voit pas : les DEUX boutons
+ * « Livrée » (liste et panneau de detail) rendus simultanement, le double
+ * montage de React.StrictMode, et un clic pendant que l'evenement Realtime
+ * rafraichit la ligne. Declare hors du composant : un remontage ne le perd pas.
+ */
+const verrouCommande = creerVerrouExecution();
 
 // ── Statuts enrichis BLOC 5 ──
 const STATUTS = [
@@ -158,6 +181,11 @@ export default function Commandes() {
   const [editItem, setEditItem] = useState(null);
   const [commentaireClient, setCommentaireClient] = useState('');
   const [noteInterne, setNoteInterne] = useState('');
+  // Identifiant de la commande dont une transition de statut est EN COURS.
+  // Sert a griser les boutons : sans lui, un double-clic sur « Livrée »
+  // comptait deux fois le CA, la sortie de stock, l'encaissement et les points
+  // (constat C3 / 8a.1).
+  const [commandeEnCours, setCommandeEnCours] = useState(null);
   const showDetailRef = useRef(null);
   const [form, setForm] = useState({
     client_id: '',
@@ -348,115 +376,193 @@ export default function Commandes() {
     load();
   };
 
-  // ── Changement de statut avec notification client ──
-  const handleStatutChange = async (cmd, newStatut) => {
-    const auteur = `${currentUser?.prenom || ''} ${currentUser?.nom || ''}`.trim();
-    const historique = [...(cmd.historique_statuts || []), {
-      statut: newStatut,
-      date: new Date().toISOString(),
-      auteur,
-    }];
+  // ═══════════════════════════════════════════════════════════════════════════
+  //  CHANGEMENT DE STATUT — ET LIVRAISON
+  // ═══════════════════════════════════════════════════════════════════════════
+  //
+  // ⚠️ Passer une commande a « Livrée » ecrit de l'argent a SIX endroits :
+  //    facture, tresorerie, stock, points de fidelite, rapport journalier,
+  //    tache liee. Lire src/services/livraison-commande.js avant de modifier
+  //    ce bloc.
+  //
+  // Trois regles tenues ici :
+  //   1. UN SEUL changement de statut a la fois par commande. Le `disabled` des
+  //      boutons protege l'utilisateur, le verrou protege l'argent (les deux
+  //      boutons « Livrée » — liste et detail — sont rendus en meme temps).
+  //   2. Les six effets sont ATTENDUS (`Promise.allSettled`), plus jamais
+  //      lances dans le vide avec `.catch(console.error)`. Un echec est nomme.
+  //   3. `livraison_traitee` n'est pose QUE si les six ont reussi. Avant, il
+  //      etait pose AVANT de les lancer : un effet manque etait perdu pour
+  //      toujours. Chaque effet etant desormais idempotent, une reprise ne
+  //      double rien.
 
-    // Idempotence livraison : si la commande a DEJA ete traitee en livraison
-    // (flag persistant OU statut deja livree), on ne re-declenche PAS les effets
-    // (facture, points, CA, stock) — evite doublons sur une simple correction de statut.
-    const dejaLivree = cmd.livraison_traitee === true || normalizeStatut(cmd.statut) === 'livree';
-    const declencheLivraison = newStatut === 'livree' && !dejaLivree;
+  /** Cloture la tache liee a la commande, s'il y en a une. */
+  const cloturerTacheLiee = async (cmd) => {
+    const allTaches = await db.taches.list();
+    const tache = allTaches.find((t) => t.commande_id === cmd.id);
+    if (!tache) return { fait: false, motif: 'aucune tâche liée' };
+    if (tache.statut === 'terminee' || tache.statut === 'validee') {
+      return { fait: false, motif: 'tâche déjà close' };
+    }
+    await db.taches.update(tache.id, { statut: 'terminee', progression: 100 });
+    return { fait: true };
+  };
 
-    await db.commandes.update(cmd.id, {
-      statut: newStatut,
-      historique_statuts: historique,
-      ...(declencheLivraison ? { livraison_traitee: true } : {}),
+  /**
+   * Genere la facture de livraison. Idempotent : si une facture existe deja
+   * pour cette commande, on ne la recree pas (et ce n'est pas une erreur).
+   */
+  const genererFactureLivraison = async (cmd) => {
+    const allFactures = await db.factures.list();
+    if (allFactures.some((f) => f.commande_id === cmd.id)) {
+      return { fait: false, motif: 'facture déjà émise' };
+    }
+
+    const num = `OG-${new Date().getFullYear()}-${Date.now().toString(36).toUpperCase().slice(-6)}`;
+    // Les deux schemas de ligne coexistent en base : `quantite`/`prix_unitaire`
+    // (comptoir) et `qte`/`prix` (portail client). Ignorer le second facturait
+    // « 1 × » une commande de 500 flyers (constat E7/6.5).
+    const lignes = (cmd.lignes || cmd.produits || []).map((l) => ({
+      description: l.description || l.nom || l.designation || 'Article',
+      quantite: Number(l.quantite ?? l.qte ?? 1) || 1,
+      prix_unitaire: Number(l.prix_unitaire ?? l.prix ?? 0) || 0,
+    }));
+    if (lignes.length === 0 && (cmd.montant_total || cmd.total)) {
+      lignes.push({
+        description: cmd.description || cmd.service || 'Commande',
+        quantite: 1,
+        prix_unitaire: cmd.montant_total || cmd.total || 0,
+      });
+    }
+
+    const facture = await db.factures.create({
+      numero: num,
+      commande_id: cmd.id,
+      commande_numero: cmd.numero,
+      client_id: cmd.client_id,
+      client_nom: cmd.client_nom,
+      client_adresse: cmd.client_adresse || '',
+      objet: cmd.description || cmd.service || `Commande ${cmd.numero || ''}`,
+      lignes,
+      sous_total: cmd.montant_total || cmd.total || 0,
+      remise: 0,
+      total_ttc: cmd.montant_total || cmd.total || 0,
+      // `total` est lu par clients/page.jsx:92 pour le CA par client, qui
+      // affichait 0 F faute de ce champ (constat E6).
+      total: cmd.montant_total || cmd.total || 0,
+      statut: 'envoyee',
+      date_commande: cmd.created_at?.slice(0, 10) || '',
+      // `todayISO()` et non `toISOString()` : entre 00 h et 01 h heure de
+      // Libreville, la facture — document legal — portait la date de la veille.
+      date_livraison: todayISO(),
+      date: todayISO(),
     });
 
-    // Envoyer notification au client via le service unifié
-    if (cmd.client_id) {
-      if (newStatut === 'validee_attente_paiement') notifyCommandeValidee(cmd.client_id);
-      else if (newStatut === 'en_production') notifyCommandeProduction(cmd.client_id);
-      else if (newStatut === 'prete') notifyCommandePrete(cmd.client_id);
-      else if (newStatut === 'livree') notifyCommandeLivree(cmd.client_id);
-    }
+    if (cmd.client_id) notifyFactureDisponible(cmd.client_id, num);
 
-    // À la livraison (1re fois seulement) : sync rapport + points fidélité + déduction stock
-    if (declencheLivraison) {
-      syncCommandeToRapport(cmd).catch((err) => console.error('Sync rapport error:', err));
-      crediterPointsFidelite(cmd).catch((err) => console.error('Fidelite error:', err));
-      syncStockFromCommande(cmd).catch((err) => console.error('Sync stock error:', err));
-      // Encaissement : créditer la trésorerie (sauf si déjà payé en ligne via SingPay,
-      // qui a son propre crédit idempotent 'singpay:<ref>')
-      encaisserCommande(cmd).catch((err) => console.error('Encaissement error:', err));
-      // Cloturer la tache associee si elle existe
-      try {
-        const allTaches = await db.taches.list();
-        const tache = allTaches.find((t) => t.commande_id === cmd.id);
-        if (tache && tache.statut !== 'terminee' && tache.statut !== 'validee') {
-          await db.taches.update(tache.id, { statut: 'terminee', progression: 100 });
-        }
-      } catch (err) {
-        console.error('Cloture tache liee error:', err);
-      }
-    }
-
-    // Auto-generation facture a la livraison (1re fois seulement)
-    if (declencheLivraison) {
-      try {
-        const allFactures = await db.factures.list();
-        // Garde anti-doublon : ne pas recreer si une facture existe deja pour cette commande
-        const factureExistante = allFactures.find((f) => f.commande_id === cmd.id);
-        if (factureExistante) throw { _skip: true };
-        // Numéro unique anti-collision (length+1 provoquait des doublons)
-        const num = `OG-${new Date().getFullYear()}-${Date.now().toString(36).toUpperCase().slice(-6)}`;
-        const lignes = (cmd.lignes || cmd.produits || []).map((l) => ({
-          description: l.description || l.nom || l.designation || 'Article',
-          quantite: l.quantite || 1,
-          prix_unitaire: l.prix_unitaire || l.prix || 0,
-        }));
-        if (lignes.length === 0 && (cmd.montant_total || cmd.total)) {
-          lignes.push({ description: cmd.description || cmd.service || 'Commande', quantite: 1, prix_unitaire: cmd.montant_total || cmd.total || 0 });
-        }
-        const facture = await db.factures.create({
-          numero: num,
-          commande_id: cmd.id,
-          commande_numero: cmd.numero,
-          client_id: cmd.client_id,
-          client_nom: cmd.client_nom,
-          client_adresse: cmd.client_adresse || '',
-          objet: cmd.description || cmd.service || `Commande ${cmd.numero || ''}`,
-          lignes,
-          sous_total: cmd.montant_total || cmd.total || 0,
-          remise: 0,
-          total_ttc: cmd.montant_total || cmd.total || 0,
-          statut: 'envoyee',
-          date_commande: cmd.created_at?.slice(0, 10) || '',
-          date_livraison: new Date().toISOString().split('T')[0],
-          date: new Date().toISOString().split('T')[0],
+    // Depot dans la messagerie : confort, jamais bloquant.
+    try {
+      const convs = await db.conversations.list();
+      const conv = convs.find((c) => c.client_id === cmd.client_id);
+      if (conv) {
+        await db.messages_conv.create({
+          conversation_id: conv.id,
+          type: 'sortant',
+          contenu: `Votre facture ${num} pour la commande ${cmd.numero || ''} est disponible.\nMontant : ${fmt(cmd.montant_total || cmd.total || 0)} F\nConsultez vos factures dans votre espace client.`,
+          auteur: 'Systeme Imprimerie Ogooue',
         });
-        // Notifier le client
-        if (cmd.client_id) notifyFactureDisponible(cmd.client_id, num);
-        // Envoyer dans la messagerie
-        try {
-          const convs = await db.conversations.list();
-          const conv = convs.find((c) => c.client_id === cmd.client_id);
-          if (conv) {
-            await db.messages_conv.create({
-              conversation_id: conv.id,
-              type: 'sortant',
-              contenu: `Votre facture ${num} pour la commande ${cmd.numero || ''} est disponible.\nMontant : ${fmt(cmd.montant_total || cmd.total || 0)} F\nConsultez vos factures dans votre espace client.`,
-              auteur: 'Systeme Imprimerie Ogooue',
-            });
-          }
-        } catch {}
-      } catch (err) {
-        if (!err?._skip) console.error('Erreur generation facture auto:', err);
       }
+    } catch (err) {
+      console.error('Facture deposee en base mais message client non envoye :', err);
     }
 
-    toast.success(`Commande passee a "${getStatut(newStatut).label}"`);
-    load();
-    // Refresh detail
-    const updated = await db.commandes.getById(cmd.id);
-    if (updated) setShowDetail(updated);
+    return { fait: true, facture };
   };
+
+  /**
+   * Lance les six effets de livraison et rend un verdict nomme.
+   * Aucun n'est « lance dans le vide » : tous sont attendus.
+   */
+  const executerEffetsLivraison = async (cmd) => {
+    const effets = [
+      ['facture', () => genererFactureLivraison(cmd)],
+      ['encaissement', () => encaisserCommande(cmd)],
+      ['stock', () => syncStockFromCommande(cmd)],
+      ['fidelite', () => crediterPointsFidelite(cmd)],
+      ['rapport', () => syncCommandeToRapport(cmd)],
+      ['tache', () => cloturerTacheLiee(cmd)],
+    ];
+    const resultats = await Promise.allSettled(effets.map(([, fn]) => fn()));
+    return resumerEffets(effets.map(([cle], i) => ({ cle, resultat: resultats[i] })));
+  };
+
+  const handleStatutChange = (cmd, newStatut) =>
+    verrouCommande.executerUneSeuleFois(`statut:${cmd.id}`, async () => {
+      setCommandeEnCours(cmd.id);
+      try {
+        const auteur = `${currentUser?.prenom || ''} ${currentUser?.nom || ''}`.trim();
+        const historique = [...(cmd.historique_statuts || []), {
+          statut: newStatut,
+          date: new Date().toISOString(),
+          auteur,
+        }];
+
+        // On relit la commande EN BASE avant de decider : l'ancienne garde
+        // lisait l'objet du rendu, qui peut dater d'avant un autre appareil.
+        const enBase = (await db.commandes.getById(cmd.id)) || cmd;
+        const declencheLivraison = doitDeclencherLivraison(enBase, newStatut);
+        const contrePassation = doitContrePasser(enBase, newStatut);
+
+        await db.commandes.update(cmd.id, { statut: newStatut, historique_statuts: historique });
+
+        if (cmd.client_id) {
+          if (newStatut === 'validee_attente_paiement') notifyCommandeValidee(cmd.client_id);
+          else if (newStatut === 'en_production') notifyCommandeProduction(cmd.client_id);
+          else if (newStatut === 'prete') notifyCommandePrete(cmd.client_id);
+          else if (newStatut === 'livree') notifyCommandeLivree(cmd.client_id);
+        }
+
+        if (declencheLivraison) {
+          const verdict = await executerEffetsLivraison(enBase);
+          if (verdict.tousReussis) {
+            // Le drapeau n'est pose qu'ICI : apres, et seulement en cas de
+            // succes complet.
+            await db.commandes.update(cmd.id, { livraison_traitee: true });
+            toast.success(`Commande passee a "${getStatut(newStatut).label}"`);
+          } else {
+            toast.error(verdict.message, { duration: 12000 });
+          }
+        } else if (contrePassation) {
+          try {
+            const { effets } = await contrePasserCommande(enBase, db);
+            await db.commandes.update(cmd.id, {
+              livraison_traitee: false,
+              contre_passee_le: new Date().toISOString(),
+            });
+            toast.success(
+              effets.length
+                ? `Commande annulée — contre-passé : ${effets.join(', ')}.`
+                : 'Commande annulée (rien à contre-passer).',
+              { duration: 8000 },
+            );
+          } catch (err) {
+            toast.error(
+              `Commande annulée, mais la contre-passation a échoué : ${err?.message || err}. `
+              + 'L\'argent de cette commande est encore dans la trésorerie — à reprendre à la main.',
+              { duration: 15000 },
+            );
+          }
+        } else {
+          toast.success(`Commande passee a "${getStatut(newStatut).label}"`);
+        }
+
+        await load();
+        const updated = await db.commandes.getById(cmd.id);
+        if (updated) setShowDetail(updated);
+      } finally {
+        setCommandeEnCours(null);
+      }
+    });
 
   // ── Encaissement : créditer la trésorerie à la livraison ──
   // Crée un mouvement d'entrée sur le compte encaisseur (Caisse par défaut, ou le
@@ -466,7 +572,8 @@ export default function Commandes() {
     const montant = cmd.montant_total || cmd.total || 0;
     if (montant <= 0) return;
     const mouvements = await db.mouvements_financiers.list();
-    const refCmd = `commande:${cmd.id}`;
+    const refCmd = referenceEffet(cmd, 'encaissement');
+    if (!refCmd) throw new Error('commande sans identifiant : encaissement impossible');
     const refSingpay = cmd.singpay_reference ? `singpay:${cmd.singpay_reference}` : null;
     // Déjà encaissé (par cette commande OU par le callback SingPay) ?
     if (mouvements.some((m) => m.reference === refCmd || (refSingpay && m.reference === refSingpay) || (m.categorie === 'encaissement_singpay' && m.description?.includes(cmd.numero)))) return;
@@ -481,14 +588,23 @@ export default function Commandes() {
     else if (op.includes('airtel')) compte = findCompte('airtel');
     else if (op.includes('moov')) compte = findCompte('moov');
     compte = compte || findCompte('caisse') || findCompte('liquide') || findCompte('finam') || comptes[0];
-    if (!compte) return;
+    // Sans compte, l'encaissement ne peut pas etre trace. C'est un echec, pas un
+    // non-evenement : le silence d'avant laissait de l'argent hors des livres.
+    if (!compte) {
+      throw new Error(
+        'Aucun compte de trésorerie n\'est configuré : l\'encaissement ne peut pas être '
+        + 'enregistré. Créez au moins un compte « Caisse » dans Finances.',
+      );
+    }
 
     await db.mouvements_financiers.create({
       type: 'entree',
       montant,
       description: `Encaissement commande ${cmd.numero || ''} — ${cmd.client_nom || 'Client'}`,
       compte_id: compte.id,
-      date: new Date().toISOString().slice(0, 10),
+      // `todayISO()` : `toISOString()` datait l'encaissement de la veille entre
+      // 00 h et 01 h heure de Libreville.
+      date: todayISO(),
       reference: refCmd,
       categorie: 'encaissement_commande',
       source: 'commande',
@@ -502,12 +618,29 @@ export default function Commandes() {
     await handleStatutChange(cmd, 'validee_attente_paiement');
   };
 
-  // ── Créditer les points fidélité à la LIVRAISON ──
+  /**
+   * Credite les points de fidelite a la LIVRAISON.
+   *
+   * ⚠️ IDEMPOTENT. Chaque ligne d'historique ecrite ici porte `commande_id`.
+   * Avant d'ecrire, on verifie qu'aucune ligne ne porte deja cet identifiant :
+   * un double-clic, ou une reprise apres un echec partiel, ne credite plus deux
+   * fois (constat 8a.1). C'est aussi cette marque que lit la contre-passation
+   * pour savoir exactement combien de points retirer a l'annulation.
+   *
+   * ⚠️ LEVE en cas d'echec — le `catch` qui avalait tout faisait croire au
+   * gerant que les points etaient credites (constat C4).
+   */
   const crediterPointsFidelite = async (cmd) => {
-    if (!cmd.client_id) return;
-    try {
-      const allFidelite = await db.fidelite_clients.list();
-      let fidelite = allFidelite.find((f) => f.client_id === cmd.client_id);
+    if (!cmd.client_id) return { fait: false, motif: 'commande sans client' };
+
+    const allFidelite = await db.fidelite_clients.list();
+    let fidelite = allFidelite.find((f) => f.client_id === cmd.client_id);
+
+    if (fidelite && (fidelite.historique || []).some((h) => h.commande_id === cmd.id)) {
+      return { fait: false, motif: 'points déjà crédités pour cette commande' };
+    }
+
+    {
 
       // Créer le record fidélité si inexistant (nouveau client)
       if (!fidelite) {
@@ -544,13 +677,13 @@ export default function Commandes() {
 
         const hist = [...(fidelite.historique || [])];
         if (bonusPremiere > 0) {
-          hist.push({ type: 'premiere_commande', points: 100, description: 'Bonus premiere commande', date: new Date().toISOString() });
+          hist.push({ type: 'premiere_commande', points: 100, description: 'Bonus premiere commande', date: new Date().toISOString(), commande_id: cmd.id });
         }
         if (pointsCommande > 0) {
-          hist.push({ type: 'commande', points: pointsCommande, description: `Commande ${cmd.numero || 'CMD'} livrée — ${fmt(montant)} F`, date: new Date().toISOString() });
+          hist.push({ type: 'commande', points: pointsCommande, description: `Commande ${cmd.numero || 'CMD'} livrée — ${fmt(montant)} F`, date: new Date().toISOString(), commande_id: cmd.id });
         }
         if (pointsEvt > 0 && bonusEvt) {
-          hist.push({ type: 'bonus_evenement', points: pointsEvt, description: bonusEvt.label, date: new Date().toISOString() });
+          hist.push({ type: 'bonus_evenement', points: pointsEvt, description: bonusEvt.label, date: new Date().toISOString(), commande_id: cmd.id });
         }
 
         await db.fidelite_clients.update(fidelite.id, {
@@ -565,11 +698,16 @@ export default function Commandes() {
         // Check parrainage bonus (if sponsored and first delivered order)
         if (isFirstOrder) {
           const allClients = await db.clients.list();
-          const client = allClients.find((e) => e.id === cmd.client_id);
+          // `cmd.client_id` porte l'identifiant du COMPTE pour une commande du
+          // portail, et celui de la FICHE pour une commande du comptoir. Ne
+          // regarder que `id` laissait 100 % des commandes du portail sans
+          // parrain — et le programme de parrainage muet.
+          const client = allClients.find((e) => e.id === cmd.client_id || e.user_id === cmd.client_id);
           if (client?.parraine_par) {
             const parrain = allClients.find((e) => e.code_parrainage === client.parraine_par);
             if (parrain) {
-              const parrainFid = allFidelite.find((f) => f.client_id === parrain.id);
+              const idParrain = parrain.user_id || parrain.id;
+              const parrainFid = allFidelite.find((f) => f.client_id === idParrain);
               if (parrainFid) {
                 await db.fidelite_clients.update(parrainFid.id, {
                   points_actuels: (parrainFid.points_actuels || 0) + BONUS_PARRAINAGE,
@@ -586,22 +724,31 @@ export default function Commandes() {
                   titre: `🎁 +${BONUS_PARRAINAGE} points parrainage !`,
                   message: `${cmd.client_nom} a passé sa première commande. Vous gagnez ${BONUS_PARRAINAGE} points de fidélité !`,
                   destinataire: 'client',
-                  destinataire_id: parrain.id,
+                  destinataire_id: idParrain,
                   lu: false,
                 });
               }
             }
           }
         }
+        return { fait: true, points: totalPoints };
       }
-    } catch (err) {
-      console.error('Fidelity error:', err);
     }
+    return { fait: false, motif: 'aucun point à créditer' };
   };
 
   // ── Annuler la commande ──
+  // L'annulation d'une commande LIVREE contre-passe desormais ses ecritures
+  // d'argent (constat C5 / 8b.1). Le detail est dans handleStatutChange.
   const handleAnnuler = async (cmd) => {
-    if (!confirm('Êtes-vous sûr de vouloir annuler cette commande ?')) return;
+    const livree = cmd.livraison_traitee === true || normalizeStatut(cmd.statut) === 'livree';
+    const question = livree
+      ? `Annuler la commande ${cmd.numero || ''} ?\n\n`
+        + 'Elle a été livrée : l\'encaissement, la sortie de stock, les points de '
+        + 'fidélité et la facture vont être contre-passés (écritures inverses, '
+        + 'rien n\'est supprimé).'
+      : 'Êtes-vous sûr de vouloir annuler cette commande ?';
+    if (!confirm(question)) return;
     await handleStatutChange(cmd, 'annulee');
   };
 
@@ -617,11 +764,27 @@ export default function Commandes() {
     load();
   };
 
+  /**
+   * Suppression definitive.
+   *
+   * Constat 8b.2 : supprimer une commande livree laissait en base son mouvement
+   * de tresorerie, sa facture et sa sortie de stock — ET detruisait la reference
+   * d'idempotence `commande:<id>`, si bien qu'une re-saisie re-encaissait le
+   * meme argent. La suppression est donc refusee des qu'il y a de l'argent en
+   * jeu, avec un motif qui dit quoi faire a la place.
+   */
   const handleDelete = async (cmd) => {
-    if (!confirm(`Supprimer définitivement la commande ${cmd.numero} ?\nClient : ${cmd.client_nom}\nMontant : ${fmt(cmd.montant_total || cmd.total)} F`)) return;
-    await db.commandes.delete(cmd.id);
-    toast.success('Commande supprimée');
-    load();
+    const { autorise, motif } = suppressionAutorisee(cmd);
+    if (!autorise) { toast.error(motif, { duration: 12000 }); return; }
+    if (!confirm(`Supprimer définitivement la commande ${cmd.numero || ''} ?\nClient : ${cmd.client_nom}\nMontant : ${fmt(cmd.montant_total || cmd.total)} F`)) return;
+    setCommandeEnCours(cmd.id);
+    try {
+      await db.commandes.delete(cmd.id);
+      toast.success('Commande supprimée');
+      await load();
+    } finally {
+      setCommandeEnCours(null);
+    }
   };
 
   // ── Assignation à un opérateur + auto-création tâche ──
@@ -700,22 +863,43 @@ export default function Commandes() {
     toast.success(`Rappel envoyé à ${cmd.assignee_nom || 'l\'opérateur'}`);
   };
 
-  // ── Purger les commandes de test (montant 0 ou anciennes tests) ──
+  /**
+   * Purge des commandes d'essai.
+   *
+   * ⚠️ L'ancienne version supprimait EN LOT toute commande dont la description
+   * contenait « test », ou dont le montant valait 0. Deux prestations reelles
+   * d'imprimerie s'appellent « test couleur » et « test daltonien » : de vraies
+   * commandes livrees et encaissees tombaient dans le filet, en emportant leur
+   * reference d'idempotence.
+   *
+   * Desormais deux conditions doivent tenir ENSEMBLE :
+   *   - la commande porte le drapeau EXPLICITE `est_test` (pose a la main, ou
+   *     par migrations/003_marquer_commandes_test.sql) ;
+   *   - et `suppressionAutorisee()` l'autorise (donc : pas livree, pas d'argent).
+   *
+   * Une commande qui RESSEMBLE a un essai sans porter le drapeau est signalee,
+   * jamais supprimee.
+   */
   const handlePurgeTests = async () => {
-    const tests = commandes.filter((c) => {
-      const montant = c.montant_total || c.total || 0;
-      return montant === 0 || (c.description || '').toLowerCase().includes('test');
-    });
-    if (tests.length === 0) {
-      toast.info('Aucune commande de test à supprimer');
+    const purgeables = commandesPurgeables(commandes);
+    const suspectes = commandes.filter((c) => ressembleACommandeTest(c) && !purgeables.includes(c));
+
+    if (purgeables.length === 0) {
+      toast.info(
+        suspectes.length
+          ? `Aucune commande marquée « test » et supprimable. ${suspectes.length} commande(s) y ressemblent `
+            + 'mais ne portent pas le marquage explicite : ouvrez-les et vérifiez avant de les marquer.'
+          : 'Aucune commande de test à supprimer',
+        { duration: 10000 },
+      );
       return;
     }
-    if (!confirm(`Supprimer ${tests.length} commande(s) de test ?\n(montant = 0 ou description contenant "test")`)) return;
-    for (const cmd of tests) {
+    if (!confirm(`Supprimer ${purgeables.length} commande(s) marquée(s) « test » ?\n(aucune n'est livrée ni encaissée)`)) return;
+    for (const cmd of purgeables) {
       await db.commandes.delete(cmd.id);
     }
-    toast.success(`${tests.length} commande(s) de test supprimée(s)`);
-    load();
+    toast.success(`${purgeables.length} commande(s) de test supprimée(s)`);
+    await load();
   };
 
   // Open detail view
@@ -870,30 +1054,30 @@ export default function Commandes() {
                           {/* Paiement initié → Confirmer / Non reçu */}
                           {isPaiement && (
                             <>
-                              <Button size="sm" className="h-7 gap-1 text-xs bg-emerald-600 hover:bg-emerald-700" onClick={(e) => { e.stopPropagation(); handleStatutChange(cmd, 'en_production'); }}>
+                              <Button size="sm" disabled={commandeEnCours === cmd.id} className="h-7 gap-1 text-xs bg-emerald-600 hover:bg-emerald-700" onClick={(e) => { e.stopPropagation(); handleStatutChange(cmd, 'en_production'); }}>
                                 <CheckCircle2 className="h-3 w-3" /> Confirmer paiement
                               </Button>
-                              <Button size="sm" variant="destructive" className="h-7 gap-1 text-xs" onClick={(e) => { e.stopPropagation(); handleStatutChange(cmd, 'validee_attente_paiement'); }}>
+                              <Button size="sm" variant="destructive" disabled={commandeEnCours === cmd.id} className="h-7 gap-1 text-xs" onClick={(e) => { e.stopPropagation(); handleStatutChange(cmd, 'validee_attente_paiement'); }}>
                                 <XCircle className="h-3 w-3" /> Non reçu
                               </Button>
                             </>
                           )}
                           {/* Validée → En production */}
                           {normalized === 'validee_attente_paiement' && (
-                            <Button size="sm" className="h-7 gap-1 text-xs bg-blue-600 hover:bg-blue-700" onClick={(e) => { e.stopPropagation(); handleStatutChange(cmd, 'en_production'); }}>
+                            <Button size="sm" disabled={commandeEnCours === cmd.id} className="h-7 gap-1 text-xs bg-blue-600 hover:bg-blue-700" onClick={(e) => { e.stopPropagation(); handleStatutChange(cmd, 'en_production'); }}>
                               <Factory className="h-3 w-3" /> En production
                             </Button>
                           )}
                           {/* En production → Prête */}
                           {normalized === 'en_production' && (
-                            <Button size="sm" className="h-7 gap-1 text-xs" onClick={(e) => { e.stopPropagation(); handleStatutChange(cmd, 'prete'); }}>
+                            <Button size="sm" disabled={commandeEnCours === cmd.id} className="h-7 gap-1 text-xs" onClick={(e) => { e.stopPropagation(); handleStatutChange(cmd, 'prete'); }}>
                               <Package className="h-3 w-3" /> Prête
                             </Button>
                           )}
                           {/* Prête → Livrée (admin/manager seulement) */}
                           {normalized === 'prete' && !isEmploye && (
-                            <Button size="sm" className="h-7 gap-1 text-xs bg-green-600 hover:bg-green-700" onClick={(e) => { e.stopPropagation(); handleStatutChange(cmd, 'livree'); }}>
-                              <Truck className="h-3 w-3" /> Livrée
+                            <Button size="sm" disabled={commandeEnCours === cmd.id} className="h-7 gap-1 text-xs bg-green-600 hover:bg-green-700" onClick={(e) => { e.stopPropagation(); handleStatutChange(cmd, 'livree'); }}>
+                              <Truck className="h-3 w-3" /> {commandeEnCours === cmd.id ? 'Enregistrement…' : 'Livrée'}
                             </Button>
                           )}
                           {/* Livrée → Voir facture */}
@@ -908,7 +1092,7 @@ export default function Commandes() {
                           </Button>
                           {/* Annuler (admin/manager seulement, si pas terminal) */}
                           {!isEmploye && normalized !== 'livree' && normalized !== 'annulee' && (
-                            <Button size="sm" variant="ghost" className="h-7 gap-1 text-xs text-destructive hover:text-destructive" onClick={(e) => { e.stopPropagation(); handleAnnuler(cmd); }}>
+                            <Button size="sm" variant="ghost" disabled={commandeEnCours === cmd.id} className="h-7 gap-1 text-xs text-destructive hover:text-destructive" onClick={(e) => { e.stopPropagation(); handleAnnuler(cmd); }}>
                               <XCircle className="h-3 w-3" /> Annuler
                             </Button>
                           )}
@@ -922,7 +1106,7 @@ export default function Commandes() {
                           <Eye className="h-3.5 w-3.5" />
                         </Button>
                         {isAdmin && (
-                          <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => handleDelete(cmd)} title="Supprimer la commande">
+                          <Button variant="ghost" size="icon" disabled={commandeEnCours === cmd.id} className="h-8 w-8 text-destructive" onClick={() => handleDelete(cmd)} title="Supprimer la commande">
                             <Trash2 className="h-3.5 w-3.5" />
                           </Button>
                         )}
@@ -1265,28 +1449,28 @@ export default function Commandes() {
                     )}
                     {/* validee_attente_paiement → en_production — tous */}
                     {normalized === 'validee_attente_paiement' && (
-                      <Button className="flex-1 gap-2 bg-blue-600 hover:bg-blue-700" onClick={() => handleStatutChange(showDetail, 'en_production')}>
+                      <Button disabled={commandeEnCours === showDetail.id} className="flex-1 gap-2 bg-blue-600 hover:bg-blue-700" onClick={() => handleStatutChange(showDetail, 'en_production')}>
                         <Factory className="h-4 w-4" />
                         Mettre en production
                       </Button>
                     )}
                     {/* en_production → prete — tous */}
                     {normalized === 'en_production' && (
-                      <Button className="flex-1 gap-2" onClick={() => handleStatutChange(showDetail, 'prete')}>
+                      <Button disabled={commandeEnCours === showDetail.id} className="flex-1 gap-2" onClick={() => handleStatutChange(showDetail, 'prete')}>
                         <Package className="h-4 w-4" />
                         Marquer &quot;Prête&quot;
                       </Button>
                     )}
                     {/* prete → livree — admin/manager seulement */}
                     {!isEmploye && normalized === 'prete' && (
-                      <Button className="flex-1 gap-2 bg-green-600 hover:bg-green-700" onClick={() => handleStatutChange(showDetail, 'livree')}>
+                      <Button disabled={commandeEnCours === showDetail.id} className="flex-1 gap-2 bg-green-600 hover:bg-green-700" onClick={() => handleStatutChange(showDetail, 'livree')}>
                         <Truck className="h-4 w-4" />
-                        Marquer &quot;Livrée&quot;
+                        {commandeEnCours === showDetail.id ? 'Enregistrement…' : 'Marquer "Livrée"'}
                       </Button>
                     )}
                     {/* Annuler — admin/manager seulement */}
                     {!isEmploye && (
-                      <Button variant="destructive" className="gap-1.5" onClick={() => handleAnnuler(showDetail)}>
+                      <Button variant="destructive" disabled={commandeEnCours === showDetail.id} className="gap-1.5" onClick={() => handleAnnuler(showDetail)}>
                         <XCircle className="h-4 w-4" />
                         Annuler
                       </Button>

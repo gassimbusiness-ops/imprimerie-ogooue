@@ -1085,7 +1085,8 @@ export default function Catalogue() {
       toast.success(`${count} produit(s) enrichi(s) par l'IA`);
       load();
     } catch (err) {
-      toast.error('Erreur lors de la génération IA');
+      // Voir api/_lib/modeles.js:46-63 — le message nomme la cause.
+      toast.error(err?.message || 'Erreur lors de la génération IA', { duration: 12000 });
     } finally {
       setIaLoading(null);
     }
@@ -1149,7 +1150,8 @@ export default function Catalogue() {
       setIaAnalysis(result);
       toast.success('Analyse IA terminée');
     } catch (err) {
-      toast.error('Erreur lors de l\'analyse IA');
+      // Voir api/_lib/modeles.js:46-63 — le message nomme la cause.
+      toast.error(err?.message || 'Erreur lors de l\'analyse IA', { duration: 12000 });
     } finally {
       setIaLoading(null);
     }

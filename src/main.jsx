@@ -7,6 +7,8 @@ import './index.css';
 import { seedDatabase } from './services/seed';
 import { loadImportedData } from './services/import-loader';
 import { seedPapeterieProject, seedInventaire } from './utils/seed-data';
+import { installerFiletEcriture } from './services/filet-ecriture';
+import { toast } from 'sonner';
 import { registerSW } from 'virtual:pwa-register';
 
 // ── PWA — auto-update strategy ──
@@ -61,6 +63,14 @@ registerSW({
  * l application.
  */
 async function init() {
+  // Filet global des echecs d'ecriture (constat C6). Pose AVANT l'amorcage pour
+  // couvrir aussi les ecritures du seed. Ne leve jamais : voir filet-ecriture.js.
+  try {
+    installerFiletEcriture((message) => toast.error(message, { duration: 8000 }));
+  } catch (e) {
+    console.error('[init] filet d ecriture non pose :', e?.message || e);
+  }
+
   const etapes = [
     ['seedDatabase', seedDatabase],
     ['loadImportedData', loadImportedData],

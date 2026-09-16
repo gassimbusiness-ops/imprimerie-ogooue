@@ -586,6 +586,136 @@ const TECHNIQUES_ANGLAIS = {
   impression_pvc: 'directly printed on the PVC card, glossy and perfectly flat',
 };
 
+/* ─────────────────────────────────────────────────────────────────────────────
+   TEXTES ET PERSONNALISATION
+   Demande de Gassim, 16/09/2026 : « ajoute aussi le texte et la
+   personnalisation (nom, numero, slogan sur le support) ».
+
+   ⚠️ LE TEXTE EST LE PIRE CAS POUR UN MODELE D'IMAGE. Un logo approximatif
+   passe au comptoir ; un numero de telephone avec un chiffre faux est
+   inutilisable, et dangereux s'il part en presse. C'est pour ca que chaque
+   bloc de texte est stocke tel quel, verbatim, et que l'interface affiche
+   toujours le texte EXACT saisi a cote de l'apercu : le gerant compare
+   caractere par caractere, il ne fait pas confiance a l'image.
+   ───────────────────────────────────────────────────────────────────────── */
+
+export const TEXTES_MAX = 3;
+export const LONGUEUR_TEXTE_MAX = 60;
+
+/** Roles proposes — ils servent a l'ordre de lecture et au libelle de l'ecran. */
+export const ROLES_TEXTE = [
+  { id: 'nom', label: 'Nom / raison sociale', exemple: 'IMPRIMERIE OGOOUÉ' },
+  { id: 'slogan', label: 'Slogan', exemple: 'Conception graphique & objets publicitaires' },
+  { id: 'telephone', label: 'Telephone', exemple: '060 44 46 34' },
+  { id: 'libre', label: 'Texte libre', exemple: '' },
+];
+
+/** Couleurs d'impression proposees, avec leur nom anglais pour le prompt. */
+export const COULEURS_TEXTE = [
+  { id: 'noir', label: 'Noir', hex: '#111111', anglais: 'black' },
+  { id: 'blanc', label: 'Blanc', hex: '#FFFFFF', anglais: 'white' },
+  { id: 'cyan', label: 'Cyan (charte Ogooué)', hex: '#3FA9F5', anglais: 'light cyan blue' },
+  { id: 'magenta', label: 'Magenta', hex: '#E6007E', anglais: 'magenta' },
+  { id: 'jaune', label: 'Jaune', hex: '#FFDD00', anglais: 'yellow' },
+];
+
+export function trouverCouleurTexte(id) {
+  return COULEURS_TEXTE.find((c) => c.id === id) || COULEURS_TEXTE[0];
+}
+
+/**
+ * Normalise une liste de blocs de texte. Ne corrige JAMAIS le contenu : pas de
+ * majuscules automatiques, pas de reformatage de numero. Ce que le gerant tape
+ * est ce qui doit s'imprimer, y compris ses espaces dans « 060 44 46 34 ».
+ * Seuls les blancs de bord et les retours a la ligne sont retires.
+ */
+export function normaliserTextes(textes) {
+  if (!Array.isArray(textes)) return [];
+  return textes
+    .filter((t) => t && typeof t.contenu === 'string' && t.contenu.trim())
+    .slice(0, TEXTES_MAX)
+    .map((t, i) => ({
+      id: t.id || `texte-${i + 1}`,
+      role: ROLES_TEXTE.some((r) => r.id === t.role) ? t.role : 'libre',
+      contenu: t.contenu.replace(/[\r\n\t]+/g, ' ').replace(/ {2,}/g, ' ').trim(),
+      zoneId: t.zoneId || null,
+      couleurId: COULEURS_TEXTE.some((c) => c.id === t.couleurId) ? t.couleurId : 'noir',
+      hauteurCm: Number(t.hauteurCm) > 0 ? Math.min(Number(t.hauteurCm), 30) : 2,
+    }))
+    .filter((t) => t.contenu.length <= LONGUEUR_TEXTE_MAX);
+}
+
+/**
+ * Refuse ce qui ne peut pas s'imprimer proprement, et dit pourquoi.
+ * @returns {{ok: boolean, message: string, textes: Array, avertissements: Array}}
+ */
+export function validerTextes(textes, { techniqueId } = {}) {
+  const liste = normaliserTextes(textes);
+  const brut = Array.isArray(textes) ? textes.filter((t) => t && String(t.contenu || '').trim()) : [];
+
+  if (brut.length > TEXTES_MAX) {
+    return {
+      ok: false, textes: liste, avertissements: [],
+      message: `${TEXTES_MAX} blocs de texte au maximum. Au-dela, le marquage devient illisible `
+        + 'a la taille reelle du support.',
+    };
+  }
+  const troplong = brut.find((t) => String(t.contenu).trim().length > LONGUEUR_TEXTE_MAX);
+  if (troplong) {
+    return {
+      ok: false, textes: liste, avertissements: [],
+      message: `« ${String(troplong.contenu).trim().slice(0, 25)}… » depasse ${LONGUEUR_TEXTE_MAX} `
+        + 'caracteres. Un texte plus long ne se lit plus sur un vetement.',
+    };
+  }
+
+  const avertissements = [];
+  const technique = trouverTechnique(techniqueId);
+  // Le flex est du vinyle decoupe : sous ~1,5 cm de hauteur, les deliés d'une
+  // lettre passent sous la largeur de la lame et partent au decollement.
+  if (technique?.id === 'flex') {
+    const petit = liste.find((t) => t.hauteurCm < 1.5);
+    if (petit) {
+      avertissements.push({
+        code: 'flex-trop-petit',
+        message: `« ${petit.contenu} » fait ${petit.hauteurCm} cm de haut. En flex, sous 1,5 cm `
+          + 'les lettres fines se decollent au pelage. Agrandir, ou changer de technique.',
+      });
+    }
+  }
+  const chiffres = liste.find((t) => /\d{2}/.test(t.contenu));
+  if (chiffres) {
+    avertissements.push({
+      code: 'verifier-chiffres',
+      message: `« ${chiffres.contenu} » contient des chiffres. RELISEZ-LES sur l'apercu, `
+        + 'chiffre par chiffre : en rendu IA le texte est redessine, pas recopie. '
+        + 'Un numero faux imprime en serie se paye deux fois.',
+    });
+  }
+
+  return { ok: true, message: '', textes: liste, avertissements };
+}
+
+/** Rend les blocs de texte en anglais pour le prompt, contenu entre guillemets. */
+function decrireTextes(textes, support) {
+  const liste = normaliserTextes(textes);
+  if (!liste.length) return '';
+  const phrases = liste.map((t) => {
+    const z = support?.zones?.find((zz) => zz.id === t.zoneId);
+    const ou = ZONES_ANGLAIS[z?.id] || 'below the logo';
+    const couleur = trouverCouleurTexte(t.couleurId).anglais;
+    // Les guillemets typographiques encadrent le contenu : le modele doit
+    // comprendre que c'est une chaine a rendre telle quelle, pas une consigne.
+    return `the text "${t.contenu}" in ${couleur}, ${ou}, about ${t.hauteurCm} cm tall`;
+  });
+  return ' Also print on the product: '
+    + `${phrases.join('; ')}. `
+    + 'Render every one of these strings CHARACTER BY CHARACTER exactly as written, '
+    + 'with the same spelling, the same accents, the same spacing and the same digits. '
+    + 'Do not paraphrase them, do not translate them, do not invent extra words, '
+    + 'and do not change a single digit of any phone number.';
+}
+
 /**
  * Construit le prompt du mode VENTE. Contrairement a `construirePromptScene`,
  * il parle du logo — c'est tout son objet.
@@ -604,7 +734,7 @@ const TECHNIQUES_ANGLAIS = {
 export function construirePromptMockupIA(params) {
   const {
     supportId, colorisId, angleId = 'face', techniqueId, zoneId,
-    largeurImpressionCm = 0, personnalisation = '',
+    largeurImpressionCm = 0, personnalisation = '', textes = [],
   } = params || {};
   const support = trouverSupport(supportId);
   if (!support) return '';
@@ -639,7 +769,9 @@ export function construirePromptMockupIA(params) {
     `Place the logo ${emplacement}, ${rendu}.${taille}`,
     'The logo must follow the folds and the perspective of the object,',
     'and pick up the light of the scene.',
-    'Do not add any other text, logo, slogan, price, label or watermark anywhere in the image.',
+    decrireTextes(textes, support),
+    'Apart from the logo and the strings listed above, do not add any other text,',
+    'logo, slogan, price, label or watermark anywhere in the image.',
     'Studio lighting, soft shadows, shallow depth of field, clean neutral background,',
     'photorealistic, high resolution, catalogue quality.',
     extra,
@@ -651,7 +783,7 @@ export function construirePromptMockupIA(params) {
 }
 
 /** Le serveur refuse au-dela de 2000 ; on coupe avant, avec de la marge. */
-export const LONGUEUR_PROMPT_MAX_IA = 1800;
+export const LONGUEUR_PROMPT_MAX_IA = 1950;
 
 /* ═════════════════════════════════════════════════════════════════════════════
    6. AUTORISATION DU CLIC

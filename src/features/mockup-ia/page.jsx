@@ -29,7 +29,7 @@ import { Input } from '@/components/ui/input';
 import {
   Paintbrush, Upload, Loader2, Download, Image as ImageIcon, FileText,
   Eye, Palette, CheckCircle2, AlertTriangle, XCircle, Camera, Sparkles,
-  Link2, Wand2, RotateCcw, Info,
+  Link2, Wand2, RotateCcw, Info, Type, Plus, Trash2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { apiFetch } from '@/services/api-client';
@@ -42,6 +42,8 @@ import {
   trouverSupport, trouverColoris, trouverZone, trouverTechnique,
   construirePromptScene, construirePromptMockupIA, validerDemandeMockup, verifierFaisabilite,
   MODES_RENDU, MODE_PAR_DEFAUT, trouverMode,
+  ROLES_TEXTE, COULEURS_TEXTE, trouverCouleurTexte, validerTextes,
+  TEXTES_MAX, LONGUEUR_TEXTE_MAX,
   analyserPixelsLogo, extraireScene, extraireMessageErreur,
   construireRecette, recetteSansImage, deciderEnregistrement,
   verifierPlafond, svgContientDuTexte, coutGeneration, formatFCFA,
@@ -182,6 +184,9 @@ function EcranMockup() {
   // (mode de VENTE). 'incrustation' = le logo est colle par calcul par-dessus
   // une scene nue (mode du BON A TIRER, 0 F).
   const [mode, setMode] = useState(MODE_PAR_DEFAUT);
+  // Blocs de texte a marquer EN PLUS du logo (nom, telephone, slogan).
+  // Demande de Gassim du 16/09/2026.
+  const [textes, setTextes] = useState([]);
   const [promptEdite, setPromptEdite] = useState(undefined);
   const [photothequeTestee, setPhotothequeTestee] = useState(false);
 
@@ -378,6 +383,23 @@ function EcranMockup() {
     if (image) { setLogoUrl(logoOriginalUrl); setLogoImage(image); toast.info('Logo d\'origine restaure.'); }
   }, [logoOriginalUrl]);
 
+  /* ── Textes a marquer ───────────────────────────────────────────────────── */
+
+  const ajouterTexte = useCallback(() => {
+    setTextes((l) => (l.length >= TEXTES_MAX ? l : [...l, {
+      id: `texte-${Date.now()}-${l.length}`,
+      role: l.length === 0 ? 'nom' : 'libre',
+      contenu: '',
+      zoneId: null,
+      couleurId: 'noir',
+      hauteurCm: 2,
+    }]));
+  }, []);
+
+  const majTexte = useCallback((id, champs) => {
+    setTextes((l) => l.map((t) => (t.id === id ? { ...t, ...champs } : t)));
+  }, []);
+
   /* ── Import d'une photo de support ──────────────────────────────────────── */
 
   const importerPhotoSupport = async (e) => {
@@ -408,14 +430,27 @@ function EcranMockup() {
     return Math.round(Math.min(cm, zone.largeurMaxCm) * 10) / 10;
   }, [position.largeur, support, zone]);
 
+  const textesVerif = useMemo(
+    () => validerTextes(textes, { techniqueId }),
+    [textes, techniqueId],
+  );
+
+  // Les textes du rendu portent leur couleur resolue : `composition.js` dessine,
+  // il ne cherche pas une couleur dans un catalogue.
+  const textesRendu = useMemo(
+    () => textesVerif.textes.map((t) => ({ ...t, hex: trouverCouleurTexte(t.couleurId).hex })),
+    [textesVerif],
+  );
+
   const promptAuto = useMemo(
     () => (mode === 'ia'
       ? construirePromptMockupIA({
         supportId, colorisId, angleId, techniqueId, zoneId, largeurImpressionCm,
+        textes: textesVerif.textes,
       })
       : construirePromptScene({ supportId, colorisId, angleId })),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [mode, supportId, colorisId, angleId, techniqueId, zoneId, largeurImpressionCm],
+    [mode, supportId, colorisId, angleId, techniqueId, zoneId, largeurImpressionCm, textesVerif],
   );
 
   const demande = useMemo(() => validerDemandeMockup({
@@ -428,7 +463,7 @@ function EcranMockup() {
     sceneExistante: sceneImage ? (sceneOrigine || 'photo') : null,
     enCours,
     compteurDuJour: compteur,
-    qualité: QUALITE_PAR_DEFAUT,
+    qualite: QUALITE_PAR_DEFAUT,
     mode,
   }), [
     mode,
@@ -456,14 +491,17 @@ function EcranMockup() {
     const iaComplete = sceneOrigine === 'ia_complete';
     const r = composerMockup({
       canvas: canvasRef.current,
-      scène: sceneImage,
+      scene: sceneImage,
       logo: iaComplete ? null : logoImage,
       zone,
       position,
+      // En rendu IA le texte est DEJA dans l'image produite par le modele :
+      // le redessiner par-dessus ferait deux fois le meme texte.
+      textes: iaComplete ? [] : textesRendu,
     });
     setNoteRendu(r.message || '');
     if (!r.ok && r.message) setErreur(r.message);
-  }, [sceneImage, logoImage, zone, position, sceneOrigine]);
+  }, [sceneImage, logoImage, zone, position, sceneOrigine, textesRendu]);
 
   useEffect(() => { redessiner(); }, [redessiner]);
 
@@ -485,6 +523,7 @@ function EcranMockup() {
       mode,
     });
     if (!v.ok) { toast.error(v.message); return; }
+    if (!textesVerif.ok) { toast.error(textesVerif.message); return; }
 
     verrou.current = true;
     setEnCours(true);
@@ -510,7 +549,7 @@ function EcranMockup() {
         method: 'POST',
         body: JSON.stringify({
           prompt: v.prompt,
-          qualité: QUALITE_PAR_DEFAUT,
+          qualite: QUALITE_PAR_DEFAUT,
           // Carre 1024 pour tous les supports : c'est la taille sur laquelle le
           // cout affiche avant le clic est calcule. Changer la taille sans
           // changer `COUT_ESTIME_FCFA` ferait mentir le chiffre montre au gerant.
@@ -958,6 +997,106 @@ function EcranMockup() {
                 <Input value={clientNom} onChange={(e) => setClientNom(e.target.value)} placeholder="Ex : BACOREF" />
               </div>
             </div>
+          </Etape>
+
+          {/* 4 bis — Textes et personnalisation */}
+          <Etape numero="4b" titre="Textes et personnalisation" fait={textes.length > 0}>
+            <p className="text-xs text-muted-foreground">
+              Nom de l&apos;entreprise, numero de telephone, slogan, nom d&apos;une ecole… Ils
+              s&apos;ajoutent <strong>en plus</strong> du logo, pas a sa place.
+            </p>
+
+            {textes.map((t, i) => (
+              <div key={t.id} className="rounded-lg border bg-muted/20 p-3">
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <span className="flex items-center gap-1.5 text-xs font-semibold">
+                    <Type className="h-3.5 w-3.5" /> Bloc {i + 1}
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 gap-1 text-destructive"
+                    onClick={() => setTextes((l) => l.filter((x) => x.id !== t.id))}
+                  >
+                    <Trash2 className="h-3.5 w-3.5" /> Retirer
+                  </Button>
+                </div>
+
+                <Input
+                  value={t.contenu}
+                  maxLength={LONGUEUR_TEXTE_MAX}
+                  placeholder={ROLES_TEXTE.find((r) => r.id === t.role)?.exemple || 'Texte a marquer'}
+                  onChange={(e) => majTexte(t.id, { contenu: e.target.value })}
+                />
+
+                <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  <select
+                    className="h-9 rounded border bg-background px-2 text-xs"
+                    value={t.role}
+                    onChange={(e) => majTexte(t.id, { role: e.target.value })}
+                  >
+                    {ROLES_TEXTE.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
+                  </select>
+                  <select
+                    className="h-9 rounded border bg-background px-2 text-xs"
+                    value={t.zoneId || zoneId}
+                    onChange={(e) => majTexte(t.id, { zoneId: e.target.value })}
+                  >
+                    {(support?.zones || []).map((z) => (
+                      <option key={z.id} value={z.id}>{z.label}</option>
+                    ))}
+                  </select>
+                  <select
+                    className="h-9 rounded border bg-background px-2 text-xs"
+                    value={t.couleurId}
+                    onChange={(e) => majTexte(t.id, { couleurId: e.target.value })}
+                  >
+                    {COULEURS_TEXTE.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+                  </select>
+                  <label className="flex items-center gap-1 text-xs">
+                    <input
+                      type="number"
+                      min="0.5"
+                      max="30"
+                      step="0.5"
+                      className="h-9 w-16 rounded border bg-background px-2 text-xs"
+                      value={t.hauteurCm}
+                      onChange={(e) => majTexte(t.id, { hauteurCm: Number(e.target.value) })}
+                    />
+                    cm de haut
+                  </label>
+                </div>
+
+                {/* 🔴 Le texte EXACT, affiche tel quel, entre chevrons : c'est
+                    contre CETTE ligne que le gerant relit l'apercu. */}
+                {t.contenu.trim() && (
+                  <p className="mt-2 rounded bg-background px-2 py-1 font-mono text-[11px]">
+                    A verifier sur l&apos;apercu, caractere par caractere : «&nbsp;
+                    <strong>{t.contenu.trim()}</strong>&nbsp;»
+                  </p>
+                )}
+              </div>
+            ))}
+
+            {textes.length < TEXTES_MAX && (
+              <Button variant="outline" size="sm" className="gap-1.5" onClick={ajouterTexte}>
+                <Plus className="h-3.5 w-3.5" /> Ajouter un texte
+              </Button>
+            )}
+
+            {!textesVerif.ok && <Alerte type="blocage">{textesVerif.message}</Alerte>}
+            {textesVerif.avertissements.map((a) => (
+              <Alerte key={a.code} type="attention">{a.message}</Alerte>
+            ))}
+            {mode === 'ia' && textesVerif.textes.length > 0 && (
+              <Alerte type="attention">
+                En rendu 3D, le texte est <strong>redessine par le modele</strong>, pas recopie.
+                C&apos;est le point le plus fragile de ce mode. Relisez chaque chiffre et chaque
+                accent sur l&apos;apercu ; si un caractere est faux, repassez en
+                <strong> incrustation exacte</strong> — la, le texte est dessine par
+                l&apos;application et ne peut pas changer.
+              </Alerte>
+            )}
           </Etape>
 
           {/* Garde-fou technique */}

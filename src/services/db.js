@@ -4,6 +4,7 @@
  */
 import { supabase, USE_SUPABASE } from './supabase';
 import { apiFetch } from './api-client';
+import { ErreurEcriture } from './erreur-ecriture';
 
 class Collection {
   constructor(name) {
@@ -73,27 +74,54 @@ class Collection {
     return newItem;
   }
 
+  /**
+   * ⚠️ `update()` LEVE en cas d'echec — ne jamais revenir a `return null`.
+   *
+   * Avant le 16/09/2026, cette methode renvoyait `null` sur une erreur Supabase
+   * et sur une ligne introuvable. Aucun des 99 appelants ne testait ce retour :
+   * tous affichaient leur toast vert. Un refus RLS ou une coupure reseau a
+   * Moanda passait donc pour un succes (constat C6 de l'audit VAGUE 2).
+   *
+   * Une ligne introuvable leve aussi : « je voulais modifier une ligne, elle
+   * n'existe pas » est un echec, pas un non-evenement.
+   *
+   * Tout rejet non rattrape est montre au gerant par le filet global pose dans
+   * src/main.jsx (src/services/filet-ecriture.js).
+   */
   async update(id, updates) {
     if (USE_SUPABASE) {
       const existing = await this.getById(id);
-      if (!existing) return null;
+      if (!existing) {
+        throw new ErreurEcriture({
+          collection: this.name, operation: 'update', id,
+          cause: 'ligne introuvable',
+        });
+      }
       const merged = { ...existing, ...updates, updated_at: new Date().toISOString() };
       const { error } = await supabase
         .from('app_data')
         .update({ data: merged, updated_at: merged.updated_at })
         .eq('id', id)
         .eq('collection', this.name);
-      if (error) { console.error(`[db] update ${this.name}:`, error.message); return null; }
+      if (error) {
+        console.error(`[db] update ${this.name}:`, error.message);
+        throw new ErreurEcriture({ collection: this.name, operation: 'update', id, cause: error });
+      }
       return merged;
     }
     const items = this._lsRead();
     const idx = items.findIndex((i) => i.id === id);
-    if (idx === -1) return null;
+    if (idx === -1) {
+      throw new ErreurEcriture({
+        collection: this.name, operation: 'update', id, cause: 'ligne introuvable',
+      });
+    }
     items[idx] = { ...items[idx], ...updates, updated_at: new Date().toISOString() };
     this._lsWrite(items);
     return items[idx];
   }
 
+  /** ⚠️ `delete()` LEVE en cas d'echec — voir le commentaire de `update()`. */
   async delete(id) {
     if (USE_SUPABASE) {
       const { error } = await supabase
@@ -101,7 +129,10 @@ class Collection {
         .delete()
         .eq('id', id)
         .eq('collection', this.name);
-      if (error) { console.error(`[db] delete ${this.name}:`, error.message); return false; }
+      if (error) {
+        console.error(`[db] delete ${this.name}:`, error.message);
+        throw new ErreurEcriture({ collection: this.name, operation: 'delete', id, cause: error });
+      }
       return true;
     }
     const items = this._lsRead().filter((i) => i.id !== id);

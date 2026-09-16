@@ -249,6 +249,11 @@ export function composerMockup({
   logo,
   zone,
   position,
+  // Blocs de texte deja normalises par `normaliserTextes` (moteur-mockup.js).
+  // En mode incrustation ils sont DESSINES ici, donc exacts au caractere pres :
+  // c'est la seule facon de garantir qu'un numero de telephone imprime est le
+  // numero saisi. En mode « ia » ils ne passent pas par ici du tout.
+  textes = [],
   forceRelief = 0.55,
   opacite = 0.92,
   forceOmbre = 0.85,
@@ -272,8 +277,16 @@ export function composerMockup({
 
   if (!logo || !logo.naturalWidth) {
     // La scene seule est un resultat valable : le gerant voit deja le support
-    // et le coloris. On le dit, on ne casse rien.
-    return { ok: true, degrade: true, message: 'Scène affichee sans logo : importez le fichier du client.' };
+    // et le coloris. On le dit, on ne casse rien. Les textes, eux, se dessinent
+    // sans logo — un marquage « nom + telephone » se vend tres bien seul.
+    const nb = dessinerTextes(ctx, textes, zone, canvas.width, canvas.height);
+    return {
+      ok: true,
+      degrade: true,
+      message: nb
+        ? `Scène affichee avec ${nb} bloc(s) de texte, sans logo : importez le fichier du client.`
+        : 'Scène affichee sans logo : importez le fichier du client.',
+    };
   }
 
   const L = canvas.width;
@@ -404,7 +417,60 @@ export function composerMockup({
     return { ok: false, degrade: true, message: `Report du logo impossible : ${e?.message || 'erreur'}` };
   }
 
+  // Les textes sont dessines APRES le logo, et sans le traitement de relief :
+  // un texte doit rester parfaitement net et parfaitement lisible a l'ecran,
+  // c'est lui que le gerant relit caractere par caractere.
+  dessinerTextes(ctx, textes, zone, L, H);
+
   return { ok: true, degrade, message: messageDegrade };
+}
+
+/**
+ * Dessine les blocs de texte sur la scene, exactement tels qu'ils ont ete
+ * saisis. Aucune correction, aucune capitalisation automatique : ce qui est
+ * tape est ce qui s'imprime.
+ *
+ * @returns {number} nombre de blocs effectivement dessines
+ */
+function dessinerTextes(ctx, textes, zone, L, H) {
+  const liste = Array.isArray(textes) ? textes.filter((t) => t && t.contenu) : [];
+  if (!liste.length || !ctx) return 0;
+
+  const z = zone || { cx: 0.5, cy: 0.45, wMax: 0.5, hMax: 0.4 };
+  let dessines = 0;
+
+  // Les blocs s'empilent sous le centre de la zone, dans l'ordre de saisie.
+  let curseurY = (z.cy + z.hMax * 0.32) * H;
+
+  for (const t of liste) {
+    try {
+      // `hauteurCm` est une hauteur REELLE sur le support. La zone porte sa
+      // largeur reelle (`largeurMaxCm`) : le rapport des deux donne la taille
+      // a l'ecran, sans jamais supposer une definition d'image.
+      const cmParPixel = (z.largeurMaxCm || 20) / Math.max(1, z.wMax * L);
+      const taillePx = Math.max(9, Math.round((t.hauteurCm || 2) / cmParPixel));
+
+      ctx.save();
+      ctx.font = `700 ${taillePx}px "Helvetica Neue", Arial, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      ctx.fillStyle = t.hex || '#111111';
+      // Un liseré tres discret : sur un support de la meme couleur que le texte
+      // (blanc sur blanc), sans lui le bloc disparait et le gerant croit a un bug.
+      ctx.lineWidth = Math.max(1, taillePx * 0.03);
+      ctx.strokeStyle = 'rgba(0,0,0,0.18)';
+      ctx.globalAlpha = 0.95;
+      ctx.fillText(t.contenu, z.cx * L, curseurY);
+      ctx.strokeText(t.contenu, z.cx * L, curseurY);
+      ctx.restore();
+
+      curseurY += taillePx * 1.25;
+      dessines += 1;
+    } catch {
+      // Un bloc illisible ne doit pas emporter les autres ni l'apercu entier.
+    }
+  }
+  return dessines;
 }
 
 /** Dessine le contour de la zone imprimable (rectangle a coins adoucis). */

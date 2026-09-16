@@ -973,8 +973,11 @@ export default function RapportsAnalyses() {
                     setIaResult({ resume_performance: raw, score_performance: 0, top_services: [], opportunites: [], alertes: [], recommandations: [] });
                   }
                   toast.success('Analyse IA terminee');
-                } catch {
-                  toast.error('Erreur lors de l\'analyse IA');
+                } catch (err) {
+                  // api/_lib/modeles.js:46-63 construit un message qui nomme la
+                  // cause reelle. On le remonte tel quel — c'est lui qui evite
+                  // de rechercher pendant des semaines une cle qui marche.
+                  toast.error(err?.message || 'Erreur lors de l\'analyse IA', { duration: 12000 });
                 } finally {
                   setIaLoading(false);
                 }

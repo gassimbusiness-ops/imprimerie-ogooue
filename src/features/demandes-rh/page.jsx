@@ -205,7 +205,17 @@ export default function DemandesRH() {
 
           // Debit du compte
           if (compte) {
-            await db.comptes_bancaires.update(compte.id, { solde: (compte.solde || 0) - d.montant });
+            try {
+              await db.comptes_bancaires.update(compte.id, { solde: (compte.solde || 0) - d.montant });
+            } catch (err) {
+              // Constat C6 : l'echec de ce debit passait pour un succes. On
+              // nomme l'incoherence exacte — le mouvement existe, le solde non.
+              throw new Error(
+                `La sortie de ${d.montant} F a bien été écrite au journal, mais le solde du `
+                + `compte « ${compte.nom || compte.id} » n'a PAS été débité (${err?.message || err}). `
+                + `Le solde affiché est trop élevé de ${d.montant} F : corrigez-le dans Finances.`,
+              );
+            }
           }
         }
       }

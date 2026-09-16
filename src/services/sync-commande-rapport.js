@@ -1,60 +1,51 @@
 /**
- * Synchronisation Commande → Rapport Journalier
+ * Synchronisation Commande → Rapport Journalier.
  *
- * Quand une commande passe au statut "Livrée", son montant est automatiquement
- * ajouté au rapport journalier du jour (catégorie "imprimerie").
- * Si aucun rapport n'existe pour aujourd'hui, il est créé automatiquement.
+ * ⚠️ DESACTIVEE PAR DEFAUT — voir src/services/reprise-rapport.js pour le
+ * raisonnement complet (double comptage avec la saisie manuelle d'Ibrahim,
+ * mesure du rapport du 2026-03-16, absence de trace d'origine, piege de fuseau).
+ *
+ * Ce fichier ne contient plus que le branchement a la base ; toute la decision
+ * est prise par `decisionReprise()`, qui est pure et testee.
  */
 import { db } from './db';
+import { todayISO } from '@/lib/dates';
+import { decisionReprise, REPRISE_AUTO_RAPPORT } from './reprise-rapport';
 
+/**
+ * @param {object} commande
+ * @returns {Promise<{action: string, motif: string}>}
+ * @throws en cas d'echec d'ecriture — l'appelant (handleStatutChange) le
+ *         compte comme un effet manque et ne pose pas `livraison_traitee`.
+ */
 export async function syncCommandeToRapport(commande) {
-  try {
-    const today = new Date().toISOString().split('T')[0];
-    const montant = commande.montant_total || commande.total || 0;
-    if (montant <= 0) return;
-
-    // Chercher le rapport du jour
-    const allRapports = await db.rapports.list();
-    const rapportDuJour = allRapports.find((r) => r.date === today);
-
-    if (!rapportDuJour) {
-      // Créer un nouveau rapport pour aujourd'hui
-      await db.rapports.create({
-        date: today,
-        operateur_id: 'system',
-        operateur_nom: 'Système (auto)',
-        categories: {
-          copies: 0,
-          marchandises: 0,
-          scan: 0,
-          tirage_saisies: 0,
-          badges_plastification: 0,
-          demi_photos: 0,
-          maintenance: 0,
-          imprimerie: montant,
-        },
-        depenses: [],
-        statut: 'brouillon',
-        historique_statuts: [
-          { statut: 'brouillon', date: new Date().toISOString(), auteur: 'Système' },
-        ],
-        notes: `Auto-généré — Commande ${commande.numero || ''} livrée (${montant} F)`,
-      });
-    } else {
-      // Mettre à jour le rapport existant — ajouter au montant imprimerie
-      const cats = rapportDuJour.categories || {};
-      const newImp = (cats.imprimerie || 0) + montant;
-      await db.rapports.update(rapportDuJour.id, {
-        categories: {
-          ...cats,
-          imprimerie: newImp,
-        },
-        notes: (rapportDuJour.notes || '') + `\n+ Commande ${commande.numero || ''} livrée (${montant} F)`,
-      });
-    }
-
-    console.log(`[SYNC] Commande ${commande.numero} → Rapport du ${today} (+${montant} F)`);
-  } catch (err) {
-    console.error('[SYNC] Erreur syncCommandeToRapport:', err);
+  // Sortie immediate quand l'interrupteur est ferme : aucune lecture, aucune
+  // ecriture, donc aucun cout ni aucun risque.
+  if (!REPRISE_AUTO_RAPPORT) {
+    const d = decisionReprise({ commande, rapportDuJour: null, date: todayISO() });
+    console.info(`[SYNC] rapport journalier non modifié — ${d.motif}`);
+    return d;
   }
+
+  // `todayISO()` et non `toISOString()` : entre 00 h et 01 h heure de Libreville,
+  // la seconde forme visait la veille — journee souvent deja cloturee.
+  const date = todayISO();
+  const rapports = await db.rapports.list();
+  const rapportDuJour = rapports.find((r) => r.date === date) || null;
+
+  const decision = decisionReprise({ commande, rapportDuJour, date });
+
+  if (decision.action === 'creer') {
+    await db.rapports.create({
+      ...decision.patch,
+      historique_statuts: [
+        { statut: 'brouillon', date: new Date().toISOString(), auteur: 'Système' },
+      ],
+    });
+  } else if (decision.action === 'ajouter') {
+    await db.rapports.update(rapportDuJour.id, decision.patch);
+  }
+
+  console.info(`[SYNC] commande ${commande?.numero || commande?.id} → rapport ${date} : ${decision.motif}`);
+  return decision;
 }

@@ -308,8 +308,12 @@ export default function Rapports() {
       const result = await askAI(system, prompt, 600);
       setIaResult(result);
       toast.success('Analyse IA terminee');
-    } catch {
-      toast.error('Erreur lors de l\'analyse IA');
+    } catch (err) {
+      // Le message vient de api/_lib/modeles.js:46-63 : il NOMME la cause
+      // (modele retire, cle revoquee, quota atteint). Le jeter derriere
+      // « Erreur lors de l'analyse IA » a coute des semaines de debug sur
+      // claude-sonnet-4-20250514.
+      toast.error(err?.message || 'Erreur lors de l\'analyse IA', { duration: 12000 });
     } finally {
       setIaLoading(false);
     }
