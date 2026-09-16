@@ -42,8 +42,12 @@ import {
  *        (PostgreSQL rejette le doublon), false = état actuel de la base.
  * @param {number} [options.latenceMs] délai simulé entre la lecture et
  *        l'écriture du mouvement — c'est dans cette fenêtre que la course a lieu.
+ * @param {Array|null} [options.clients] l'annuaire client. Par défaut, la fiche
+ *        `cli-9` que porte la commande, rattachée au compte portail `u-ecole` :
+ *        c'est la forme d'une commande saisie AU COMPTOIR. `null` simule un
+ *        annuaire illisible.
  */
-function creerDepot({ indexUnique = true, latenceMs = 0 } = {}) {
+function creerDepot({ indexUnique = true, latenceMs = 0, clients } = {}) {
   const etat = {
     paiement: {
       id: 'pay-1',
@@ -71,6 +75,10 @@ function creerDepot({ indexUnique = true, latenceMs = 0 } = {}) {
     mouvements: [],
     notifications: [],
     lectures: 0,
+    // `clients: undefined` = l'annuaire par defaut ; `null` = annuaire illisible.
+    clients: clients === undefined
+      ? [{ id: 'cli-9', nom: 'Ecole Saint-Exupery', user_id: 'u-ecole' }]
+      : clients,
   };
 
   const attendre = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -82,6 +90,12 @@ function creerDepot({ indexUnique = true, latenceMs = 0 } = {}) {
     async lireCommande(id) { return etat.commande.id === id ? etat.commande : null; },
     async majCommande(id, data) { if (etat.commande.id === id) etat.commande.data = data; },
     async listerComptes() { return etat.comptes; },
+
+    /** Meme forme que le depot reel : les objets `data`, pas les lignes. */
+    async listerClients() {
+      if (etat.clients === null) throw new Error('annuaire illisible');
+      return etat.clients.map((c) => ({ ...c }));
+    },
 
     async insererMouvement(mouvement) {
       // (1) LIRE — comme le vrai dépôt
@@ -628,4 +642,132 @@ test('l endpoint d initiation refuse le montant AVANT d appeler la passerelle', 
   const posAppel = initiate.indexOf('await fetch(endpoint');
   assert.ok(posControle > 0, 'le controle de plafond doit exister');
   assert.ok(posControle < posAppel, 'il doit precedeer l appel reseau a SingPay');
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   11. « VOTRE PAIEMENT A ETE CONFIRME » — ATTEINT-ELLE QUELQU'UN ?
+
+   C'est la seule des notifications de l'application qui touche de l'argent
+   reel, et c'etait la derniere a porter le defaut de classe du 17/09/2026 :
+   `destinataire_id: cmdRow.data.client_id`.
+
+   Pour une commande saisie AU COMPTOIR — la majorite — ce champ porte l'id de
+   la FICHE client. Le panneau de notifications, lui, filtre sur `user.id`, un
+   id de COMPTE (`getNotifications`, src/services/notifications.js). La ligne
+   etait donc bien ecrite en base, sans la moindre erreur, et personne ne la
+   lisait jamais. Le client payait et n'etait jamais prevenu.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+test('PAIEMENT CONFIRME : une commande du COMPTOIR atteint le COMPTE du client', async () => {
+  const depot = creerDepot();
+  await rejouerRappel(depot, { fetchImpl: singpayConfirme() });
+
+  const notif = depot.etat.notifications.find((n) => n.type === 'paiement_confirme_client');
+  assert.ok(notif, 'le client doit etre prevenu que son paiement est passe');
+  assert.equal(
+    notif.destinataire_id, 'u-ecole',
+    'la fiche `cli-9` doit etre traduite en compte `u-ecole` — sinon personne ne lit cette ligne',
+  );
+  assert.notEqual(notif.destinataire_id, 'cli-9', 'un id de fiche n’est porté par aucun compte');
+});
+
+test('PAIEMENT CONFIRME : une commande du PORTAIL n est pas retraduite — aucune regression', async () => {
+  const depot = creerDepot();
+  // Commande du portail : `client_id` est deja un id de COMPTE.
+  depot.etat.commande.data.client_id = 'u-ecole';
+  await rejouerRappel(depot, { fetchImpl: singpayConfirme() });
+
+  const notif = depot.etat.notifications.find((n) => n.type === 'paiement_confirme_client');
+  assert.equal(notif.destinataire_id, 'u-ecole');
+});
+
+test('PAIEMENT CONFIRME : client sans compte portail — l argent entre, et le gerant lit POURQUOI', async () => {
+  const depot = creerDepot({ clients: [{ id: 'cli-9', nom: 'Passage Nzeng-Ayong' }] });
+  const r = await rejouerRappel(depot, { fetchImpl: singpayConfirme() });
+
+  // 1. L'ARGENT D'ABORD. Un client injoignable ne doit jamais bloquer un encaissement.
+  assert.equal(r.mouvementCree, true, 'l’encaissement ne doit JAMAIS dépendre d’une notification');
+  assert.equal(depot.etat.comptes[1].data.solde, 7000, 'l’argent est entré');
+  assert.equal(depot.etat.commande.data.statut, 'en_production');
+
+  // 2. Aucune ligne morte : ecrire sur un id que personne ne porte n'est pas prevenir.
+  assert.equal(
+    depot.etat.notifications.filter((n) => n.type === 'paiement_confirme_client').length, 0,
+    'une notification que personne ne peut lire est un faux « prévenu »',
+  );
+
+  // 3. LA RAISON, la ou un humain la lit : la notification du gerant.
+  const admin = depot.etat.notifications.find((n) => n.type === 'paiement_confirme');
+  assert.ok(admin, 'le gérant doit rester prévenu de l’encaissement');
+  assert.match(admin.message, /7000 FCFA/, 'le montant encaissé ne doit pas disparaître de l’alerte');
+  assert.match(admin.message, /non prévenu/i, 'le verdict doit être nommé');
+  assert.match(admin.message, /pas de compte/i, 'la RAISON compte autant que le verdict');
+  assert.match(admin.message, /téléphone/i, 'et dire au gérant quoi faire à la place');
+  assert.match(admin.message, /Passage Nzeng-Ayong/, 'la raison doit nommer le client concerné');
+});
+
+test('PAIEMENT CONFIRME : un client joignable ne pollue pas l alerte du gerant', async () => {
+  const depot = creerDepot();
+  await rejouerRappel(depot, { fetchImpl: singpayConfirme() });
+  const admin = depot.etat.notifications.find((n) => n.type === 'paiement_confirme');
+  assert.ok(!/non prévenu/i.test(admin.message), 'aucun avertissement quand le client est prévenu');
+});
+
+test('PAIEMENT CONFIRME : annuaire illisible — on encaisse, et on garde l identifiant tel quel', async () => {
+  const depot = creerDepot({ clients: null });
+  const r = await rejouerRappel(depot, { fetchImpl: singpayConfirme() });
+
+  assert.equal(r.mouvementCree, true, 'une panne de lecture de l’annuaire ne doit pas retenir l’argent');
+  const notif = depot.etat.notifications.find((n) => n.type === 'paiement_confirme_client');
+  assert.ok(notif, 'faute de pouvoir résoudre, on tente quand même');
+  assert.equal(notif.destinataire_id, 'cli-9', 'c’est exactement le comportement d’avant la correction');
+});
+
+test('PAIEMENT ECHOUE : l avis d echec passe par la meme resolution', async () => {
+  const depot = creerDepot();
+  await rejouerRappel(depot, { fetchImpl: singpayConfirme({ result: 'BalanceError' }) });
+
+  const notif = depot.etat.notifications.find((n) => n.type === 'paiement_echoue');
+  assert.ok(notif, 'le client doit être prévenu que son paiement n’est pas passé');
+  assert.equal(notif.destinataire_id, 'u-ecole', 'même défaut, même correction : la fiche est traduite');
+});
+
+test('PAIEMENT ECHOUE : client sans compte — rien n est ecrit, la commande retombe quand meme', async () => {
+  const depot = creerDepot({ clients: [{ id: 'cli-9', nom: 'Passage Nzeng-Ayong' }] });
+  await rejouerRappel(depot, { fetchImpl: singpayConfirme({ result: 'BalanceError' }) });
+
+  assert.equal(depot.etat.commande.data.statut, 'validee_attente_paiement',
+    'l’état de la commande ne dépend pas de la joignabilité du client');
+  assert.equal(depot.etat.notifications.filter((n) => n.type === 'paiement_echoue').length, 0);
+});
+
+test('CONTRAT DE SOURCE : la regle « fiche → compte » n est pas recopiee cote serveur', () => {
+  const noyau = readFileSync(new URL('../api/_lib/singpay-encaissement.js', import.meta.url), 'utf8');
+  assert.ok(
+    noyau.includes("from '../../src/services/compte-client.js'"),
+    'la résolution doit venir du module partagé, jamais d’une seconde copie',
+  );
+  const code = noyau
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/(^|[^:])\/\/.*$/gm, '$1');
+  assert.ok(
+    !/user_id/.test(code),
+    'une seconde source de vérité pour « fiche → compte » est exactement ce qui a produit la panne',
+  );
+  assert.ok(
+    !/destinataire_id: cmdRow\.data\.client_id|destinataire_id: cmdRow\?\.data\?\.client_id/.test(code),
+    'le `client_id` brut est reparti en destinataire : la notification n’atteint plus personne',
+  );
+});
+
+test('CONTRAT DE SOURCE : le depot reel sait lire l annuaire client, de facon stable', () => {
+  const noyau = readFileSync(new URL('../api/_lib/singpay-encaissement.js', import.meta.url), 'utf8');
+  const i = noyau.indexOf('async listerClients()');
+  assert.ok(i > -1, 'sans cette lecture, la résolution serveur ne peut rien résoudre');
+  const corps = noyau.slice(i, i + 500);
+  assert.ok(corps.includes("eq('collection', 'clients')"));
+  assert.ok(
+    corps.includes("order('created_at', { ascending: true })"),
+    'sans tri, Postgres rend les lignes dans un ordre non garanti : la base contient des fiches en double',
+  );
 });

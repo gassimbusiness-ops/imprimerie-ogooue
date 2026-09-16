@@ -12,7 +12,7 @@ import {
   ArrowLeft, Paperclip, FileText, Download, X, AlertTriangle,
 } from 'lucide-react';
 import { toast } from 'sonner';
-import { notifyNouveauMessage } from '@/services/notifications';
+import { notifyNouveauMessageClient } from '@/services/notifications';
 import { askAI } from '@/services/ai';
 import { Package, Bot, Loader2 } from 'lucide-react';
 
@@ -249,9 +249,13 @@ export default function Messagerie() {
           ? `📎 ${attachedFile.name}${newMessage.trim() ? ' — ' + newMessage.trim() : ''}`
           : newMessage.trim(),
       });
-      // Notify destinataire
+      // Ce message part du PERSONNEL vers le CLIENT : c'est ce sens-là qu'il
+      // faut nommer. `activeConv.client_id` porte un id de FICHE quand la
+      // conversation a été ouverte ici (`createConversation` ci-dessous écrit
+      // `client_id: newConvClient`, choisi dans l'annuaire) et un id de COMPTE
+      // quand elle vient du portail. `notifyNouveauMessageClient` traduit.
       if (activeConv.client_id) {
-        notifyNouveauMessage(activeConv.client_id, `${user?.prenom || ''} ${user?.nom || ''}`.trim());
+        notifyNouveauMessageClient(activeConv.client_id, `${user?.prenom || ''} ${user?.nom || ''}`.trim());
       }
       setNewMessage('');
       setAttachedFile(null);

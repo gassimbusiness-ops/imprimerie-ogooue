@@ -72,6 +72,8 @@ import {
   ressembleACommandeTest,
 } from '@/services/livraison-commande';
 import { contrePasserCommande, messageAnnulationClient } from '@/services/contre-passation-commande';
+// La règle « fiche client → compte portail » n'existe qu'ici. Voir le fichier.
+import { resoudreCompteClient } from '@/services/compte-client';
 
 /**
  * Verrou d'execution — une seule transition de statut a la fois PAR COMMANDE.
@@ -748,11 +750,19 @@ export default function Commandes() {
           // portail, et celui de la FICHE pour une commande du comptoir. Ne
           // regarder que `id` laissait 100 % des commandes du portail sans
           // parrain — et le programme de parrainage muet.
-          const client = allClients.find((e) => e.id === cmd.client_id || e.user_id === cmd.client_id);
+          //
+          // Cette règle était écrite ici une SECONDE fois, à la main. Elle
+          // n'existe plus qu'à un endroit : `src/services/compte-client.js`.
+          const client = resoudreCompteClient(allClients, cmd.client_id).fiche;
           if (client?.parraine_par) {
             const parrain = allClients.find((e) => e.code_parrainage === client.parraine_par);
             if (parrain) {
-              const idParrain = parrain.user_id || parrain.id;
+              const cibleParrain = resoudreCompteClient(allClients, parrain.id);
+              // Clé du dossier fidélité : le compte quand il existe, la fiche
+              // sinon. C'est ainsi que les dossiers existants ont été écrits —
+              // `compteId || parrain.id` rend exactement ce que rendait
+              // `parrain.user_id || parrain.id`, sans recopier la règle.
+              const idParrain = cibleParrain.compteId || parrain.id;
               const parrainFid = allFidelite.find((f) => f.client_id === idParrain);
               if (parrainFid) {
                 await db.fidelite_clients.update(parrainFid.id, {
@@ -765,14 +775,21 @@ export default function Commandes() {
                     date: new Date().toISOString(),
                   }],
                 });
-                await db.notifications_app.create({
-                  type: 'parrainage_bonus',
-                  titre: `🎁 +${BONUS_PARRAINAGE} points parrainage !`,
-                  message: `${cmd.client_nom} a passé sa première commande. Vous gagnez ${BONUS_PARRAINAGE} points de fidélité !`,
-                  destinataire: 'client',
-                  destinataire_id: idParrain,
-                  lu: false,
-                });
+                // Les points sont crédités quoi qu'il arrive ; seule la
+                // notification dépend d'un compte portail. Écrire une ligne sur
+                // un id de fiche, c'est écrire une ligne que personne ne lira.
+                if (cibleParrain.compteId) {
+                  await db.notifications_app.create({
+                    type: 'parrainage_bonus',
+                    titre: `🎁 +${BONUS_PARRAINAGE} points parrainage !`,
+                    message: `${cmd.client_nom} a passé sa première commande. Vous gagnez ${BONUS_PARRAINAGE} points de fidélité !`,
+                    destinataire: 'client',
+                    destinataire_id: cibleParrain.compteId,
+                    lu: false,
+                  });
+                } else if (cibleParrain.raison) {
+                  toast.warning(`Points de parrainage crédités — ${cibleParrain.raison}`, { duration: 12000 });
+                }
               }
             }
           }

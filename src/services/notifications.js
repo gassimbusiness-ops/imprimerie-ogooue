@@ -1,8 +1,23 @@
 /**
  * Service de notifications internes
  * 7 événements déclencheurs + gestion lu/non-lu
+ *
+ * ⚠️ DEUX RÈGLES QUI SE PAIENT CHER SI ON LES OUBLIE
+ *
+ * 1. `pourClient: true` sur un type = son destinataire est un CLIENT, désigné
+ *    par le `client_id` d'un document. Cet identifiant est celui d'une FICHE
+ *    pour une commande du comptoir, et celui d'un COMPTE pour une commande du
+ *    portail. `createNotification` le passe donc par `resoudreCompteClient()`.
+ *    Sans cela, les notifications des commandes du comptoir — la majorité —
+ *    n'étaient lues par personne.
+ *
+ * 2. Le `link` d'un type `pourClient` doit viser une route `/client/…`.
+ *    `/commandes`, `/messagerie`, `/rapports` sont des routes du PERSONNEL :
+ *    un client qui clique dessus est renvoyé sur son tableau de bord
+ *    (src/app.jsx:69) sans comprendre pourquoi.
  */
 import { db } from './db';
+import { resoudreCompteClient } from './compte-client';
 
 const NOTIF_TYPES = {
   nouvelle_commande: {
@@ -13,22 +28,26 @@ const NOTIF_TYPES = {
   commande_validee: {
     icon: '✅',
     label: 'Commande validée',
-    link: '/commandes',
+    link: '/client/commandes',
+    pourClient: true,
   },
   commande_production: {
     icon: '🔧',
     label: 'Commande en production',
-    link: '/commandes',
+    link: '/client/commandes',
+    pourClient: true,
   },
   commande_prete: {
     icon: '🎉',
     label: 'Commande prête',
-    link: '/commandes',
+    link: '/client/commandes',
+    pourClient: true,
   },
   commande_livree: {
     icon: '📬',
     label: 'Commande livrée',
-    link: '/commandes',
+    link: '/client/commandes',
+    pourClient: true,
   },
   commande_annulee: {
     icon: '❌',
@@ -37,11 +56,32 @@ const NOTIF_TYPES = {
     // qu'au client, et `/commandes` est une route du personnel — un client qui
     // clique dessus est renvoye sur son tableau de bord (src/app.jsx:69).
     link: '/client/commandes',
+    pourClient: true,
   },
+  /**
+   * ⚠️ UN MESSAGE A UN SENS, ET LES DEUX SENS N'ONT RIEN EN COMMUN.
+   *
+   * Un seul type `nouveau_message` ne pouvait pas être juste : il servait aux
+   * deux directions à la fois, alors qu'elles n'ont ni le même destinataire ni
+   * le même lien. `messagerie/page.jsx` (écran du PERSONNEL) l'employait pour
+   * prévenir un CLIENT : la notification partait sur un id de fiche, et son
+   * lien `/messagerie` — une route du personnel — renvoyait le client sur son
+   * tableau de bord (src/app.jsx). Marquer ce type unique `pourClient` aurait
+   * cassé l'autre sens en même temps. D'où deux types.
+   *
+   * CLIENT → PERSONNEL : diffusion à `all_staff`, lien `/messagerie`.
+   */
   nouveau_message: {
     icon: '💬',
     label: 'Nouveau message',
     link: '/messagerie',
+  },
+  /** PERSONNEL → CLIENT : destinataire nominatif (résolu), lien `/client/messagerie`. */
+  nouveau_message_client: {
+    icon: '💬',
+    label: 'Nouveau message',
+    link: '/client/messagerie',
+    pourClient: true,
   },
   demande_modification: {
     icon: '✏️',
@@ -62,6 +102,10 @@ const NOTIF_TYPES = {
     icon: '🧾',
     label: 'Facture disponible',
     link: '/client/factures',
+    // Le lien était déjà bon ; le destinataire, lui, souffrait du même défaut
+    // que les commandes : `devis-factures/page.jsx` passe l'id de la FICHE
+    // rendu par `resoudreClient()`, jamais celui du compte.
+    pourClient: true,
   },
   tache_assignee: {
     icon: '📋',
@@ -73,7 +117,67 @@ const NOTIF_TYPES = {
     label: 'Rappel commande',
     link: '/commandes',
   },
+  /**
+   * Campagne marketing → tous les clients.
+   *
+   * `notifyPromotion` empruntait le type `nouvelle_commande` : la promotion
+   * partait donc avec le lien `/commandes`, une route du PERSONNEL. Un client
+   * qui cliquait sur « Remise de 10 % » atterrissait sur son tableau de bord.
+   *
+   * `pourClient: true` dit la vérité — cette notification est destinée aux
+   * clients — sans rien changer à la diffusion : le destinataire est le RÔLE
+   * `client`, et `DESTINATAIRES_COLLECTIFS` court-circuite la résolution
+   * « fiche → compte » pour les rôles. La diffusion reste donc sans
+   * `destinataire_id`, ce dont dépend le cloisonnement du 16/09.
+   */
+  promotion: {
+    icon: '🎉',
+    label: 'Promotion',
+    link: '/client/catalogue',
+    pourClient: true,
+  },
 };
+
+/**
+ * Destinataires COLLECTIFS : ce ne sont pas des identifiants, mais des rôles
+ * (ou le groupe `all_staff`). Ils ne passent jamais par la résolution client.
+ */
+const DESTINATAIRES_COLLECTIFS = ['admin', 'manager', 'employe', 'client', 'all_staff'];
+
+/**
+ * À quel COMPTE cette notification doit-elle réellement partir ?
+ *
+ * Pour tout type qui n'est pas `pourClient`, la réponse est « au destinataire
+ * demandé », sans lecture ni détour : rien ne change pour le personnel.
+ *
+ * Pour un type `pourClient`, l'identifiant reçu peut être celui d'une FICHE
+ * (commande du comptoir) ou celui d'un COMPTE (commande du portail).
+ * `resoudreCompteClient()` — la seule règle du dépôt, voir `compte-client.js` —
+ * tranche. Si elle rend un `compteId` vide, la notification n'a aucun lecteur
+ * possible : on ne l'écrit pas, et on rend la raison à l'appelant plutôt que
+ * de laisser une ligne que personne ne lira jamais.
+ *
+ * Ne lève jamais : si l'annuaire est illisible, on garde l'identifiant tel
+ * quel, c'est-à-dire exactement le comportement d'avant cette correction.
+ *
+ * @param {string} type
+ * @param {string} destinataire
+ * @returns {Promise<{compteId: string, raison: string}>}
+ */
+async function cibleDeLaNotification(type, destinataire) {
+  if (!NOTIF_TYPES[type]?.pourClient) return { compteId: destinataire, raison: '' };
+  if (DESTINATAIRES_COLLECTIFS.includes(destinataire)) return { compteId: destinataire, raison: '' };
+
+  let clients = [];
+  try {
+    clients = await db.clients.list();
+  } catch (err) {
+    console.error('Annuaire illisible, destinataire conservé tel quel:', err);
+    return { compteId: destinataire, raison: '' };
+  }
+  const { compteId, raison } = resoudreCompteClient(clients, destinataire);
+  return { compteId, raison };
+}
 
 /**
  * Créer une notification
@@ -89,16 +193,25 @@ const NOTIF_TYPES = {
  *
  * @param {string} type - Un des types dans NOTIF_TYPES
  * @param {string} message - Le texte de la notification
- * @param {string} destinataire - 'admin', 'employe', 'client', 'all_staff', ou un user_id
+ * @param {string} destinataire - 'admin', 'employe', 'client', 'all_staff', ou un
+ *   identifiant. Pour un type `pourClient`, cet identifiant peut être celui de la
+ *   FICHE client (commande du comptoir) : il est alors traduit en identifiant de
+ *   COMPTE avant écriture. Si aucun compte ne peut être atteint, rien n'est écrit
+ *   et le verdict porte la raison.
  * @param {Object} meta - Données supplémentaires (lien, commande_id, etc.)
  * @returns {Promise<{envoyee: boolean, erreur: string|null}>}
  */
 export async function createNotification(type, message, destinataire, meta = {}) {
   try {
+    // Un `client_id` de commande n'est pas toujours un id de compte : voir
+    // `cibleDeLaNotification()` juste au-dessus.
+    const cible = await cibleDeLaNotification(type, destinataire);
+    if (!cible.compteId) return { envoyee: false, erreur: cible.raison };
+
     await db.notifications_app.create({
       type,
       message,
-      destinataire,
+      destinataire: cible.compteId,
       lu: false,
       lien: NOTIF_TYPES[type]?.link || '/',
       icon: NOTIF_TYPES[type]?.icon || '🔔',
@@ -175,13 +288,28 @@ export async function markAllAsRead(user) {
 
 // ─── Les 7 événements déclencheurs ───
 
-/** 1. Client passe commande → Admin + Employés */
-export function notifyNouvelleCommande(clientNom) {
+/**
+ * 1. Client passe commande → Admin + Employés (`all_staff`).
+ *
+ * ⚠️ `all_staff`, PAS `admin`. `client-portal/catalogue.jsx` écrivait sa
+ * notification à la main, directement en base, avec `destinataire: 'admin'` :
+ * un employé non-admin ne voyait donc jamais passer une commande du portail.
+ * Une seconde écriture menée en parallèle de cette fonction est exactement ce
+ * qui laisse vivre ce genre d'écart — toute nouvelle commande passe par ici.
+ *
+ * @param {string} clientNom
+ * @param {object} [meta] détails conservés sur la notification (commande_id…).
+ *   `meta.detail`, s'il est fourni, est ajouté au message sur UNE SEULE ligne :
+ *   le panneau de notifications n'affiche pas les retours à la ligne.
+ * @returns {Promise<{envoyee: boolean, erreur: string|null}>}
+ */
+export function notifyNouvelleCommande(clientNom, meta = {}) {
+  const detail = typeof meta.detail === 'string' ? meta.detail.replace(/\s+/g, ' ').trim() : '';
   return createNotification(
     'nouvelle_commande',
-    `📦 Nouvelle commande de ${clientNom}`,
+    `📦 Nouvelle commande de ${clientNom}${detail ? ` — ${detail}` : ''}`,
     'all_staff',
-    { type: 'commande' }
+    { type: 'commande', ...meta }
   );
 }
 
@@ -252,12 +380,40 @@ export function notifyCommandeAnnulee(clientId, message, meta = {}) {
   );
 }
 
-/** 6. Nouveau message → Destinataire */
-export function notifyNouveauMessage(destinataireId, expediteurNom) {
+/**
+ * 6. Nouveau message — PERSONNEL → CLIENT.
+ *
+ * `clientId` peut être un id de FICHE (conversation ouverte au comptoir par un
+ * employé, `messagerie/page.jsx`) comme un id de COMPTE (conversation ouverte
+ * depuis le portail) : `createNotification` le traduit.
+ *
+ * @param {string} clientId
+ * @param {string} expediteurNom
+ * @returns {Promise<{envoyee: boolean, erreur: string|null}>}
+ */
+export function notifyNouveauMessageClient(clientId, expediteurNom) {
+  return createNotification(
+    'nouveau_message_client',
+    `💬 Nouveau message de ${expediteurNom}`,
+    clientId,
+    { type: 'message' }
+  );
+}
+
+/**
+ * 6 bis. Nouveau message — CLIENT → PERSONNEL.
+ *
+ * `all_staff` et non `admin` : une question posée depuis le portail doit être
+ * vue par qui est devant l'écran, pas seulement par le gérant.
+ *
+ * @param {string} expediteurNom
+ * @returns {Promise<{envoyee: boolean, erreur: string|null}>}
+ */
+export function notifyNouveauMessagePersonnel(expediteurNom) {
   return createNotification(
     'nouveau_message',
     `💬 Nouveau message de ${expediteurNom}`,
-    destinataireId,
+    'all_staff',
     { type: 'message' }
   );
 }
@@ -312,10 +468,20 @@ export function notifyDevisDisponible(clientId, numero) {
   );
 }
 
-/** 12. Campagne marketing → Tous les clients (via destinataire spécial) */
+/**
+ * 12. Campagne marketing → Tous les clients (diffusion au RÔLE `client`).
+ *
+ * ⚠️ AUCUN `destinataire_id` ICI, ET C'EST VOULU. Une promotion s'adresse à
+ * tout le monde ; le filtre de `getNotifications` ne cloisonne que les
+ * notifications NOMINATIVES. Poser un destinataire ici la rendrait invisible à
+ * tous sauf un.
+ *
+ * Le type est `promotion` et non plus `nouvelle_commande` : ce dernier envoyait
+ * les clients sur `/commandes`, une route du personnel.
+ */
 export function notifyPromotion(message) {
   return createNotification(
-    'nouvelle_commande',
+    'promotion',
     `🎉 ${message}`,
     'client',
     { type: 'promotion' }

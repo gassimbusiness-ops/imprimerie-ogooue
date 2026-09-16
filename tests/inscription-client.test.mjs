@@ -25,6 +25,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
+import { resoudreCompteClient } from '../src/services/compte-client.js';
+
 const page = readFileSync(new URL('../src/features/login/page.jsx', import.meta.url), 'utf8');
 const commandes = readFileSync(new URL('../src/features/commandes/page.jsx', import.meta.url), 'utf8');
 
@@ -136,8 +138,75 @@ test('la jointure client accepte l identifiant de COMPTE comme celui de FICHE', 
   // Les 5 commandes du portail portent un `client_id` qui est un identifiant
   // d'UTILISATEUR, pas de fiche client. Ne comparer que `e.id` laissait 100 %
   // des commandes du portail sans parrain (constat de la famille 7).
+  //
+  // ── 17/09/2026 : CE QUI EST EPINGLE A CHANGE DE FORME, PAS DE FORCE ──────
+  //
+  // Ce test exigeait la presence LITTERALE de
+  // `e.id === cmd.client_id || e.user_id === cmd.client_id` dans l'ecran.
+  // C'etait la regle « fiche → compte » recopiee a la main — la SECONDE source
+  // de verite qui a produit la panne des notifications (7 endroits du code
+  // faisaient la confusion). Elle vit desormais dans un seul module.
+  //
+  // La garantie n'est pas affaiblie : elle est verifiee DEUX fois, et mieux.
+  //   (a) sur le COMPORTEMENT reel du module partage — un id de compte comme un
+  //       id de fiche doivent tous deux retrouver la fiche du parrainage ;
+  //   (b) sur la SOURCE de l'ecran — il doit deleguer a ce module, et n'avoir
+  //       recopie aucune variante locale de la regle.
+  // Une jointure qui cesserait de regarder `user_id` ferait tomber (a) ; une
+  // recopie a la main ferait tomber (b).
+
+  // (a) le comportement
+  const annuaire = [
+    { id: 'cli-comptoir', nom: 'Mairie de Moanda', user_id: 'u-mairie', parraine_par: 'OGABCD' },
+    { id: 'cli-portail', nom: 'Ibrahim Abakar', user_id: 'u-ibrahim', code_parrainage: 'OGABCD' },
+  ];
+  assert.equal(
+    resoudreCompteClient(annuaire, 'u-mairie').fiche?.parraine_par, 'OGABCD',
+    'commande du PORTAIL : `client_id` est un id de compte — sans jointure sur `user_id`, aucun parrain',
+  );
+  assert.equal(
+    resoudreCompteClient(annuaire, 'cli-comptoir').fiche?.parraine_par, 'OGABCD',
+    'commande du COMPTOIR : `client_id` est un id de fiche',
+  );
+
+  // (b) la source de l'ecran
   assert.ok(
-    commandes.includes('e.id === cmd.client_id || e.user_id === cmd.client_id'),
-    'la jointure ne regarde plus `user_id` : le parrainage redevient muet sur le portail',
+    commandes.includes("from '@/services/compte-client'"),
+    'l’écran doit prendre la règle au module partagé',
+  );
+  assert.ok(
+    commandes.includes('resoudreCompteClient(allClients, cmd.client_id)'),
+    'la jointure du parrainage ne passe plus par la règle partagée',
+  );
+  assert.ok(
+    !/e\.user_id === cmd\.client_id|\.user_id \|\| parrain\.id/.test(
+      commandes.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1'),
+    ),
+    'la règle « fiche → compte » a été recopiée à la main dans l’écran : c’est le défaut d’origine',
+  );
+});
+
+test('le bonus de parrainage est credite meme sans compte portail — mais rien de mort n est ecrit', () => {
+  // Le parrain est trouve par son CODE : c'est donc une FICHE. Ecrire
+  // `destinataire_id: parrain.id` adressait la notification a un identifiant
+  // que personne ne porte — elle existait en base et personne ne la lisait.
+  const i = commandes.indexOf("type: 'parrainage_bonus'");
+  assert.ok(i > -1, 'la notification de parrainage a disparu');
+  const bloc = commandes.slice(Math.max(0, i - 600), i + 600);
+  assert.ok(
+    bloc.includes('destinataire_id: cibleParrain.compteId'),
+    'le destinataire doit être un id de COMPTE, jamais un id de fiche',
+  );
+  assert.ok(
+    bloc.includes('if (cibleParrain.compteId) {'),
+    'sans compte portail, aucune ligne ne doit être écrite : personne ne la lirait',
+  );
+  // Les POINTS, eux, ne dependent pas d'un compte portail : ils sont credites
+  // avant, sur le dossier fidelite, et la notification n'est qu'un confort.
+  const iPoints = commandes.indexOf('type: \'parrainage_valide\'');
+  assert.ok(iPoints > -1 && iPoints < i, 'les points doivent être crédités avant toute tentative de prévenir');
+  assert.ok(
+    /cibleParrain\.raison/.test(bloc),
+    'le gérant doit lire POURQUOI le parrain n’a pas pu être prévenu, pas juste « rien ne s’est passé »',
   );
 });

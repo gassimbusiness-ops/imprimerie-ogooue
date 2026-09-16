@@ -15,6 +15,8 @@ import {
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { toast } from 'sonner';
 import { syncClientFromCommande } from '@/services/sync-clients';
+import { notifyNouvelleCommande } from '@/services/notifications';
+import { todayISO } from '@/lib/dates';
 
 function fmt(n) { return new Intl.NumberFormat('fr-FR').format(Math.round(n || 0)); }
 
@@ -125,7 +127,10 @@ export default function ClientCatalogue() {
       service: 'Commande en ligne',
       statut: 'en_attente_validation',
       montant_total: totalPanier,
-      date_creation: new Date().toISOString().slice(0, 10),
+      // `todayISO()` et non `.toISOString().slice(0, 10)` : entre 00 h et 01 h
+      // heure de Libreville, ce dernier datait la commande de la veille
+      // (voir src/lib/dates.js).
+      date_creation: todayISO(),
       source: 'portail_client',
       lignes: panier.map((p) => ({
         produit_id: p.id, nom: p.nom, qte: p.qte,
@@ -134,15 +139,18 @@ export default function ClientCatalogue() {
       })),
       historique_statuts: [{ statut: 'en_attente_validation', date: new Date().toISOString(), auteur: clientNom }],
     });
-    // Create notification for admin/employees
-    await db.notifications_app.create({
-      type: 'nouvelle_commande',
-      titre: '🛒 Nouvelle commande',
-      message: `Client : ${clientNom}\nProduits : ${desc}\nMontant estimé : ${fmt(totalPanier)} F`,
-      lien: '/commandes',
+    // Prévenir le PERSONNEL — via `notifyNouvelleCommande`, jamais à la main.
+    //
+    // ⚠️ Cet écran écrivait sa notification directement en base avec
+    // `destinataire: 'admin'`. Or `getNotifications()` ne rend une notification
+    // `admin` qu'aux comptes de rôle `admin` : un employé ne voyait donc JAMAIS
+    // passer une commande du portail, alors qu'il voit toutes celles du
+    // comptoir. `notifyNouvelleCommande()` vise `all_staff` (admin + manager +
+    // employé) — c'est la même fonction que l'écran Commandes du personnel.
+    await notifyNouvelleCommande(clientNom, {
+      detail: `${desc} — ${fmt(totalPanier)} F`,
       commande_id: cmd.id,
-      destinataire: 'admin',
-      lu: false,
+      source: 'portail_client',
     });
     // Sync client auto
     syncClientFromCommande({

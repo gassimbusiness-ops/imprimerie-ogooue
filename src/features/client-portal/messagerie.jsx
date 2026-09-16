@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { db } from '@/services/db';
 import { useAuth } from '@/services/auth';
+import { notifyNouveauMessagePersonnel } from '@/services/notifications';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
@@ -103,6 +104,11 @@ export default function ClientMessagerie() {
       statut: 'nouveau',
     });
     setMessages((prev) => [...prev, msg]);
+    // L'autre sens : CLIENT → PERSONNEL. Il n'existait pas — une question posée
+    // depuis le portail n'apparaissait dans aucun panneau de notifications, et
+    // n'était vue que si quelqu'un ouvrait la messagerie. `all_staff` : celui
+    // qui est devant l'écran, pas seulement le gérant.
+    notifyNouveauMessagePersonnel(`${user?.prenom || ''} ${user?.nom || ''}`.trim() || 'un client');
     setText('');
     setReplyTo(null);
     setAttachedFile(null);

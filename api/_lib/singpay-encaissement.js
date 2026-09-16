@@ -72,6 +72,10 @@
  */
 import crypto from 'node:crypto';
 import { getSingPayHeaders, SINGPAY_BASE_URL } from '../../src/lib/singpayAuth.js';
+// `src/services/compte-client.js` est un module PUR (ni React, ni accès base) :
+// il est importable ici, dans une fonction serverless, comme dans le navigateur.
+// C'est tout l'intérêt — la règle « fiche → compte » n'existe qu'à un endroit.
+import { resoudreCompteClient } from '../../src/services/compte-client.js';
 
 /* ═══════════════════════════════════════════════════════════════════════════
    1. STATUTS
@@ -504,6 +508,47 @@ export async function appliquerStatutPaiement({
 }
 
 /**
+ * À quel COMPTE du portail doit partir la notification client d'un paiement ?
+ *
+ * ⚠️ `commande.client_id` N'EST PAS TOUJOURS UN IDENTIFIANT DE COMPTE.
+ *
+ * Pour une commande saisie au COMPTOIR, l'employé choisit une FICHE dans
+ * l'annuaire : `client_id` porte alors `clients.id`. Pour une commande du
+ * PORTAIL, c'est `users.id`. Or le panneau de notifications filtre sur
+ * `user.id` (`getNotifications`, src/services/notifications.js) : écrire
+ * `destinataire_id: client_id` sans traduction laissait « Votre paiement a été
+ * confirmé » adressé à un identifiant que personne ne porte. La ligne existait
+ * en base, aucune erreur n'était levée, et le client n'en voyait jamais rien.
+ *
+ * `resoudreCompteClient()` est la SEULE règle du dépôt (src/services/compte-client.js).
+ *
+ * Ne lève jamais et ne bloque jamais l'encaissement : l'argent est entré, c'est
+ * ce qui compte ; prévenir est un confort. Si l'annuaire est illisible, on
+ * garde l'identifiant tel quel — strictement le comportement d'avant.
+ *
+ * @param {object} depot
+ * @param {object|null} cmdRow ligne `app_data` de la commande
+ * @returns {Promise<{compteId: string, raison: string}>} `compteId` vide =
+ *   personne à prévenir ; `raison` (vide si la commande n'a simplement aucun
+ *   client) dit pourquoi, en français affichable au gérant.
+ */
+async function compteClientDeLaCommande(depot, cmdRow) {
+  const clientId = cmdRow?.data?.client_id;
+  if (!clientId) return { compteId: '', raison: '' };
+
+  let clients = [];
+  try {
+    clients = await depot.listerClients();
+  } catch (err) {
+    console.error('[singpay] annuaire client illisible, identifiant conserve tel quel:', err?.message || err);
+    return { compteId: String(clientId), raison: '' };
+  }
+
+  const { compteId, raison } = resoudreCompteClient(clients, clientId);
+  return { compteId, raison };
+}
+
+/**
  * Effets d'un paiement confirmé : commande en production, trésorerie créditée,
  * notifications. Idempotent par construction.
  */
@@ -576,27 +621,39 @@ async function appliquerEncaissementConfirme({ depot, paiement, montant, origine
     });
   }
 
+  // Résolu AVANT la notification du gérant : si le client est injoignable en
+  // ligne, c'est cette notification-là — celle qu'un humain lit vraiment — qui
+  // doit le dire. Un `console.warn` dans une fonction Vercel ne prévient personne.
+  const cible = await compteClientDeLaCommande(depot, cmdRow);
+
   await depot.insererNotification({
     type: 'paiement_confirme',
     titre: 'Paiement Mobile Money confirme',
-    message: `${paiement.nom_client || 'Client'} — ${montant} FCFA — commande en production`,
+    message: `${paiement.nom_client || 'Client'} — ${montant} FCFA — commande en production`
+      + (cible.raison ? ` — ⚠️ Client non prévenu : ${cible.raison}` : ''),
     destinataire: 'admin',
     lu: false,
     commande_id: paiement.commande_id || null,
     created_at: maintenant,
   });
 
-  if (cmdRow?.data?.client_id) {
+  if (cible.compteId) {
     await depot.insererNotification({
       type: 'paiement_confirme_client',
       titre: 'Paiement recu',
       message: 'Votre paiement a ete confirme. Votre commande est en production.',
       destinataire: 'client',
-      destinataire_id: cmdRow.data.client_id,
+      // Un id de COMPTE, jamais un id de fiche : voir `compteClientDeLaCommande`.
+      destinataire_id: cible.compteId,
       lu: false,
       commande_id: paiement.commande_id || null,
       created_at: maintenant,
     });
+  } else if (cmdRow?.data?.client_id) {
+    console.warn(
+      `[singpay] paiement ${paiement.payment_reference} encaisse, client NON prevenu`
+      + ` (commande ${cmdRow?.data?.numero || cmdRow?.id}) : ${cible.raison || 'aucun compte portail'}`,
+    );
   }
 
   return { mouvementCree: true };
@@ -626,17 +683,26 @@ async function appliquerEchec({ depot, paiement, statutVerifie, result }) {
     updated_at: maintenant,
   });
 
-  if (cmdRow.data?.client_id) {
+  // Même piège que sur le chemin « payé » : `client_id` peut être un id de
+  // FICHE. Sans traduction, l'avis d'échec n'atteignait personne.
+  const cible = await compteClientDeLaCommande(depot, cmdRow);
+  if (cible.compteId) {
     await depot.insererNotification({
       type: 'paiement_echoue',
       titre: 'Paiement non abouti',
       message: messageEchec(statutVerifie, result),
       destinataire: 'client',
-      destinataire_id: cmdRow.data.client_id,
+      destinataire_id: cible.compteId,
       lu: false,
       commande_id: paiement.commande_id,
       created_at: maintenant,
     });
+  } else if (cmdRow.data?.client_id) {
+    // Aucun argent n'a bougé : le journal serveur suffit ici.
+    console.warn(
+      `[singpay] echec de paiement ${paiement.payment_reference}, client NON prevenu`
+      + ` (commande ${cmdRow.data?.numero || cmdRow.id}) : ${cible.raison || 'aucun compte portail'}`,
+    );
   }
 }
 
@@ -715,6 +781,34 @@ export function depotSupabase(supabase) {
         .select('id, data')
         .eq('collection', 'comptes_bancaires');
       return data || [];
+    },
+
+    /**
+     * L'annuaire client, pour traduire un `client_id` de FICHE en id de COMPTE.
+     *
+     * Rend les objets `data` (et non les lignes) : c'est la forme que
+     * `db.clients.list()` rend au navigateur, et donc celle qu'attend
+     * `resoudreCompteClient()`. Une seule forme, une seule règle.
+     *
+     * Le `.order('created_at')` reprend l'ordonnancement stable de
+     * `lireCollection` (api/_lib/supabase-admin.js) : sans lui, Postgres rend
+     * les lignes dans un ordre non garanti et un annuaire contenant des fiches
+     * en double — la base en contient — résoudrait au hasard d'un appel à
+     * l'autre. Un tri stable rend le défaut reproductible plutôt qu'aléatoire.
+     *
+     * Remonte l'erreur plutôt que de rendre une liste vide : l'appelant
+     * (`compteClientDeLaCommande`) la journalise et conserve l'identifiant tel
+     * quel. Une liste vide silencieuse ferait passer une panne pour un
+     * « client inconnu ».
+     */
+    async listerClients() {
+      const { data, error } = await supabase
+        .from('app_data')
+        .select('id, data')
+        .eq('collection', 'clients')
+        .order('created_at', { ascending: true });
+      if (error) throw new Error(error.message);
+      return (data || []).map((r) => r.data);
     },
 
     /**
