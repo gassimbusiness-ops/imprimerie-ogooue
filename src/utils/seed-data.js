@@ -105,11 +105,19 @@ export const INVESTISSEURS = {
 };
 
 /**
- * Seed the Papeterie construction project with étapes from Excel data.
+ * Chantier « Construction Papeterie » — amorce une seule fois.
+ *
+ * L'idempotence par nom de projet etait deja bonne ; c'est la lecture qui ne
+ * l'etait pas. `list()` rend `[]` sur un echec, donc `some(...)` valait faux et
+ * un second chantier — plus ses 5 etapes — aurait ete cree. Mesure du
+ * 2026-09-17 : `projets_travaux` compte 1 ligne et `etapes_travaux` n'a rien
+ * recu depuis le 09/03, donc CE rejeu-la n'a jamais eu lieu (la collection est
+ * minuscule : sa lecture n'a pas echoue). La garde reste corrigee malgre tout —
+ * « ca n'est pas encore arrive » n'est pas « ca ne peut pas arriver ».
  */
 export async function seedPapeterieProject() {
-  // Check if already seeded
-  const existing = await db.projets_travaux.list();
+  // Lecture qui LEVE : un echec de reseau ne doit pas passer pour « aucun projet ».
+  const existing = await db.projets_travaux.listOuLeve();
   if (existing.some((p) => p.nom === 'Construction Papeterie')) {
     return { status: 'already_seeded' };
   }
@@ -151,11 +159,33 @@ export async function seedPapeterieProject() {
 }
 
 /**
- * Seed inventory into produits_catalogue
+ * Inventaire Excel de janvier 2026 → `produits_catalogue`.
+ *
+ * ⚠️ C'EST CETTE FONCTION QUI A LE PLUS REJOUE, ET ELLE A REJOUE AUJOURD'HUI.
+ *
+ * Mesure du 2026-09-17 sur bcwkrrqmjpaohmafcncw : `produits_catalogue` porte
+ * 195 lignes pour ~45 articles reels — « Tee-shirt blanc KAF enfant » y figure
+ * 10 fois, « Polo blanc » 8 fois. Les 45 lignes de cet inventaire ont ete
+ * reecrites en bloc le 18/08 a 09:09, le 12/09 a 15:59 et le 17/09 a 06:52.
+ *
+ * L'ancienne garde lisait la collection ENTIERE pour repondre a « y a-t-il plus
+ * de 5 lignes ? ». Cette collection pese 20 Mo (une ligne atteint 3,2 Mo
+ * d'images en base64). Sur la connexion de Moanda, cette lecture expire ;
+ * `list()` rend alors `[]`, `0 > 5` est faux, et 45 lignes de plus sont
+ * ecrites — ce qui alourdit la lecture du demarrage suivant. Une boucle qui
+ * s'auto-entretient : 13 lignes le 07/03, 195 aujourd'hui.
+ *
+ * `compterOuLeve()` repond a la meme question en quelques octets, et LEVE au
+ * lieu d'inventer un zero.
+ *
+ * A noter, mesure faite : sur une installation neuve, `seedCatalogue()` ecrit
+ * 13 produits AVANT que cette fonction ne s'execute — la garde est donc
+ * toujours vraie et cet inventaire n'a JAMAIS ete amorce legitimement. Ses
+ * seuls effets en production ont ete des doublons. Le supprimer serait le geste
+ * propre ; c'est une decision produit, pas un nettoyage technique.
  */
 export async function seedInventaire() {
-  const existing = await db.produits_catalogue.list();
-  if (existing.length > 5) return { status: 'already_seeded' };
+  if (await db.produits_catalogue.compterOuLeve() > 5) return { status: 'already_seeded' };
 
   for (const item of INVENTAIRE_STOCK) {
     await db.produits_catalogue.create({

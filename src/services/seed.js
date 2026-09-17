@@ -2,6 +2,7 @@ import { db, getSettings, saveSettings } from './db';
 import { hashPassword, generateSalt } from './crypto';
 import { USE_SUPABASE } from './supabase';
 import { lireJeton } from './api-client';
+import { amorcerParCle } from './amorcage-idempotent';
 
 /**
  * Comptes par défaut — UNIQUEMENT ces 3 comptes.
@@ -51,9 +52,51 @@ const DEFAULT_SETTINGS = {
 };
 
 /**
- * Seed the database if empty.
- * Checks Supabase (or localStorage) for existing employees.
- * Only runs once — subsequent calls return immediately.
+ * Cree UN compte par defaut. Isolee pour que la boucle d'amorcage n'ait a
+ * connaitre que « creer cet element ».
+ */
+async function creerCompte(c) {
+  const salt = generateSalt();
+  const hash = await hashPassword(c.password, salt);
+  return db.employes.create({
+    nom: c.nom,
+    prenom: c.prenom,
+    display_name: c.display_name || '',
+    email: c.email,
+    role: c.role,
+    poste: c.poste,
+    password_hash: hash,
+    password_salt: salt,
+    password_changed_at: new Date().toISOString(),
+  });
+}
+
+/**
+ * Amorce les comptes par defaut — UNE SEULE FOIS, quel que soit le poste.
+ *
+ * ⚠️ CE QUI A CASSE ICI, ET QU'IL NE FAUT PAS RETABLIR.
+ *
+ * L'ancienne garde etait :
+ *
+ *     const existing = await db.employes.list();
+ *     if (existing.length > 0) return;
+ *
+ * Le critere etait deja en base — le defaut n'etait pas la. `list()` NE LEVE
+ * JAMAIS : sur une coupure, un delai depasse ou un refus, elle rend `[]`,
+ * c'est-a-dire la reponse exacte d'une base neuve. Le seed reecrivait alors
+ * les 3 comptes par-dessus les existants.
+ *
+ * MESURE EN PRODUCTION LE 2026-09-17 : 13 comptes pour 7 identites, en trois
+ * vagues (07-13/03, 18/03 a 01:14, 05/05 a 06:27). Les vagues 2 et 3 portent
+ * la signature d'un seul passage de ce bloc : 3 creations en 0,4 s puis en 7 s.
+ * Au meme demarrage, les gardes du catalogue et des travaux ont tenu — donc la
+ * base n'etait pas vide : c'est UNE requete sur quatre qui avait echoue.
+ *
+ * Deux changements, et ils comptent tous les deux :
+ *   1. la lecture est `listOuLeve()` : si elle echoue, on ne devine pas, on
+ *      leve, et main.jsx journalise sans rien ecrire ;
+ *   2. la decision se prend E-MAIL PAR E-MAIL. Un compte manquant est ajoute —
+ *      seul —, un compte present n'est jamais recree.
  */
 export async function seedDatabase() {
   // ⚠️ NE PAS AMORCER LES COMPTES DEPUIS UN NAVIGATEUR NON CONNECTE.
@@ -73,38 +116,30 @@ export async function seedDatabase() {
     return;
   }
 
-  // Check if already seeded (data exists)
-  const existing = await db.employes.list();
-  if (existing.length > 0) return;
+  const { lus, crees, baseVide } = await amorcerParCle({
+    lire: () => db.employes.listOuLeve(),
+    creer: creerCompte,
+    souhaites: COMPTES,
+    champ: 'email',
+  });
 
-  console.log('[seed] Initialisation des comptes par défaut...');
-
-  // Create the 3 accounts
-  for (const c of COMPTES) {
-    const salt = generateSalt();
-    const hash = await hashPassword(c.password, salt);
-    await db.employes.create({
-      nom: c.nom,
-      prenom: c.prenom,
-      display_name: c.display_name || '',
-      email: c.email,
-      role: c.role,
-      poste: c.poste,
-      password_hash: hash,
-      password_salt: salt,
-      password_changed_at: new Date().toISOString(),
-    });
+  if (crees.length) {
+    console.log(`[seed] compte(s) manquant(s) créé(s) : ${crees.join(', ')} (${lus} déjà en base)`);
   }
 
-  // Seed default settings if not already set
+  // Les fixtures qui suivent ne s'adressent QU'A une installation neuve.
+  //
+  // `getSettings()` ne leve pas non plus : sur un echec elle rend `{}`, donc
+  // `!settings.nom_entreprise` serait vrai et `saveSettings()` ECRASERAIT les
+  // parametres reels — 88 Ko en production, logo compris. On ne l'appelle donc
+  // que la ou une ecrasure est sans objet : quand il n'y avait aucun compte.
+  if (!baseVide) return;
+
   const settings = await getSettings();
   if (!settings.nom_entreprise) {
     await saveSettings(DEFAULT_SETTINGS);
   }
 
-  console.log('[seed] 3 comptes créés + paramètres par défaut');
-
-  // Seed catalogue products
   await seedCatalogue();
 }
 
@@ -349,11 +384,26 @@ const CATALOGUE_PRODUCTS = [
 ];
 
 /**
- * Seed catalogue products if empty.
+ * Catalogue de demarrage — POUR UNE INSTALLATION NEUVE, et elle seule.
+ *
+ * ⚠️ POURQUOI PAS D'IDEMPOTENCE PAR `sku` ICI, contrairement aux comptes.
+ *
+ * Mesure du 2026-09-17 : `produits_catalogue` contient 195 lignes, et AUCUNE
+ * ne porte l'un des 13 `sku` ci-dessous (TEX-001 … DIV-001). Le catalogue reel
+ * de l'imprimerie a remplace ces produits de demonstration. Une idempotence
+ * « par sku » les reintroduirait donc tous les 13 au prochain demarrage, dans
+ * le catalogue que le gerant montre a ses clients.
+ *
+ * La cle naturelle a un sens quand l'etat vise est « ces enregistrements
+ * DOIVENT exister » — c'est le cas des comptes. Ici l'etat vise est « une base
+ * vide recoit un jeu de depart » : le bon critere est bien le vide. Ce qui a
+ * casse dans `seedDatabase()`, ce n'etait pas ce critere-la, c'etait la lecture
+ * qui mentait. On corrige donc la lecture, pas le critere :
+ *   - `compterOuLeve()` LEVE si elle echoue — plus jamais de `[]` invente ;
+ *   - elle compte cote serveur, sans telecharger les 20 Mo de la collection.
  */
 export async function seedCatalogue() {
-  const existing = await db.produits_catalogue.list();
-  if (existing.length > 0) return;
+  if (await db.produits_catalogue.compterOuLeve() > 0) return;
 
   console.log('[seed] Initialisation du catalogue produits...');
   for (const p of CATALOGUE_PRODUCTS) {
@@ -566,11 +616,15 @@ const STOCK_ARTICLES = [
 ];
 
 /**
- * Seed stock articles if empty.
+ * Consommables de demarrage — meme regle que `seedCatalogue()` ci-dessus.
+ *
+ * Mesure du 2026-09-17 : `produits` contient 45 lignes, toutes porteuses d'un
+ * champ `reference`, et AUCUNE ne porte l'une des 13 references ci-dessous
+ * (ENC-001 … SUB-001). Une idempotence « par reference » creerait donc 13
+ * articles de stock fantomes dans l'inventaire du gerant.
  */
 async function seedStock() {
-  const existing = await db.produits.list();
-  if (existing.length > 0) return;
+  if (await db.produits.compterOuLeve() > 0) return;
 
   console.log('[seed] Initialisation des articles de stock...');
   for (const a of STOCK_ARTICLES) {

@@ -71,6 +71,37 @@ class Collection {
     try { return JSON.parse(localStorage.getItem(this.lsKey) || '[]'); } catch { return []; }
   }
 
+  /**
+   * COMPTE les lignes sans les telecharger, et LEVE si la lecture echoue.
+   *
+   * Ajoutee le 17/09/2026 pour les amorcages. `produits_catalogue` pese 20 Mo
+   * (195 lignes, dont une a 3,2 Mo d'images en base64) : verifier « la
+   * collection est-elle vide ? » avec `list()` faisait telecharger ces 20 Mo a
+   * CHAQUE demarrage, sur la connexion de Moanda. C'est cette lecture-la qui
+   * expirait, rendait `[]`, et faisait rejouer `seedInventaire()` — 45 lignes
+   * de plus, donc une lecture encore plus lourde au demarrage suivant.
+   *
+   * `head: true` ne ramene que l'en-tete de comptage : quelques octets.
+   */
+  async compterOuLeve() {
+    if (USE_SUPABASE) {
+      const { count, error } = await supabase
+        .from('app_data')
+        .select('id', { count: 'exact', head: true })
+        .eq('collection', this.name);
+      if (error) {
+        throw new ErreurLecture({
+          collection: this.name,
+          operation: 'count',
+          libelle: LIBELLES_COLLECTION[this.name],
+          cause: error,
+        });
+      }
+      return count || 0;
+    }
+    return (await this.listOuLeve()).length;
+  }
+
   async getById(id) {
     if (USE_SUPABASE) {
       const { data, error } = await supabase
@@ -235,6 +266,16 @@ class CollectionEmployes extends Collection {
     }
     const json = await res.json();
     return json.employes || [];
+  }
+
+  /**
+   * Les employes ne sont PAS lisibles directement dans `app_data` par le
+   * navigateur : ils passent par /api/employes, qui filtre selon le role. Le
+   * comptage `head: true` de la classe mere court-circuiterait ce filtre, donc
+   * on compte ce que l'endpoint a bien voulu rendre. La lecture leve toujours.
+   */
+  async compterOuLeve() {
+    return (await this.listOuLeve()).length;
   }
 
   async getById(id) {

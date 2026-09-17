@@ -50,8 +50,11 @@ test('le rendu React est appele apres la boucle d amorcage, pas derriere un awai
 test('seedDatabase sort avant tout appel reseau si aucun jeton de session', () => {
   const bloc = seed.slice(seed.indexOf('export async function seedDatabase()'));
   const iGarde = bloc.indexOf('lireJeton()');
-  const iListe = bloc.indexOf('db.employes.list()');
+  // Depuis le 17/09/2026 la lecture des comptes est `listOuLeve()` : elle LEVE
+  // au lieu de rendre `[]` sur une panne. Voir tests/amorcage-idempotent.test.mjs.
+  const iListe = bloc.indexOf('db.employes.listOuLeve()');
   assert.ok(iGarde !== -1, 'seedDatabase doit verifier la presence d un jeton');
+  assert.ok(iListe !== -1, 'seedDatabase doit lire les employes avec listOuLeve()');
   assert.ok(
     iGarde < iListe,
     'la garde doit venir AVANT la lecture des employes, sinon on provoque un 401 certain',
