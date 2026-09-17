@@ -79,21 +79,13 @@
     }
   ],
   "crons": [
-    { "path": "/api/autopost?voie=tick&h=05", "schedule": "0 5 * * *" },
-    { "path": "/api/autopost?voie=tick&h=06", "schedule": "0 6 * * *" },
-    { "path": "/api/autopost?voie=tick&h=07", "schedule": "0 7 * * *" },
-    { "path": "/api/autopost?voie=tick&h=08", "schedule": "0 8 * * *" },
-    { "path": "/api/autopost?voie=tick&h=09", "schedule": "0 9 * * *" },
-    { "path": "/api/autopost?voie=tick&h=10", "schedule": "0 10 * * *" },
-    { "path": "/api/autopost?voie=tick&h=11", "schedule": "0 11 * * *" },
-    { "path": "/api/autopost?voie=tick&h=12", "schedule": "0 12 * * *" },
-    { "path": "/api/autopost?voie=tick&h=13", "schedule": "0 13 * * *" },
-    { "path": "/api/autopost?voie=tick&h=14", "schedule": "0 14 * * *" },
-    { "path": "/api/autopost?voie=tick&h=15", "schedule": "0 15 * * *" },
-    { "path": "/api/autopost?voie=tick&h=16", "schedule": "0 16 * * *" },
-    { "path": "/api/autopost?voie=tick&h=17", "schedule": "0 17 * * *" },
-    { "path": "/api/autopost?voie=tick&h=18", "schedule": "0 18 * * *" },
-    { "path": "/api/autopost?voie=tick&h=19", "schedule": "0 19 * * *" },
-    { "path": "/api/autopost?voie=tick&h=20", "schedule": "0 20 * * *" }
+    {
+      "path": "/api/autopost?voie=tick&h=08",
+      "schedule": "0 8 * * *"
+    },
+    {
+      "path": "/api/autopost?voie=tick&h=17",
+      "schedule": "0 17 * * *"
+    }
   ]
 }

@@ -429,8 +429,20 @@ test('vercel.json : les rewrites autopost sont AVANT l attrape-tout /api/(.*)', 
  *
  * Le plan Hobby ne declenche une tache qu une fois par jour, a l heure pres.
  * La precision ne vient donc pas de la frequence d une tache mais du NOMBRE de
- * taches quotidiennes declarees : une par heure. Si ce tableau retrecit, le
- * retard maximal grandit — et c est une decision, pas un detail de config.
+ * taches quotidiennes declarees. Si ce tableau retrecit, le retard maximal
+ * grandit — et c est une decision, pas un detail de config.
+ *
+ * ⚠️ RAMENE A DEUX TACHES LE 18/09/2026, ET C EST DELIBERE.
+ *    La premiere version en declarait SEIZE, une par heure. Personne n a pu
+ *    etablir combien le plan Hobby en accepte : la documentation ne le dit pas.
+ *    Or un deploiement refuse bloque TOUS les deploiements — c est exactement
+ *    ce qui est arrive le 17/09 avec la 13e fonction serverless, ou le build
+ *    passait au vert et le deploiement echouait sans cause lisible.
+ *    Deux taches couvrent les deux creneaux reels. La chaine est de toute facon
+ *    a l arret (pas de jeton, pas de media heberge) : on ne perd rien
+ *    aujourd hui, et on ne risque pas de bloquer le reste.
+ *    Le jour du passage en `live`, remonter le nombre — en verifiant qu un
+ *    deploiement de PREVISUALISATION passe avant de promouvoir.
  */
 test('vercel.json : une tache planifiee par heure, et toutes vers la voie tick', () => {
   const conf = JSON.parse(lire('vercel.json'));
