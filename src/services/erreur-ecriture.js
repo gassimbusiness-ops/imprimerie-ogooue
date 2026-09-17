@@ -24,8 +24,15 @@
  * Module pur : aucun import. Teste par tests/erreur-ecriture.test.mjs.
  */
 
-/** Libelles francais des collections, pour un message comprehensible. */
-const LIBELLES_COLLECTION = Object.freeze({
+/**
+ * Libelles francais des collections, pour un message comprehensible.
+ *
+ * EXPORTE depuis le 17/09/2026 : `src/services/chargement.js` compose les
+ * messages d'echec de LECTURE a partir de la meme table. Deux tables auraient
+ * diverge — c'est exactement ce qui a casse les notifications (voir
+ * tasks/lessons.md). Un seul endroit, donc.
+ */
+export const LIBELLES_COLLECTION = Object.freeze({
   rapports: 'le rapport journalier',
   rapport_lignes: 'les lignes du rapport',
   commandes: 'la commande',
@@ -50,6 +57,25 @@ const LIBELLES_COLLECTION = Object.freeze({
   performances_employes: "l'évaluation de performance",
   produits_catalogue: 'le produit du catalogue',
   notifications_app: 'la notification',
+  // Ajouts du 17/09/2026 : collections lues par les ecrans repris (chargement).
+  users: "le compte d'utilisateur",
+  parametres: 'les paramètres',
+  audit_logs: "le journal d'activité",
+  paiements_mobile: 'le paiement mobile',
+  prospects: 'le prospect',
+  conversations: 'la conversation',
+  messages_conv: 'le message',
+  evenements: "l'événement",
+  projets_travaux: 'le chantier',
+  etapes_travaux: "l'étape de chantier",
+  tarifs_clients: 'le tarif client',
+  actionnaires: "l'associé",
+  investissements: "l'investissement",
+  apports_associes: "l'apport d'associé",
+  investisseurs: "l'investisseur",
+  depots_hebdo: 'le dépôt hebdomadaire',
+  campagnes_prospection: 'la campagne de prospection',
+  actions_marketing: "l'action marketing",
 });
 
 /** Verbes francais des operations. */

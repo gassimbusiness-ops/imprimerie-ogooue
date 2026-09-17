@@ -1,6 +1,9 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { db } from '@/services/db';
+import { todayISO } from '@/lib/dates';
 import { useAuth } from '@/services/auth';
+import { useChargeur, executerAction } from '@/services/chargement';
+import { EnChargement, EchecChargement } from '@/features/partages/etat-chargement';
 import { logAction } from '@/services/audit';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -24,7 +27,6 @@ import {
   Plus,
   Eye,
 } from 'lucide-react';
-import { toast } from 'sonner';
 
 function fmt(n) {
   return new Intl.NumberFormat('fr-FR').format(Math.round(n || 0));
@@ -55,25 +57,29 @@ export default function ClotureCaisse() {
   const canWrite = hasPermission('statistiques', 'write');
   const [clotures, setClotures] = useState([]);
   const [rapports, setRapports] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [showDetail, setShowDetail] = useState(null);
   const [counts, setCounts] = useState({});
   const [commentaire, setCommentaire] = useState('');
 
-  const today = new Date().toISOString().split('T')[0];
+  // Date metier LOCALE. `.toISOString().split('T')[0]` renvoyait la veille
+  // entre 00 h et 01 h heure de Libreville : le comptage du soir se comparait
+  // alors aux recettes du mauvais jour. Regle du projet : src/lib/dates.js.
+  const today = todayISO();
 
-  const load = async () => {
+  // `listOuLeve()` : sur une coupure, `list()` rendait `[]` et l'ecran
+  // affichait « 0 F attendu » — un chiffre FAUX, presente comme une mesure.
+  // Un ecart de caisse calcule sur une lecture ratee n'est pas un ecart.
+  const load = useCallback(async () => {
     const [cData, rData] = await Promise.all([
-      db.clotures_caisse.list(),
-      db.rapports.list(),
+      db.clotures_caisse.listOuLeve(),
+      db.rapports.listOuLeve(),
     ]);
-    setClotures(cData.sort((a, b) => b.date.localeCompare(a.date)));
+    setClotures([...cData].sort((a, b) => (b.date || '').localeCompare(a.date || '')));
     setRapports(rData);
-    setLoading(false);
-  };
+  }, []);
 
-  useEffect(() => { load(); }, []);
+  const { enCours: loading, erreur: erreurChargement, recharger } = useChargeur(load);
 
   // Calculate expected cash for today
   const todayExpected = useMemo(() => {
@@ -117,15 +123,22 @@ export default function ClotureCaisse() {
       denominations: counts,
       valide_par: '',
     };
-    await db.clotures_caisse.create(data);
-    await logAction('cloture', 'cloture_caisse', {
-      entityLabel: `Clôture ${new Date(today).toLocaleDateString('fr-FR')}`,
-      details: `Clôture de caisse — Attendu: ${fmt(todayExpected.attendu)} F, Réel: ${fmt(totalPhysique)} F, Écart: ${fmt(ecart)} F`,
-      metadata: { attendu: todayExpected.attendu, reel: totalPhysique, ecart, statut },
-    });
-    toast.success('Clôture de caisse enregistrée');
+    // Le comptage physique est une piece comptable : annoncer « enregistree »
+    // sans ecriture ferait perdre la trace de l'ecart du jour, et personne ne
+    // saurait s'il faut recompter.
+    const { ok } = await executerAction(async () => {
+      await db.clotures_caisse.create(data);
+      await logAction('cloture', 'cloture_caisse', {
+        entityLabel: `Clôture ${new Date(`${today}T00:00:00`).toLocaleDateString('fr-FR')}`,
+        details: `Clôture de caisse — Attendu: ${fmt(todayExpected.attendu)} F, Réel: ${fmt(totalPhysique)} F, Écart: ${fmt(ecart)} F`,
+        metadata: { attendu: todayExpected.attendu, reel: totalPhysique, ecart, statut },
+      });
+    }, { succes: 'Clôture de caisse enregistrée', quoi: 'La clôture de caisse' });
+    // Le dialogue reste OUVERT sur un echec : le comptage saisi billet par
+    // billet n'est pas perdu, il suffit de reappuyer.
+    if (!ok) return;
     setShowForm(false);
-    load();
+    recharger();
   };
 
   // Stats
@@ -143,11 +156,17 @@ export default function ClotureCaisse() {
     return { total: clotures.length, avgEcart, majeurs };
   }, [clotures]);
 
-  if (loading) {
+  if (loading) return <EnChargement />;
+
+  // Avant tout le reste : sans les rapports du jour, le « montant attendu »
+  // vaudrait 0 F et l'ecran presenterait un ecart calcule sur du vide.
+  if (erreurChargement) {
     return (
-      <div className="flex items-center justify-center py-20">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-      </div>
+      <EchecChargement
+        quoi="la caisse et les rapports du jour"
+        onReessayer={recharger}
+        enCours={loading}
+      />
     );
   }
 
@@ -369,7 +388,7 @@ export default function ClotureCaisse() {
 
             <Button className="w-full gap-2" onClick={handleSubmit}>
               <CheckCircle2 className="h-4 w-4" />
-              Valider la clôture
+              Enregistrer la clôture
             </Button>
           </div>
         </DialogContent>

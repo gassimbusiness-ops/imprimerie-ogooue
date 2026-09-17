@@ -74,9 +74,12 @@ test('le module de lecture n importe aucune couche de donnees', () => {
 
 test('l ecran Stock ne contient plus d ecriture dans load()', () => {
   const page = readFileSync(new URL('../src/features/stocks/page.jsx', import.meta.url), 'utf8');
-  const debut = page.indexOf('const load = async ()');
+  // 17/09/2026 — ancres mises a jour : `load` est desormais un `useCallback`
+  // branche sur `useChargeur` (src/services/chargement.js). L'invariant teste
+  // est inchange : un ecran de consultation n'ecrit pas en base.
+  const debut = page.indexOf('const load = useCallback(async ()');
   assert.ok(debut > -1, 'load() introuvable');
-  const fin = page.indexOf('useEffect(() => { load(); }, []);', debut);
+  const fin = page.indexOf('useChargeur(load)', debut);
   assert.ok(fin > debut, 'fin de load() introuvable');
   const corps = page.slice(debut, fin);
 

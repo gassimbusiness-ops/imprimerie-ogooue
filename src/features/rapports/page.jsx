@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import { db } from '@/services/db';
 import { todayISO, startOfMonthISO, addDaysISO } from '@/lib/dates';
 import { caRapport, depensesRapport } from '@/services/finance-calc';
@@ -7,6 +7,8 @@ import {
   libellePlage, totauxFiltres,
 } from './filtrage';
 import { useAuth } from '@/services/auth';
+import { useChargeur, executerAction } from '@/services/chargement';
+import { EnChargement, EchecChargement } from '@/features/partages/etat-chargement';
 import { logAction } from '@/services/audit';
 import { notifyRapportSoumis, notifyDemandeModification } from '@/services/notifications';
 import { Button } from '@/components/ui/button';
@@ -67,7 +69,6 @@ export default function Rapports() {
   const { user, isAdmin, isManager } = useAuth();
   const isEmploye = user?.role === 'employe';
   const [rapports, setRapports] = useState([]);
-  const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   // Saisie hors ligne : les jours de coupure a Moanda, le rapport est tenu sur
   // Excel puis importe ici. Voir components/import-excel-ecran.jsx.
@@ -95,19 +96,26 @@ export default function Rapports() {
   const plage = useMemo(() => normaliserPlage(dateFrom, dateTo), [dateFrom, dateTo]);
   const rechercheActive = usePlageActive || !!searchTerm.trim() || filterStatut !== 'all';
 
-  const load = async () => {
-    setLoading(true);
-    let data = await db.rapports.list();
+  // ── Chargement ─────────────────────────────────────────────────────────
+  //
+  // `listOuLeve()` et non `list()` : `list()` rend `[]` sur une coupure reseau,
+  // et l'ecran annoncait alors « Aucun rapport » — la phrase d'un mois sans
+  // activite, pour une panne de connexion. A Moanda, ou l'equipe saisit sur
+  // Excel les jours de coupure, cette confusion est quotidienne.
+  //
+  // Le `try`, le drapeau de chargement et le message sont dans
+  // `useChargeur` (src/services/chargement.js), pas ici.
+  const load = useCallback(async () => {
+    let data = await db.rapports.listOuLeve();
     if (isEmploye) {
       // Date métier locale — jamais .toISOString() (cf. src/lib/dates.js)
       const today = todayISO();
       data = data.filter((r) => r.date === today);
     }
     setRapports(data.sort((a, b) => (b.date || '').localeCompare(a.date || '')));
-    setLoading(false);
-  };
+  }, [isEmploye]);
 
-  useEffect(() => { load(); }, []);
+  const { enCours: loading, erreur: erreurChargement, recharger } = useChargeur(load);
 
   // Index de recherche : calculé UNE fois par jeu de données (600+ rapports,
   // ~30 lignes chacun) et non à chaque frappe.
@@ -164,63 +172,87 @@ export default function Rapports() {
     setEditing(r); setShowForm(true);
   };
 
+  // ── Actions ────────────────────────────────────────────────────────────
+  //
+  // Toutes passent par `executerAction` : le message de succes n'est atteint
+  // QUE si l'ecriture a abouti. Avant, un refus RLS ou une coupure laissait le
+  // handler s'arreter au milieu — dialogue ouvert, liste non rechargee, et pas
+  // un mot. Pire encore quand l'echec arrivait apres le toast vert.
+  //
+  // `logAction` ne peut plus faire echouer l'action (voir services/audit.js) :
+  // une trace ratee n'est pas un enregistrement rate.
+
   const handleSave = async (data) => {
-    if (editing) {
-      await db.rapports.update(editing.id, data);
-      await logAction('update', 'rapports', {
-        entityId: editing.id, entityLabel: `Rapport ${data.date}`,
-        details: `Modification rapport du ${data.date}`,
-      });
-      toast.success('Rapport mis à jour');
-    } else {
-      const created = await db.rapports.create(data);
-      await logAction('create', 'rapports', {
-        entityId: created.id, entityLabel: `Rapport ${data.date}`,
-        details: `Nouveau rapport: ${data.date} par ${data.operateur_nom}`,
-      });
-      if (data.statut === 'soumis') {
-        notifyRapportSoumis(data.operateur_nom, data.date);
+    const { ok } = await executerAction(async () => {
+      if (editing) {
+        await db.rapports.update(editing.id, data);
+        await logAction('update', 'rapports', {
+          entityId: editing.id, entityLabel: `Rapport ${data.date}`,
+          details: `Modification rapport du ${data.date}`,
+        });
+      } else {
+        const created = await db.rapports.create(data);
+        await logAction('create', 'rapports', {
+          entityId: created.id, entityLabel: `Rapport ${data.date}`,
+          details: `Nouveau rapport: ${data.date} par ${data.operateur_nom}`,
+        });
+        if (data.statut === 'soumis') {
+          notifyRapportSoumis(data.operateur_nom, data.date);
+        }
       }
-      toast.success('Rapport créé');
-    }
-    setShowForm(false); setEditing(null); load();
+    }, {
+      succes: editing ? 'Rapport mis à jour' : 'Rapport créé',
+      quoi: `Le rapport du ${data.date}`,
+    });
+    // Le formulaire reste OUVERT sur un echec : la saisie du jour n'est pas
+    // perdue, le gerant n'a qu'a reappuyer une fois la connexion revenue.
+    if (!ok) return;
+    setShowForm(false); setEditing(null); recharger();
   };
 
   const handleDelete = async (r) => {
     if (!confirm(`Supprimer le rapport du ${r.date} ?`)) return;
-    await db.rapports.delete(r.id);
-    await logAction('delete', 'rapports', {
-      entityId: r.id, entityLabel: `Rapport ${r.date}`,
-      details: `Suppression rapport du ${r.date}`,
-    });
-    toast.success('Rapport supprimé'); load();
+    const { ok } = await executerAction(async () => {
+      await db.rapports.delete(r.id);
+      await logAction('delete', 'rapports', {
+        entityId: r.id, entityLabel: `Rapport ${r.date}`,
+        details: `Suppression rapport du ${r.date}`,
+      });
+    }, { succes: 'Rapport supprimé', quoi: `La suppression du rapport du ${r.date}` });
+    if (ok) recharger();
   };
 
   const handleValidate = async (r) => {
-    await db.rapports.update(r.id, { statut: 'valide', valide_par: `${user.prenom} ${user.nom}`, valide_at: new Date().toISOString() });
-    await logAction('update', 'rapports', {
-      entityId: r.id, entityLabel: `Rapport ${r.date}`,
-      details: `Validation rapport du ${r.date}`,
-    });
-    toast.success('Rapport validé'); load();
+    const { ok } = await executerAction(async () => {
+      await db.rapports.update(r.id, { statut: 'valide', valide_par: `${user.prenom} ${user.nom}`, valide_at: new Date().toISOString() });
+      await logAction('update', 'rapports', {
+        entityId: r.id, entityLabel: `Rapport ${r.date}`,
+        details: `Validation rapport du ${r.date}`,
+      });
+    }, { succes: 'Rapport validé', quoi: `La validation du rapport du ${r.date}` });
+    if (ok) recharger();
   };
 
   const handleCloturer = async (r) => {
-    await db.rapports.update(r.id, { statut: 'cloture', cloture_par: `${user.prenom} ${user.nom}`, cloture_at: new Date().toISOString() });
-    await logAction('cloture', 'rapports', {
-      entityId: r.id, entityLabel: `Rapport ${r.date}`,
-      details: `Clôture rapport du ${r.date}`,
-    });
-    toast.success('Rapport clôturé et verrouillé'); load();
+    const { ok } = await executerAction(async () => {
+      await db.rapports.update(r.id, { statut: 'cloture', cloture_par: `${user.prenom} ${user.nom}`, cloture_at: new Date().toISOString() });
+      await logAction('cloture', 'rapports', {
+        entityId: r.id, entityLabel: `Rapport ${r.date}`,
+        details: `Clôture rapport du ${r.date}`,
+      });
+    }, { succes: 'Rapport clôturé et verrouillé', quoi: `La clôture du rapport du ${r.date}` });
+    if (ok) recharger();
   };
 
   const handleDeverrouiller = async (r) => {
-    await db.rapports.update(r.id, { statut: 'soumis', deverrouille_par: `${user.prenom} ${user.nom}`, deverrouille_at: new Date().toISOString() });
-    await logAction('update', 'rapports', {
-      entityId: r.id, entityLabel: `Rapport ${r.date}`,
-      details: `Déverrouillage rapport du ${r.date}`,
-    });
-    toast.success('Rapport déverrouillé'); load();
+    const { ok } = await executerAction(async () => {
+      await db.rapports.update(r.id, { statut: 'soumis', deverrouille_par: `${user.prenom} ${user.nom}`, deverrouille_at: new Date().toISOString() });
+      await logAction('update', 'rapports', {
+        entityId: r.id, entityLabel: `Rapport ${r.date}`,
+        details: `Déverrouillage rapport du ${r.date}`,
+      });
+    }, { succes: 'Rapport déverrouillé', quoi: `Le déverrouillage du rapport du ${r.date}` });
+    if (ok) recharger();
   };
 
   const handleDemandeModif = async () => {
@@ -278,10 +310,16 @@ export default function Rapports() {
     const r = rapports.find((x) => x.id === rapportId);
     if (!r) return;
     const newCats = { ...r.categories, [catKey]: Math.max(0, num) };
-    await db.rapports.update(rapportId, { categories: newCats });
+    // Saisie directe dans le tableur : sans message, une cellule refusee
+    // revenait a son ancienne valeur au rechargement, sans explication.
+    const { ok } = await executerAction(
+      () => db.rapports.update(rapportId, { categories: newCats }),
+      { quoi: `La saisie du ${r.date}` },
+    );
+    if (!ok) return;
     setEditingCell(null);
-    load();
-  }, [editingCell, editValue, rapports]);
+    recharger();
+  }, [editingCell, editValue, rapports, recharger]);
 
   const handleCellKeyDown = useCallback((e) => {
     if (e.key === 'Enter') handleCellSave();
@@ -323,8 +361,19 @@ export default function Rapports() {
     }
   };
 
-  if (loading) {
-    return <div className="flex items-center justify-center py-20"><div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" /></div>;
+  if (loading) return <EnChargement />;
+
+  // L'echec de chargement passe AVANT tout le reste. Sinon l'ecran afficherait
+  // ses compteurs a « — » et son « Aucun rapport », c'est-a-dire la description
+  // d'un mois sans activite. Ce n'est pas la meme information.
+  if (erreurChargement) {
+    return (
+      <EchecChargement
+        quoi="les rapports journaliers"
+        onReessayer={recharger}
+        enCours={loading}
+      />
+    );
   }
 
   return (
@@ -721,7 +770,12 @@ export default function Rapports() {
                       {isLocked && !isAdmin && (
                         <Button variant="ghost" size="icon" className="text-blue-600" onClick={() => { setShowModifRequest(r); setModifMotif(''); }}><MessageSquare className="h-4 w-4" /></Button>
                       )}
-                      {r.statut === 'brouillon' && <Button variant="ghost" size="icon" className="text-destructive" onClick={() => handleDelete(r.id)}><Trash2 className="h-4 w-4" /></Button>}
+                      {/* `handleDelete(r)` et non `handleDelete(r.id)` : le
+                          handler attend le rapport entier. Avec l'identifiant
+                          seul, la confirmation annoncait « le rapport du
+                          undefined » et la suppression partait sur un id
+                          `undefined` — elle echouait, sans un mot. */}
+                      {r.statut === 'brouillon' && <Button variant="ghost" size="icon" className="text-destructive" onClick={() => handleDelete(r)}><Trash2 className="h-4 w-4" /></Button>}
                     </div>
                   </div>
                 </CardContent>
@@ -756,7 +810,7 @@ export default function Rapports() {
               de montage, il ne doit pas le faire tant qu'il n'est pas demande. */}
           {showImport && (
             <ImportExcelEcran
-              onTermine={load}
+              onTermine={recharger}
               onFermer={() => setShowImport(false)}
             />
           )}

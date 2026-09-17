@@ -5,6 +5,15 @@
 import { supabase, USE_SUPABASE } from './supabase';
 import { apiFetch } from './api-client';
 import { ErreurEcriture } from './erreur-ecriture';
+import { ErreurLecture } from './erreur-lecture';
+import { LIBELLES_COLLECTION } from './erreur-ecriture';
+
+/** Le filtrage de `filter()` et de `filterOuLeve()` — ecrit une seule fois. */
+function filtrerSur(items, criteria) {
+  return items.filter((item) =>
+    Object.entries(criteria).every(([key, value]) => item[key] === value),
+  );
+}
 
 class Collection {
   constructor(name) {
@@ -14,16 +23,51 @@ class Collection {
 
   // ── READ ──
 
+  /**
+   * ⚠️ `list()` N'ECHOUE JAMAIS — et c'est un piege, pas une qualite.
+   *
+   * Sur une coupure reseau a Moanda ou sur un refus RLS, elle rend `[]`. L'ecran
+   * affiche alors « Aucun rapport ce mois-ci » : la phrase d'une base vide, pour
+   * une panne de connexion. Recensement du 17/09/2026 : 130 lectures d'ecran
+   * sont dans ce cas, dont 86 au montage.
+   *
+   * On ne peut pas faire lever `list()` d'un coup sans risquer 40 ecrans a la
+   * fois. Les ecrans repris appellent donc `listOuLeve()` ci-dessous, qui LEVE ;
+   * `list()` reste le repli silencieux pour les appelants pas encore convertis,
+   * au comportement strictement inchange.
+   */
   async list() {
+    try {
+      return await this.listOuLeve();
+    } catch (e) {
+      console.error(`[db] list ${this.name}:`, e?.causeTexte || e?.message);
+      return [];
+    }
+  }
+
+  /**
+   * Meme lecture que `list()`, mais un echec LEVE une `ErreurLecture`.
+   * C'est la seule implementation de la requete : `list()` l'appelle.
+   */
+  async listOuLeve() {
     if (USE_SUPABASE) {
       const { data, error } = await supabase
         .from('app_data')
         .select('data')
         .eq('collection', this.name)
         .order('created_at', { ascending: true });
-      if (error) { console.error(`[db] list ${this.name}:`, error.message); return []; }
+      if (error) {
+        throw new ErreurLecture({
+          collection: this.name,
+          operation: 'list',
+          libelle: LIBELLES_COLLECTION[this.name],
+          cause: error,
+        });
+      }
       return (data || []).map((r) => r.data);
     }
+    // Repli localStorage : un contenu illisible n'est pas une panne de reseau,
+    // c'est un stockage vide. On garde `[]`, sans lever.
     try { return JSON.parse(localStorage.getItem(this.lsKey) || '[]'); } catch { return []; }
   }
 
@@ -44,10 +88,12 @@ class Collection {
   }
 
   async filter(criteria) {
-    const items = await this.list();
-    return items.filter((item) =>
-      Object.entries(criteria).every(([key, value]) => item[key] === value),
-    );
+    return filtrerSur(await this.list(), criteria);
+  }
+
+  /** `filter()` qui LEVE au lieu de rendre une liste vide. Voir `listOuLeve()`. */
+  async filterOuLeve(criteria) {
+    return filtrerSur(await this.listOuLeve(), criteria);
   }
 
   // ── WRITE ──
@@ -165,17 +211,30 @@ class Collection {
  * En mode localStorage (sans Supabase), on garde le comportement d'origine.
  */
 class CollectionEmployes extends Collection {
-  async list() {
-    if (!USE_SUPABASE) return super.list();
+  /**
+   * Seule la variante qui LEVE est redefinie : `list()` est heritee, et son
+   * repli silencieux (log + `[]`) vaut donc aussi pour les employes. Redefinir
+   * les deux aurait ecrit deux fois la meme regle de repli.
+   */
+  async listOuLeve() {
+    if (!USE_SUPABASE) return super.listOuLeve();
+    let res;
     try {
-      const res = await apiFetch('/api/employes', { method: 'GET' });
-      if (!res.ok) { console.error('[db] employes.list:', res.status); return []; }
-      const json = await res.json();
-      return json.employes || [];
+      res = await apiFetch('/api/employes', { method: 'GET' });
     } catch (e) {
-      console.error('[db] employes.list:', e.message);
-      return [];
+      throw new ErreurLecture({
+        collection: this.name, operation: 'list',
+        libelle: 'les fiches employés', cause: e,
+      });
     }
+    if (!res.ok) {
+      throw new ErreurLecture({
+        collection: this.name, operation: 'list',
+        libelle: 'les fiches employés', cause: `HTTP ${res.status}`,
+      });
+    }
+    const json = await res.json();
+    return json.employes || [];
   }
 
   async getById(id) {

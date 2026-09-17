@@ -1,7 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { db, getSettings } from '@/services/db';
 import { useAuth } from '@/services/auth';
+import { useChargeur } from '@/services/chargement';
+import { EnChargement, EchecChargement } from '@/features/partages/etat-chargement';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import {
@@ -54,20 +56,23 @@ export default function ClientDashboard() {
   const [messages, setMessages] = useState([]);
   const [fidelite, setFidelite] = useState(null);
   const [bannerSettings, setBannerSettings] = useState(null);
-  const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    const loadData = async () => {
+  // ── Chargement ─────────────────────────────────────────────────────────
+  //
+  // Cote client, la lecture ratee est la plus humiliante pour l'imprimerie :
+  // avec `list()` et son `[]`, le client voyait « Aucune commande » alors qu'il
+  // venait d'en passer une — et il rappelait pour savoir si elle etait perdue.
+  const loadData = useCallback(async () => {
       const clientName = `${user?.prenom || ''} ${user?.nom || ''}`.trim().toLowerCase();
       const clientId = user?.id;
 
       const [cmds, devisAll, facturesAll, convs, allMsgs, fidAll, settings] = await Promise.all([
-        db.commandes.list(),
-        db.devis.list(),
-        db.factures.list(),
-        db.conversations.list(),
-        db.messages_conv.list(),
-        db.fidelite_clients.list(),
+        db.commandes.listOuLeve(),
+        db.devis.listOuLeve(),
+        db.factures.listOuLeve(),
+        db.conversations.listOuLeve(),
+        db.messages_conv.listOuLeve(),
+        db.fidelite_clients.listOuLeve(),
         getSettings(),
       ]);
 
@@ -100,10 +105,9 @@ export default function ClientDashboard() {
       setFidelite(myFid);
 
       setBannerSettings(settings?.banniere_client || null);
-      setLoading(false);
-    };
-    loadData();
   }, [user]);
+
+  const { enCours: loading, erreur: erreurChargement, recharger } = useChargeur(loadData);
 
   const copyCode = () => {
     if (fidelite?.code_parrainage) {
@@ -112,7 +116,17 @@ export default function ClientDashboard() {
     }
   };
 
-  if (loading) return <div className="flex justify-center py-12"><div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" /></div>;
+  if (loading) return <EnChargement />;
+
+  if (erreurChargement) {
+    return (
+      <EchecChargement
+        quoi="vos commandes et vos factures"
+        onReessayer={recharger}
+        enCours={loading}
+      />
+    );
+  }
 
   const niveauConfig = NIVEAUX[fidelite?.niveau || 'bronze'] || NIVEAUX.bronze;
 

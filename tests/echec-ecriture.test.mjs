@@ -188,11 +188,27 @@ test('une ligne introuvable est un echec, pas un non-evenement', () => {
 test('list() NE leve PAS — une lecture ratee ne doit jamais blanchir un ecran', () => {
   // Choix delibere et documente : `list()` est appelee dans tous les `load()`
   // au montage. La faire lever rejouerait exactement l'incident du 14/09/2026.
-  // Le prix est connu : un ecran peut se vider sans un mot. C'est un constat
-  // laisse ouvert, pas un oubli.
-  const bloc = dbSrc.slice(dbSrc.indexOf('async list()'), dbSrc.indexOf('async getById'));
+  // Le prix est connu : un ecran peut se vider sans un mot.
+  //
+  // 17/09/2026 — la borne du bloc a ete precisee (elle s'arretait a
+  // `async getById`, et attrapait donc la nouvelle `listOuLeve()`). L'invariant
+  // teste, lui, est inchange : `list()` ne leve pas et rend `[]`.
+  const bloc = dbSrc.slice(dbSrc.indexOf('async list()'), dbSrc.indexOf('async listOuLeve'));
   assert.ok(bloc.includes('return [];'), 'list() doit continuer à renvoyer [] en cas d’erreur');
   assert.ok(!bloc.includes('throw'), 'list() ne doit pas lever : voir l’incident du 14/09');
+});
+
+test('listOuLeve() LEVE — c est la porte de sortie du constat laisse ouvert', () => {
+  // Le prix de `list()` ci-dessus (« un ecran peut se vider sans un mot ») n'est
+  // plus a payer partout : les ecrans repris lisent par `listOuLeve()`, qui
+  // leve une ErreurLecture. Sans cette variante, aucun `try/catch` d'ecran
+  // n'aurait quoi que ce soit a attraper.
+  const bloc = dbSrc.slice(dbSrc.indexOf('async listOuLeve'), dbSrc.indexOf('async getById'));
+  assert.ok(bloc.includes('throw new ErreurLecture'), 'listOuLeve() doit lever une ErreurLecture');
+  assert.ok(
+    dbSrc.includes('return await this.listOuLeve()'),
+    'list() doit s’appuyer sur listOuLeve() : une seule implémentation de la requête',
+  );
 });
 
 test('le filet est pose dans main.jsx AVANT le rendu, et sous try/catch', () => {

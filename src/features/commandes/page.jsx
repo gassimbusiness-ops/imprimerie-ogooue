@@ -2,6 +2,8 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { db } from '@/services/db';
 import { supabase, USE_SUPABASE } from '@/services/supabase';
 import { useAuth } from '@/services/auth';
+import { useChargeur, executerAction, messageEchecAction } from '@/services/chargement';
+import { EnChargement, EchecChargement } from '@/features/partages/etat-chargement';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -170,7 +172,6 @@ export default function Commandes() {
   const [employes, setEmployes] = useState([]);
   const [search, setSearch] = useState('');
   const [filterStatut, setFilterStatut] = useState('all');
-  const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [showDetail, setShowDetail] = useState(null);
   const [editItem, setEditItem] = useState(null);
@@ -191,8 +192,14 @@ export default function Commandes() {
     lignes: [{ description: '', quantite: 1, prix_unitaire: 0 }],
   });
 
+  // `listOuLeve()` : sur une coupure, `list()` rendait `[]` et l'ecran
+  // annoncait « Aucune commande ». Un atelier qui a dix commandes en cours lit
+  // alors qu'il n'en a aucune — et personne ne sait si la base a ete videe ou
+  // si c'est le reseau. Le `try` est dans `useChargeur`.
   const load = useCallback(async () => {
-    const [c, cl, em] = await Promise.all([db.commandes.list(), db.clients.list(), db.employes.list()]);
+    const [c, cl, em] = await Promise.all([
+      db.commandes.listOuLeve(), db.clients.listOuLeve(), db.employes.listOuLeve(),
+    ]);
     setCommandes(c.sort((a, b) => (b.created_at || '').localeCompare(a.created_at || '')));
     setClients(cl);
     // Dedoublonnage : la base peut contenir plusieurs enregistrements pour la meme
@@ -206,10 +213,9 @@ export default function Commandes() {
       return true;
     });
     setEmployes(uniqueStaff);
-    setLoading(false);
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  const { enCours: loading, erreur: erreurChargement, recharger } = useChargeur(load);
 
   // ── Supabase Realtime — sync en temps réel entre Admin et Employé ──
   useEffect(() => {
@@ -351,15 +357,21 @@ export default function Commandes() {
       ],
     };
 
-    if (editItem) {
-      await db.commandes.update(editItem.id, data);
-      toast.success('Commande modifiée');
-    } else {
-      await db.commandes.create(data);
-      // Notifier le staff de la nouvelle commande
-      notifyNouvelleCommande(data.client_nom || 'Client');
-      toast.success('Commande créée');
-    }
+    const { ok } = await executerAction(async () => {
+      if (editItem) {
+        await db.commandes.update(editItem.id, data);
+      } else {
+        await db.commandes.create(data);
+        // Notifier le staff de la nouvelle commande
+        notifyNouvelleCommande(data.client_nom || 'Client');
+      }
+    }, {
+      succes: editItem ? 'Commande modifiée' : 'Commande créée',
+      quoi: `La commande de ${data.client_nom}`,
+    });
+    // Le formulaire reste OUVERT sur un echec : les lignes saisies ne sont pas
+    // perdues, il suffit de reappuyer une fois la connexion revenue.
+    if (!ok) return;
     // Sync client auto
     syncClientFromCommande({
       client_id: data.client_id,
@@ -368,7 +380,7 @@ export default function Commandes() {
       source: 'commande_admin',
     }).catch(() => {});
     setShowForm(false);
-    load();
+    recharger();
   };
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -604,9 +616,21 @@ export default function Commandes() {
           }
         }
 
-        await load();
+        await recharger();
         const updated = await db.commandes.getById(cmd.id);
         if (updated) setShowDetail(updated);
+      } catch (e) {
+        // Sans ce `catch`, l'echec du `db.commandes.update()` ci-dessus sortait
+        // du handler par un rejet non rattrape : les boutons sont appeles sans
+        // `await` depuis le JSX (voir les avertissements « promesse perdue »),
+        // et le gerant voyait la commande revenir a son ancien statut sans un
+        // mot — ou, pour une erreur qui n'est pas un ErreurEcriture, rien du
+        // tout, le filet global ne reconnaissant que celles-la.
+        console.error('[commandes] changement de statut refusé :', e);
+        toast.error(
+          messageEchecAction(e, `Le passage de la commande ${cmd.numero || ''} à « ${getStatut(newStatut).label} »`),
+          { duration: 12000 },
+        );
       } finally {
         setCommandeEnCours(null);
       }
@@ -817,14 +841,17 @@ export default function Commandes() {
 
   // ── Sauvegarder commentaire/note ──
   const handleSaveComments = async (cmd) => {
-    await db.commandes.update(cmd.id, {
-      commentaire_client: commentaireClient,
-      note_interne: noteInterne,
-    });
-    toast.success('Commentaires enregistrés');
+    const { ok } = await executerAction(
+      () => db.commandes.update(cmd.id, {
+        commentaire_client: commentaireClient,
+        note_interne: noteInterne,
+      }),
+      { succes: 'Commentaires enregistrés', quoi: 'Le commentaire' },
+    );
+    if (!ok) return;
     const updated = await db.commandes.getById(cmd.id);
     if (updated) setShowDetail(updated);
-    load();
+    recharger();
   };
 
   /**
@@ -842,9 +869,11 @@ export default function Commandes() {
     if (!confirm(`Supprimer définitivement la commande ${cmd.numero || ''} ?\nClient : ${cmd.client_nom}\nMontant : ${fmt(cmd.montant_total || cmd.total)} F`)) return;
     setCommandeEnCours(cmd.id);
     try {
-      await db.commandes.delete(cmd.id);
-      toast.success('Commande supprimée');
-      await load();
+      const { ok } = await executerAction(
+        () => db.commandes.delete(cmd.id),
+        { succes: 'Commande supprimée', quoi: `La suppression de la commande ${cmd.numero || ''}` },
+      );
+      if (ok) await recharger();
     } finally {
       setCommandeEnCours(null);
     }
@@ -913,7 +942,7 @@ export default function Commandes() {
 
     const updated = await db.commandes.getById(cmd.id);
     if (updated) setShowDetail(updated);
-    load();
+    recharger();
   };
 
   // ── Envoyer un rappel à l'opérateur assigné ──
@@ -958,11 +987,22 @@ export default function Commandes() {
       return;
     }
     if (!confirm(`Supprimer ${purgeables.length} commande(s) marquée(s) « test » ?\n(aucune n'est livrée ni encaissée)`)) return;
-    for (const cmd of purgeables) {
-      await db.commandes.delete(cmd.id);
+    // Une purge partielle doit se dire : annoncer « 6 supprimées » quand la
+    // connexion a lache a la troisieme laisserait croire la base propre.
+    let supprimees = 0;
+    const { ok } = await executerAction(async () => {
+      for (const cmd of purgeables) {
+        await db.commandes.delete(cmd.id);
+        supprimees += 1;
+      }
+    }, {
+      succes: `${purgeables.length} commande(s) de test supprimée(s)`,
+      quoi: 'La suppression des commandes de test',
+    });
+    if (!ok && supprimees > 0) {
+      toast.info(`${supprimees} commande(s) sur ${purgeables.length} ont tout de même été supprimées.`);
     }
-    toast.success(`${purgeables.length} commande(s) de test supprimée(s)`);
-    await load();
+    await recharger();
   };
 
   // Open detail view
@@ -973,11 +1013,17 @@ export default function Commandes() {
     setNoteInterne(cmd.note_interne || '');
   };
 
-  if (loading) {
+  if (loading) return <EnChargement />;
+
+  // Avant les onglets et les compteurs : « Aucune commande » sur une coupure
+  // est un mensonge, et c'est sur cette phrase qu'on decide d'appeler un client.
+  if (erreurChargement) {
     return (
-      <div className="flex items-center justify-center py-20">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-      </div>
+      <EchecChargement
+        quoi="les commandes"
+        onReessayer={recharger}
+        enCours={loading}
+      />
     );
   }
 

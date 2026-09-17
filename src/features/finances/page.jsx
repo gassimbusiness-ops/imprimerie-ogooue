@@ -1,7 +1,9 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { db } from '@/services/db';
 import { logAction } from '@/services/audit';
 import { useAuth } from '@/services/auth';
+import { useChargeur, executerAction } from '@/services/chargement';
+import { EnChargement, EchecChargement } from '@/features/partages/etat-chargement';
 import { executerPrelevementsDus } from '@/services/credit-mensualites';
 import { executerChargesDues } from '@/services/charges-fixes-prelevement';
 import { apercuMensualitesDues, apercuChargesDues } from '@/services/prelevements-apercu';
@@ -95,7 +97,6 @@ export default function Finances() {
   const [dettes, setDettes] = useState([]);
   const [actionnaires, setActionnaires] = useState([]);
   const [investissements, setInvestissements] = useState([]);
-  const [loading, setLoading] = useState(true);
 
   // UI states
   // Confirmation des prelevements : { nature, apercu, aujourdhui } ou null.
@@ -114,14 +115,17 @@ export default function Finances() {
   const [mvSearch, setMvSearch] = useState('');
   const [mvShowAll, setMvShowAll] = useState(false); // bypass total du filtre mois
 
-  const load = async () => {
+  // `listOuLeve()` : `list()` rendait `[]` sur une coupure, et l'ecran
+  // affichait une tresorerie a 0 F avec des comptes « absents ». Un solde faux
+  // presente comme un solde est la pire sortie possible d'un ecran d'argent.
+  const load = useCallback(async () => {
     const [cp, mv, ch, de, ac, inv] = await Promise.all([
-      db.comptes_bancaires.list(),
-      db.mouvements_financiers.list(),
-      db.charges_fixes.list(),
-      db.dettes.list(),
-      db.actionnaires.list(),
-      db.investissements.list(),
+      db.comptes_bancaires.listOuLeve(),
+      db.mouvements_financiers.listOuLeve(),
+      db.charges_fixes.listOuLeve(),
+      db.dettes.listOuLeve(),
+      db.actionnaires.listOuLeve(),
+      db.investissements.listOuLeve(),
     ]);
     setComptes(cp);
     setMouvements(mv.sort((a, b) => (b.date || b.created_at || '').localeCompare(a.date || a.created_at || '')));
@@ -129,8 +133,9 @@ export default function Finances() {
     setDettes(de);
     setActionnaires(ac);
     setInvestissements(inv);
-    setLoading(false);
-  };
+  }, []);
+
+  const { enCours: loading, erreur: erreurChargement, recharger } = useChargeur(load);
 
   // ── AUCUN PRELEVEMENT AU MONTAGE ────────────────────────────────────────
   // Ce `useEffect` enchainait `executerPrelevementsDus()` et
@@ -140,8 +145,6 @@ export default function Finances() {
   // commentaire d'en-tete de src/services/execution-unique.js).
   // L'ecran ne fait plus que lire. L'execution est explicite : bouton +
   // apercu chiffre + confirmation.
-  useEffect(() => { load(); }, []);
-
   /* ── Execution explicite des prelevements ───────────────────────────────
      `nature` vaut 'credit' (mensualites de dette) ou 'charge' (charges fixes).
      Etape 1 : on calcule un apercu SANS RIEN ECRIRE et on ouvre la confirmation.
@@ -186,7 +189,7 @@ export default function Finances() {
         const libelle = nature === 'credit' ? 'Prélèvement crédits' : 'Prélèvement charges fixes';
         toast.success(`${nb} prélèvement(s) — ${fmt(total)} F débités`);
         await logAction('update', 'finances', { entityLabel: libelle, details: `${nb} échéances, ${fmt(total)} F` });
-        await load();
+        await recharger();
       } else if (errors.length === 0) {
         toast.info('Aucune échéance due — rien n\'a été débité');
       }
@@ -362,32 +365,51 @@ export default function Finances() {
       }
     }
 
-    if (editItem) {
-      await coll.update(editItem.id, data);
-      await logAction('update', 'finances', { entityId: editItem.id, entityLabel: data.nom || data.libelle || data.titre || data.description || '', details: `Modification ${activeTab}` });
-      toast.success('Modifié');
-    } else {
-      const created = await coll.create(data);
-      await logAction('create', 'finances', { entityId: created.id, entityLabel: data.nom || data.libelle || data.titre || data.description || '', details: `Ajout ${activeTab}` });
-      toast.success('Ajouté');
-      // Si on cree un mouvement, on cale le filtre sur le mois du mouvement
-      // pour qu'il soit immediatement visible (evite de devoir cliquer "Tout afficher")
-      if (activeTab === 'mouvements' && data.date) {
-        setFilterMonth(data.date.slice(0, 7));
-        setMvDateFrom('');
-        setMvDateTo('');
-        setMvShowAll(false);
+    // ⚠️ Les soldes ont peut-etre DEJA ete ajustes juste au-dessus. Si l'ecriture
+    // du mouvement echoue maintenant, le solde et le mouvement divergent : on le
+    // dit explicitement plutot que de laisser le gerant devant un ecran muet.
+    const { ok } = await executerAction(async () => {
+      if (editItem) {
+        await coll.update(editItem.id, data);
+        await logAction('update', 'finances', { entityId: editItem.id, entityLabel: data.nom || data.libelle || data.titre || data.description || '', details: `Modification ${activeTab}` });
+      } else {
+        const created = await coll.create(data);
+        await logAction('create', 'finances', { entityId: created.id, entityLabel: data.nom || data.libelle || data.titre || data.description || '', details: `Ajout ${activeTab}` });
+        // Si on cree un mouvement, on cale le filtre sur le mois du mouvement
+        // pour qu'il soit immediatement visible (evite de devoir cliquer "Tout afficher")
+        if (activeTab === 'mouvements' && data.date) {
+          setFilterMonth(data.date.slice(0, 7));
+          setMvDateFrom('');
+          setMvDateTo('');
+          setMvShowAll(false);
+        }
       }
+    }, { succes: editItem ? 'Modifié' : 'Ajouté', quoi: `L'écriture « ${activeTab} »` });
+
+    if (!ok) {
+      if (activeTab === 'mouvements') {
+        toast.error(
+          'Le solde du compte a peut-être déjà été ajusté : vérifiez-le avant de ressaisir.',
+          { duration: 12000 },
+        );
+      }
+      // Le formulaire reste ouvert : la saisie n'est pas perdue.
+      return;
     }
     setShowForm(false);
-    load();
+    recharger();
   };
 
   // Rapprochement bancaire : marquer/demarquer un mouvement comme "pointe"
   // (= verifie face au releve bancaire reel)
   const handleTogglePointe = async (m) => {
-    await db.mouvements_financiers.update(m.id, { pointe: !m.pointe });
-    load();
+    // Le rapprochement bancaire se fait releve en main : une coche qui ne
+    // s'enregistre pas fait repointer deux fois la meme ligne.
+    const { ok } = await executerAction(
+      () => db.mouvements_financiers.update(m.id, { pointe: !m.pointe }),
+      { quoi: 'Le pointage de cette écriture' },
+    );
+    if (ok) recharger();
   };
 
   const handleDelete = async (item) => {
@@ -416,23 +438,45 @@ export default function Finances() {
       }
     }
 
-    await getCollection().delete(item.id);
-    await logAction('delete', 'finances', { entityId: item.id, entityLabel: item.nom || item.libelle || item.titre || item.description || '', details: `Suppression ${activeTab}` });
-    toast.success('Supprimé');
-    load();
+    const { ok } = await executerAction(async () => {
+      await getCollection().delete(item.id);
+      await logAction('delete', 'finances', { entityId: item.id, entityLabel: item.nom || item.libelle || item.titre || item.description || '', details: `Suppression ${activeTab}` });
+    }, { succes: 'Supprimé', quoi: 'La suppression de cette écriture' });
+    if (!ok && activeTab === 'mouvements' && item.compte_id) {
+      // Les soldes ont ete annules avant la suppression : si celle-ci echoue,
+      // le solde ne correspond plus aux mouvements affiches.
+      toast.error(
+        'Le solde du compte a déjà été corrigé mais l’écriture n’a pas été supprimée : '
+        + 'vérifiez le compte avant de réessayer.',
+        { duration: 12000 },
+      );
+      return;
+    }
+    if (ok) recharger();
   };
 
   const seedDefaultBanks = async () => {
     if (comptes.length > 0) { toast.info('Des comptes existent déjà'); return; }
-    for (const bank of DEFAULT_BANKS) {
-      await db.comptes_bancaires.create({ ...bank, solde: 0, numero_compte: '', notes: '' });
-    }
-    toast.success('Comptes par défaut créés');
-    load();
+    const { ok } = await executerAction(async () => {
+      for (const bank of DEFAULT_BANKS) {
+        await db.comptes_bancaires.create({ ...bank, solde: 0, numero_compte: '', notes: '' });
+      }
+    }, { succes: 'Comptes par défaut créés', quoi: 'La création des comptes par défaut' });
+    if (ok) recharger();
   };
 
-  if (loading) {
-    return <div className="flex items-center justify-center py-20"><div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" /></div>;
+  if (loading) return <EnChargement />;
+
+  // Aucun solde partiel : sur une lecture ratee, l'ecran se tait au lieu
+  // d'annoncer une tresorerie qu'il n'a pas lue.
+  if (erreurChargement) {
+    return (
+      <EchecChargement
+        quoi="la trésorerie et les comptes"
+        onReessayer={recharger}
+        enCours={loading}
+      />
+    );
   }
 
   const compteNom = (id) => comptes.find((c) => c.id === id)?.nom || '—';

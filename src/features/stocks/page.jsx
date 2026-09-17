@@ -1,6 +1,8 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { db } from '@/services/db';
 import { useAuth } from '@/services/auth';
+import { useChargeur, executerAction } from '@/services/chargement';
+import { EnChargement, EchecChargement } from '@/features/partages/etat-chargement';
 import { valeurStockTotal, valeurMachines } from '@/services/finance-calc';
 import { logAction } from '@/services/audit';
 import { notifyStockAlerte } from '@/services/notifications';
@@ -230,7 +232,6 @@ export default function Stocks() {
   const [filterType, setFilterType] = useState('all');
   const [filterStatus, setFilterStatus] = useState('all');
   const [showHidden, setShowHidden] = useState(false);
-  const [loading, setLoading] = useState(true);
 
   // Dialogs
   const [showForm, setShowForm] = useState(false);
@@ -242,10 +243,13 @@ export default function Stocks() {
   const [form, setForm] = useState(emptyForm);
   const [mvtForm, setMvtForm] = useState({ type: 'entree', quantite: '', motif: '' });
 
-  const load = async () => {
+  // `listOuLeve()` : sur une coupure, `list()` rendait `[]` et l'ecran affichait
+  // un stock vide — pas « je n'ai pas pu lire le stock », mais « il n'y a plus
+  // rien ». On commande sur cette lecture-la.
+  const load = useCallback(async () => {
     const [p, m] = await Promise.all([
-      db.produits.list(),
-      db.mouvements_stock.list(),
+      db.produits.listOuLeve(),
+      db.mouvements_stock.listOuLeve(),
     ]);
     // ── AUCUNE ECRITURE ICI ──────────────────────────────────────────────
     // Ce bloc contenait une « auto-correction » qui reecrivait EN BASE, a
@@ -258,10 +262,9 @@ export default function Stocks() {
     // dans migrations/002_seuils_stock_a_valider.sql — non appliquee.
     setProduits(preparerArticlesPourAffichage(p));
     setMouvements(m);
-    setLoading(false);
-  };
+  }, []);
 
-  useEffect(() => { load(); }, []);
+  const { enCours: loading, erreur: erreurChargement, recharger } = useChargeur(load);
 
   const filtered = useMemo(() => {
     return produits
@@ -349,40 +352,45 @@ export default function Stocks() {
       actif: form.actif,
       type_article: form.type_article || 'consommable',
     };
-    try {
+    // « Erreur lors de la sauvegarde » ne disait ni QUOI a echoue, ni QUE FAIRE,
+    // ni si quelque chose avait ete ecrit. Le message vient desormais de
+    // src/services/chargement.js, ecrit une seule fois pour toute l'application.
+    const { ok } = await executerAction(async () => {
       if (editItem) {
         await db.produits.update(editItem.id, data);
         await logAction('update', 'stock', { entityId: editItem.id, entityLabel: data.nom });
-        toast.success('Article modifié');
       } else {
         const created = await db.produits.create(data);
         await logAction('create', 'stock', { entityId: created.id, entityLabel: data.nom });
-        toast.success('Article ajouté au stock');
       }
-      setShowForm(false);
-      load();
-    } catch {
-      toast.error('Erreur lors de la sauvegarde');
-    }
+    }, {
+      succes: editItem ? 'Article modifié' : 'Article ajouté au stock',
+      quoi: `L'article « ${data.nom} »`,
+    });
+    if (!ok) return;
+    setShowForm(false);
+    recharger();
   };
 
   const handleDelete = async (p) => {
     if (!confirm(`Supprimer "${p.nom}" du stock ?`)) return;
-    try {
+    const { ok } = await executerAction(async () => {
       await db.produits.delete(p.id);
       await logAction('delete', 'stock', { entityId: p.id, entityLabel: p.nom });
-      toast.success('Article supprimé');
-      load();
-    } catch {
-      toast.error('Erreur lors de la suppression');
-    }
+    }, { succes: 'Article supprimé', quoi: `La suppression de « ${p.nom} »` });
+    if (ok) recharger();
   };
 
   const toggleMasque = async (p) => {
     const newMasque = !p.masque;
-    await db.produits.update(p.id, { masque: newMasque });
-    toast.success(newMasque ? 'Article masqué' : 'Article visible');
-    load();
+    const { ok } = await executerAction(
+      () => db.produits.update(p.id, { masque: newMasque }),
+      {
+        succes: newMasque ? 'Article masqué' : 'Article visible',
+        quoi: `Le masquage de « ${p.nom} »`,
+      },
+    );
+    if (ok) recharger();
   };
 
   const handleMouvement = async () => {
@@ -394,42 +402,58 @@ export default function Stocks() {
 
     if (newStock < 0) { toast.error('Stock insuffisant'); return; }
 
-    await db.produits.update(mouvementItem.id, { quantite: newStock, stock: newStock });
+    // Le stock est une quantite PHYSIQUE : annoncer « Sortie de 12 Papier A4 »
+    // sans ecriture fait diverger l'inventaire du reel, et la divergence ne se
+    // decouvre qu'au comptage suivant.
+    const { ok } = await executerAction(async () => {
+      await db.produits.update(mouvementItem.id, { quantite: newStock, stock: newStock });
 
-    await db.mouvements_stock.create({
-      produit_id: mouvementItem.id,
-      produit_nom: mouvementItem.nom,
-      type: mvtForm.type,
-      quantite: qty,
-      stock_avant: currentStock,
-      stock_apres: newStock,
-      motif: mvtForm.motif || (mvtForm.type === 'entree' ? 'Réapprovisionnement' : 'Utilisation'),
-      operateur: user ? `${user.prenom} ${user.nom}` : '',
-      date: new Date().toISOString(),
+      await db.mouvements_stock.create({
+        produit_id: mouvementItem.id,
+        produit_nom: mouvementItem.nom,
+        type: mvtForm.type,
+        quantite: qty,
+        stock_avant: currentStock,
+        stock_apres: newStock,
+        motif: mvtForm.motif || (mvtForm.type === 'entree' ? 'Réapprovisionnement' : 'Utilisation'),
+        operateur: user ? `${user.prenom} ${user.nom}` : '',
+        date: new Date().toISOString(),
+      });
+
+      await logAction(mvtForm.type === 'entree' ? 'stock_entree' : 'stock_sortie', 'stock', {
+        entityId: mouvementItem.id,
+        entityLabel: `${mouvementItem.nom} (${mvtForm.type === 'entree' ? '+' : '-'}${qty})`,
+      });
+    }, {
+      succes: `${mvtForm.type === 'entree' ? 'Entrée' : 'Sortie'} de ${qty} ${mouvementItem.nom}`,
+      quoi: `Le mouvement de stock sur « ${mouvementItem.nom} »`,
     });
+    if (!ok) return;
 
-    await logAction(mvtForm.type === 'entree' ? 'stock_entree' : 'stock_sortie', 'stock', {
-      entityId: mouvementItem.id,
-      entityLabel: `${mouvementItem.nom} (${mvtForm.type === 'entree' ? '+' : '-'}${qty})`,
-    });
-
-    // Alerte stock bas — uniquement pour les consommables
+    // Alerte stock bas — uniquement pour les consommables, et seulement si le
+    // mouvement a bien ete ecrit (sinon on alerterait sur un stock imaginaire).
     const minStock = seuilArticle(mouvementItem);
     const typeArt = mouvementItem.type_article || 'consommable';
     if (newStock <= minStock && newStock >= 0 && typeArt === 'consommable') {
       notifyStockAlerte(mouvementItem.nom, newStock, minStock);
     }
 
-    toast.success(`${mvtForm.type === 'entree' ? 'Entrée' : 'Sortie'} de ${qty} ${mouvementItem.nom}`);
     setShowMouvement(false);
-    load();
+    recharger();
   };
 
-  if (loading) {
+  if (loading) return <EnChargement />;
+
+  // Un stock qui se lit vide fait commander ce qu'on a deja, ou laisse partir
+  // un atelier sans papier. « Je n'ai pas pu lire le stock » est une phrase
+  // utile ; « le stock est vide » est une phrase fausse.
+  if (erreurChargement) {
     return (
-      <div className="flex items-center justify-center py-20">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-      </div>
+      <EchecChargement
+        quoi="le stock"
+        onReessayer={recharger}
+        enCours={loading}
+      />
     );
   }
 

@@ -14,6 +14,26 @@ import { db } from './db';
  * @param {object} opts.metadata - Old/new values, motif, etc.
  */
 export async function logAction(action, module, opts = {}) {
+  try {
+    return await ecrireTrace(action, module, opts);
+  } catch (e) {
+    // ── Pourquoi le journal n'a PAS le droit de faire echouer l'action ──
+    //
+    // Depuis que `db.create()` leve (constat C6), un echec d'ecriture du
+    // journal remontait dans le handler de l'ecran, JUSTE APRES une ecriture
+    // metier reussie. L'utilisateur lisait alors « le rapport n'a PAS été
+    // enregistré » alors qu'il l'etait. Annoncer un echec faux est aussi
+    // couteux qu'annoncer un succes faux : dans les deux cas on ressaisit,
+    // et on cree un doublon.
+    //
+    // La trace reste donc en console — un journal muet est un probleme de
+    // gouvernance, pas une raison de mentir au gerant sur son enregistrement.
+    console.error('[audit] trace non enregistrée :', action, module, e?.message || e);
+    return null;
+  }
+}
+
+async function ecrireTrace(action, module, opts) {
   const session = JSON.parse(localStorage.getItem('io_current_user') || '{}');
   return db.audit_logs.create({
     timestamp: new Date().toISOString(),

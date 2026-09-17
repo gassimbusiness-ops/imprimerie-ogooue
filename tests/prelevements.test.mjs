@@ -154,13 +154,23 @@ const pageFinances = pageFinancesBrut
   .split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
 
 test('le useEffect de montage n execute plus aucun prelevement', () => {
-  const debut = pageFinances.indexOf('useEffect(');
-  assert.ok(debut > -1, 'aucun useEffect trouve');
-  // Le premier useEffect du composant est celui du chargement initial.
-  const bloc = pageFinances.slice(debut, debut + 400);
+  // 17/09/2026 — l'ancre a change : le chargement de l'ecran ne passe plus par
+  // un `useEffect` ecrit ici mais par `useChargeur(load)` (src/services/
+  // chargement.js), qui porte le try/catch et le bouton « Reessayer ».
+  // L'invariant teste est le meme : CE QUI S'EXECUTE AU MONTAGE ne preleve pas.
+  const debut = pageFinances.indexOf('const load = useCallback');
+  assert.ok(debut > -1, 'le chargeur de montage est introuvable');
+  const fin = pageFinances.indexOf('useChargeur(load)', debut);
+  assert.ok(fin > debut, 'le chargeur n’est plus branché sur useChargeur');
+  const bloc = pageFinances.slice(debut, fin);
   for (const interdit of ['executerPrelevementsDus(', 'executerChargesDues(']) {
     assert.ok(!bloc.includes(interdit), `le montage appelle encore ${interdit} (bug C2)`);
   }
+  // Et aucun autre effet de montage ne peut les rappeler dans son dos.
+  assert.ok(
+    !pageFinances.includes('useEffect('),
+    'un useEffect est réapparu dans l’écran Finances : vérifier qu’il ne prélève pas',
+  );
 });
 
 test('les prelevements ne sont appeles que depuis une fonction de confirmation', () => {

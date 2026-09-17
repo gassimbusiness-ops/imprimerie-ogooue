@@ -72,32 +72,73 @@ const COLLECTIONS = [
  * peut donc affirmer « aucune ecriture pendant l'affichage » sans empecher
  * l'ecran de fonctionner s'il en fait une legitime dans un handler.
  */
-function sourceDoublureDb(donnees) {
+function sourceDoublureDb(donnees, echecsLecture = [], echecsEcriture = []) {
   return `
 const journal = { lectures: [], ecritures: [] };
 const tables = ${JSON.stringify(donnees)};
+// Collections dont la LECTURE echoue — la coupure reseau de Moanda, simulee.
+const ECHECS_LECTURE = new Set(${JSON.stringify(echecsLecture)});
+// Collections dont l'ECRITURE echoue — le cas le plus couteux : l'utilisateur
+// croit avoir enregistre.
+const ECHECS_ECRITURE = new Set(${JSON.stringify(echecsEcriture)});
+class ErreurLectureSimulee extends Error {
+  constructor(nom) {
+    super("Impossible de charger « " + nom + " ». La connexion n'a pas répondu — rien n'a été effacé. Vérifiez la connexion, puis réessayez.");
+    this.name = 'ErreurLecture';
+    this.collection = nom;
+    this.estErreurLecture = true;
+  }
+}
+class ErreurEcritureSimulee extends Error {
+  constructor(nom, operation) {
+    super("L'écriture de « " + nom + " » n'a PAS été enregistrée. Vérifiez votre connexion et recommencez : rien n'a été modifié.");
+    this.name = 'ErreurEcriture';
+    this.collection = nom;
+    this.operation = operation;
+    this.estErreurEcriture = true;
+  }
+}
 function collection(nom) {
   if (!tables[nom]) tables[nom] = [];
   return {
-    async list() { journal.lectures.push(nom); return tables[nom].map((x) => ({ ...x })); },
+    async list() {
+      journal.lectures.push(nom);
+      // Comme la vraie \`list()\` : elle N'ECHOUE JAMAIS, elle rend [].
+      if (ECHECS_LECTURE.has(nom)) return [];
+      return tables[nom].map((x) => ({ ...x }));
+    },
+    async listOuLeve() {
+      journal.lectures.push(nom);
+      if (ECHECS_LECTURE.has(nom)) throw new ErreurLectureSimulee(nom);
+      return tables[nom].map((x) => ({ ...x }));
+    },
     async getById(id) { journal.lectures.push(nom); return tables[nom].find((x) => x.id === id) || null; },
     async filter(c) {
       journal.lectures.push(nom);
+      if (ECHECS_LECTURE.has(nom)) return [];
+      return tables[nom].filter((i) => Object.entries(c).every(([k, v]) => i[k] === v));
+    },
+    async filterOuLeve(c) {
+      journal.lectures.push(nom);
+      if (ECHECS_LECTURE.has(nom)) throw new ErreurLectureSimulee(nom);
       return tables[nom].filter((i) => Object.entries(c).every(([k, v]) => i[k] === v));
     },
     async create(d) {
       journal.ecritures.push({ collection: nom, operation: 'create', data: d });
+      if (ECHECS_ECRITURE.has(nom)) throw new ErreurEcritureSimulee(nom, 'create');
       const item = { id: d.id || (nom + '-' + (tables[nom].length + 1)), ...d };
       tables[nom].push(item); return item;
     },
     async update(id, d) {
       journal.ecritures.push({ collection: nom, operation: 'update', id, data: d });
+      if (ECHECS_ECRITURE.has(nom)) throw new ErreurEcritureSimulee(nom, 'update');
       const i = tables[nom].findIndex((x) => x.id === id);
       if (i === -1) throw new Error('ligne introuvable');
       tables[nom][i] = { ...tables[nom][i], ...d }; return tables[nom][i];
     },
     async delete(id) {
       journal.ecritures.push({ collection: nom, operation: 'delete', id });
+      if (ECHECS_ECRITURE.has(nom)) throw new ErreurEcritureSimulee(nom, 'delete');
       tables[nom] = tables[nom].filter((x) => x.id !== id); return true;
     },
   };
@@ -197,26 +238,37 @@ const FEUILLES_INERTES = [
  * @param {string} p.ecran chemin du fichier d'ecran, relatif a la racine du depot
  * @param {object} [p.donnees] contenu initial des collections
  * @param {object} [p.utilisateur] utilisateur de session
+ * @param {string[]} [p.echecsLecture] collections dont la lecture echoue (coupure reseau)
+ * @param {string[]} [p.echecsEcriture] collections dont l'ecriture echoue
  * @returns {Promise<{module: object, journal: object, toasts: Array, nettoyer: () => Promise<void>}>}
  */
-export async function compilerEcran({ ecran, donnees = {}, utilisateur = {} }) {
+export async function compilerEcran({
+  ecran, donnees = {}, utilisateur = {}, echecsLecture = [], echecsEcriture = [],
+}) {
   // Le dossier de build vit DANS le depot (et pas dans /tmp) pour que Node
   // resolve `react` / `react-dom` en remontant jusqu'a ./node_modules. React
   // doit etre partage entre le bundle et le test, sinon deux instances
   // coexistent et les hooks ne trouvent pas leur dispatcher.
   const dossier = await mkdtemp(join(RACINE, '.tmp-rendu-ecran-'));
   const entree = join(dossier, 'entree.jsx');
+  // `MemoryRouter` est exporte DEPUIS LE BUNDLE, et pas importe cote test :
+  // react-router-dom est bundle avec l'ecran, si bien qu'un routeur importe
+  // separement serait une autre instance du module — son contexte ne serait
+  // pas celui que lisent les `<Link>` de l'ecran, et le montage echouerait sur
+  // « Cannot destructure property 'basename' of useContext(...) as it is null ».
   await writeFile(entree, `
 export { default as Ecran } from ${JSON.stringify(join(RACINE, ecran))};
 export { __journal } from '@/services/db';
 export { __appels } from 'sonner';
+export { MemoryRouter } from 'react-router-dom';
 `);
 
   // Les doublures de MODULES DU DEPOT sont posees par chemin ABSOLU, apres
   // resolution : le meme fichier est importe tantot en `@/services/db`, tantot
   // en `./db`. Filtrer sur la chaine d'import en raterait la moitie.
   const parChemin = new Map([
-    [resoudreFichier(resolve(RACINE, 'src/services/db')), sourceDoublureDb(donnees)],
+    [resoudreFichier(resolve(RACINE, 'src/services/db')),
+      sourceDoublureDb(donnees, echecsLecture, echecsEcriture)],
     [resoudreFichier(resolve(RACINE, 'src/services/supabase')), DOUBLURE_SUPABASE],
     [resoudreFichier(resolve(RACINE, 'src/services/auth')), sourceDoublureAuth({
       id: 'u-admin', prenom: 'Gassim', nom: 'Admin', role: 'admin', ...utilisateur,
@@ -277,6 +329,20 @@ export { __appels } from 'sonner';
   // leur evaluation. Le DOM doit exister avant. C'est `rendreEcran()` qui
   // enchaine correctement les deux etapes.
   return { sortie, nettoyer: () => rm(dossier, { recursive: true, force: true }) };
+}
+
+/**
+ * Texte REELLEMENT affiche a l'instant present.
+ *
+ * ⚠️ Lecon du 16/09/2026 : `v.texte` est un instantane pris au montage. Six
+ * tests avaient « verifie » un ecran jamais affiche parce qu'ils relisaient cet
+ * instantane apres un clic. Apres toute interaction, passer par ici.
+ *
+ * @param {{conteneur: Element}} v le resultat de `rendreEcran`
+ * @returns {string}
+ */
+export function texteVivant(v) {
+  return v.conteneur.textContent || '';
 }
 
 /**
@@ -381,11 +447,14 @@ function installerDom() {
 /**
  * Compile, monte et vidange un ecran. C'est la fonction que les tests appellent.
  *
- * @param {object} p voir compilerEcran
+ * @param {object} p voir compilerEcran, plus `routeur` (enveloppe l'ecran dans
+ *   un MemoryRouter, necessaire des que l'ecran rend un `<Link>`)
  * @returns {Promise<{texte, html, conteneur, journal, toasts, demonter}>}
  */
 export async function rendreEcran(p) {
   const { sortie, nettoyer } = await compilerEcran(p);
+  // Les rejets attrapes par les ecrans ne doivent pas faire echouer le test :
+  // seuls les rejets NON rattrapes sont collectes plus bas.
   const { restaurer } = installerDom();
 
   let module;
@@ -408,9 +477,16 @@ export async function rendreEcran(p) {
   globalThis.window.addEventListener('unhandledrejection', capturer);
   globalThis.window.addEventListener('error', capturer);
 
+  // Les ecrans qui contiennent des `<Link>` ont besoin d'un routeur : sans lui,
+  // le montage echoue au premier lien rendu. On n'enveloppe QUE sur demande
+  // (`routeur: true`), pour ne rien changer aux tests deja ecrits.
+  const element = p.routeur
+    ? React.createElement(module.MemoryRouter, null, React.createElement(module.Ecran))
+    : React.createElement(module.Ecran);
+
   await act(async () => {
     racine = createRoot(conteneur);
-    racine.render(React.createElement(module.Ecran));
+    racine.render(element);
   });
   // Plusieurs tours de vidange : les `useEffect` lancent des promesses qui en
   // lancent d'autres (load() -> Promise.all -> setState -> re-rendu).

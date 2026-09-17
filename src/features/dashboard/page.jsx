@@ -1,9 +1,11 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { db } from '@/services/db';
 import { toISODate, todayISO, startOfMonthISO } from '@/lib/dates';
 import { tresorerieImprimerie, chargeMensuelle, caRapport, caRapports, depensesRapports } from '@/services/finance-calc';
 import { useAuth } from '@/services/auth';
+import { useChargeur } from '@/services/chargement';
+import { EnChargement, EchecChargement } from '@/features/partages/etat-chargement';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -62,28 +64,35 @@ export default function Dashboard() {
   const [dettes, setDettes] = useState([]);
   const [charges, setCharges] = useState([]);
   const [commandes, setCommandes] = useState([]);
-  const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    Promise.all([
-      db.rapports.list(),
-      db.clients.list(),
-      db.produits.list(),
-      db.comptes_bancaires.list(),
-      db.dettes.list(),
-      db.charges_fixes.list(),
-      db.commandes.list(),
-    ]).then(([r, c, p, cb, de, ch, cmd]) => {
-      setRapports(r.sort((a, b) => b.date.localeCompare(a.date)));
-      setClients(c);
-      setProduits(p);
-      setComptes(cb);
-      setDettes(de);
-      setCharges(ch);
-      setCommandes(cmd);
-      setLoading(false);
-    });
+  // ── Chargement ─────────────────────────────────────────────────────────
+  //
+  // C'est ici que la lecture ratee coute le plus cher : le tableau de bord ne
+  // montre pas des listes mais des CHIFFRES. Avec `list()` et son `[]` muet, une
+  // coupure affichait « 0 F » de trésorerie, « 0 F » de CA du mois et un
+  // prévisionnel à 90 jours calculé sur du vide — des mesures fausses, données
+  // pour des mesures. Le `.then()` sans `.catch()` laissait en plus le rond
+  // tourner indéfiniment si une lecture levait.
+  const load = useCallback(async () => {
+    const [r, c, p, cb, de, ch, cmd] = await Promise.all([
+      db.rapports.listOuLeve(),
+      db.clients.listOuLeve(),
+      db.produits.listOuLeve(),
+      db.comptes_bancaires.listOuLeve(),
+      db.dettes.listOuLeve(),
+      db.charges_fixes.listOuLeve(),
+      db.commandes.listOuLeve(),
+    ]);
+    setRapports([...r].sort((a, b) => (b.date || '').localeCompare(a.date || '')));
+    setClients(c);
+    setProduits(p);
+    setComptes(cb);
+    setDettes(de);
+    setCharges(ch);
+    setCommandes(cmd);
   }, []);
+
+  const { enCours: loading, erreur: erreurChargement, recharger } = useChargeur(load);
 
   // ── Previsionnel de tresorerie 30/60/90 jours ──
   // Tresorerie actuelle (comptes imprimerie) - sorties prevues (mensualites credit + charges fixes auto)
@@ -181,11 +190,17 @@ export default function Dashboard() {
     return { todayRec, todayDep, monthRec, monthDep, monthTrend, chartData, lowStock, pending };
   }, [rapports, produits]);
 
-  if (loading) {
+  if (loading) return <EnChargement />;
+
+  // Aucun chiffre partiel : un tableau de bord qui affiche « 0 F » parce que la
+  // connexion a laché est plus dangereux qu'un tableau de bord qui se tait.
+  if (erreurChargement) {
     return (
-      <div className="flex items-center justify-center py-20">
-        <div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-      </div>
+      <EchecChargement
+        quoi="le tableau de bord"
+        onReessayer={recharger}
+        enCours={loading}
+      />
     );
   }
 
