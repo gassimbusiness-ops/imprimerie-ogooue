@@ -19,6 +19,17 @@ pour toute l'équipe.
     démontage au passage au plan Pro.
 - Le repli `VITE_ANTHROPIC_API_KEY` est supprimé d'`api/ai.js`
 - Côté client, tous les appels IA passent par `apiFetch` qui joint le jeton
+- **17/09/2026** — `api/_lib/comptes.js` : le seul endroit du serveur qui touche aux mots de
+  passe. Il impose qu'un mot de passe soit écrit dans `auth_credentials` **ou** que l'appel
+  échoue franchement, jamais entre les deux, et qu'il n'entre jamais dans `app_data`.
+  Il vit dans `_lib/`, donc **ne consomme aucune des 12 fonctions serverless**.
+- **17/09/2026** — `api/employes.js` **déplace** les identifiants reçus au lieu de les jeter ;
+  `api/auth-creer-utilisateur.js` écrit les identifiants **avant** l'employé et annule en cas
+  d'échec ; `api/auth-changer-mot-de-passe.js` vérifie l'existence de la cible et distingue
+  503 (stockage absent) de 500 (vraie panne). Les trois journalisent l'acte dans `audit_logs`,
+  jamais le mot de passe — `assainir()` remplace toute valeur secrète par `[omis]`.
+- **17/09/2026** — `tests/identifiants-employes.test.mjs` : 27 tests, dont 9 échouent sur le
+  code d'avant (vérifié sur une copie isolée).
 
 ## Variables Vercel — état au 14/09/2026
 
@@ -73,7 +84,42 @@ aucun avertissement.
 `OPENAI_API_KEY` couvre déjà le besoin côté serveur. À faire par Gassim, en même temps que
 la rotation de la clé OpenAI si elle a pu circuler.
 
-## Séquence
+## 📏 État réel de la production — mesuré le 17/09/2026
+
+Projet Supabase `bcwkrrqmjpaohmafcncw`, en lecture seule.
+
+| Mesure | Valeur |
+|---|---|
+| `app_data` | **4 092 lignes, 29 collections** (`audit_logs` 3 338, `rapports` 237, `produits_catalogue` 195, `notifications_app` 92, `produits` 45, `mouvements_stock` 44, `mouvements_financiers` 32, `clients` 14, `employes` 13, …) |
+| Comptes dans `employes` | **13**, dont **3 `role: 'admin'`** |
+| Empreintes encore inline dans `app_data` | **13 sur 13** |
+| Comptes en double sur un même e-mail | **oui, toujours** : `imprimerieogooue@gmail.com` ×3 *(3 administrateurs)*, `imprimerieogooue.user@gmail.com` ×3, `minguisilou@gmail.com` ×3 — 9 lignes pour 3 personnes. Les 13 empreintes sont toutes distinctes. |
+| Policies sur `app_data` | **1 seule : `allow_all_operations`**, `FOR ALL`, `USING (true)`, `WITH CHECK (true)`, rôles `{public}` |
+| Table `auth_credentials` | **absente** — la migration 001 n'a jamais été appliquée |
+
+➡️ Le trou n°1 de l'audit est **intact**. Rien de ce qui suit n'a encore été appliqué en base.
+
+## 🔴 Ce que l'absence de `auth_credentials` cassait déjà, aujourd'hui, en production
+
+Découvert le 17/09/2026 en croisant le code et la base. Ce n'était pas un risque futur :
+c'était en panne, en silence, depuis que `api/employes.js` a été branché.
+
+| Geste du gérant | Ce qu'il voyait | Ce qui se passait réellement |
+|---|---|---|
+| Paramètres → créer un utilisateur | « Utilisateur créé » | `api/employes.js` **supprimait** `password_hash`/`password_salt` (liste `CHAMPS_INTERDITS`) avant d'écrire : le compte n'avait **aucun mot de passe** et ne pourrait jamais se connecter |
+| Paramètres → éditer, saisir un nouveau mot de passe | « Utilisateur modifié » | même suppression : **l'ancien mot de passe restait le seul valide** |
+| Paramètres → bouton « changer le mot de passe » | « Erreur serveur » | écriture dans `auth_credentials`, table inexistante → 500 |
+| Un visiteur s'inscrit depuis la page de connexion | « Erreur serveur », puis « Un compte avec cet email existe deja » | `auth-creer-utilisateur` insérait l'employé **puis** les identifiants ; la 2ᵉ écriture échouait et la 1ʳᵉ restait → **compte orphelin**, e-mail bloqué, visiteur enfermé dehors |
+
+Corrigé le 17/09/2026 (voir « Ce qui est déjà fait »). Les mots de passe sont désormais
+**déplacés** vers `auth_credentials` au lieu d'être jetés, et chaque création est **tout ou
+rien** : soit le compte existe avec son mot de passe, soit il n'existe pas.
+
+## Séquence — déploiement en DEUX TEMPS
+
+L'ordre n'est pas une préférence : chaque inversion a une conséquence nommée plus bas.
+
+### Temps 1 — le code (aucune modification de la base)
 
 1. **Déployer le code** (merge de la branche, ou push sur `main`).
 2. **Compléter les 2 variables secrètes** restantes (`SESSION_SECRET`, `SUPABASE_SERVICE_ROLE_KEY`),
@@ -82,9 +128,49 @@ la rotation de la clé OpenAI si elle a pu circuler.
    ou `SESSION_SECRET` est mal renseignée — le code n'est pas en cause.
 4. **Tester une génération IA** (Catalogue → Générer image). Elle doit fonctionner connecté,
    et répondre 401 en navigation privée non connectée.
-5. **Seulement alors**, appliquer `001_securiser_employes.sql`.
-6. Retester la connexion. `auth-login` accepte les deux emplacements d'identifiants, donc
-   le retour arrière reste possible tant que l'étape 7 n'est pas faite.
+
+À ce stade la base n'a pas bougé. Créer un utilisateur depuis Paramètres répond désormais
+**503** avec un message explicite au lieu de créer un compte muet : c'est voulu, et c'est
+le signal que la PHASE A manque.
+
+### Temps 2 — la base, en deux passes séparées
+
+5. Exécuter le **CONTRÔLE AVANT** de `001_securiser_employes.sql` (lecture seule) et lire
+   chaque ligne. Toute valeur inattendue → s'arrêter et rapporter.
+6. Appliquer la **PHASE A** (création de `auth_credentials` + recopie). Non destructive.
+7. Exécuter le **CONTRÔLE APRÈS PHASE A**. La première ligne doit valoir **0**.
+8. **Tester la connexion de trois comptes de rôles différents** (admin, employé, client),
+   puis **créer un utilisateur de test depuis Paramètres et se connecter avec**. C'est le
+   seul test qui prouve que la chaîne complète fonctionne.
+9. **Seulement alors**, et pas forcément le même jour, appliquer la **PHASE B**
+   (retrait des empreintes de `app_data` + remplacement de la policy).
+10. Exécuter le **CONTRÔLE APRÈS PHASE B**, puis retester les trois connexions.
+
+La PHASE A seule est déjà un gain net et peut rester en place indéfiniment : `auth-login`
+lit `auth_credentials` en priorité et retombe sur les champs inline, donc les deux
+emplacements coexistent sans conflit.
+
+## ⚠️ Ce qui casse, dans les deux sens
+
+**Si la base est migrée avant que le code soit déployé** — c'est le scénario grave.
+Le bundle actuellement servi en production date d'avant ces correctifs (aucun redéploiement
+n'a eu lieu depuis le 14/09, le bouton « Redeploy » n'a pas été cliqué) :
+
+- PHASE B → la policy refuse à la clé publiable toute écriture sur `employes` : plus aucune
+  création ni modification d'employé depuis l'application, sans message d'erreur exploitable ;
+- PHASE B → les empreintes disparaissent de `app_data`. Si le bundle servi compare encore le
+  mot de passe **dans le navigateur** (comportement d'avant `auth-login`), **plus personne ne
+  peut se connecter du tout**. C'est la panne totale, au comptoir, pendant les heures d'ouverture.
+
+**Si le code est déployé sans que la base soit migrée** — c'est le scénario bénin, et c'est
+l'état actuel :
+
+- la connexion, la lecture, toutes les écritures métier continuent normalement ;
+- créer un utilisateur ou changer un mot de passe répond **503** avec un message qui nomme la
+  cause. Aucun compte fantôme n'est créé, aucun mot de passe n'est perdu. C'est exactement le
+  comportement souhaité tant que la PHASE A n'est pas passée.
+
+➡️ **En cas de doute, déployer le code et ne pas migrer.** L'inverse casse la production.
 
 ## ✅ Les deux endpoints qui bloquaient la migration sont écrits
 
@@ -119,6 +205,54 @@ supprimer son propre compte.
 Côté client, `src/services/db.js` expose `CollectionEmployes`, qui route `list / getById /
 create / update / delete` vers `/api/employes`. **Un seul point d'interception** : les 13 sites
 de lecture et les 10 sites d'écriture du reste de l'application n'ont pas été touchés.
+
+## 🔎 Les chemins du navigateur qui touchent encore `employes` — inventaire complet
+
+Recherche exhaustive dans `src/` le 17/09/2026 (`db.employes.create|update|delete`,
+`supabase.from('app_data')`, `password_hash|password_salt|hashPassword`).
+
+**Aucun chemin du navigateur n'écrit plus directement dans `employes` avec la clé publiable.**
+Les 6 sites d'écriture passent tous par `CollectionEmployes` (`src/services/db.js`), qui route
+vers `/api/employes`, lui-même derrière `exigerSession` + contrôle admin. Le seul usage direct
+de `supabase` restant hors de `db.js` est un canal temps réel en **lecture** sur `commandes`
+(`src/features/commandes/page.jsx:217`).
+
+| Site d'écriture | Chemin réel | État |
+|---|---|---|
+| `src/features/employes/page.jsx` 136, 145, 154 | `/api/employes` PATCH/POST/DELETE | ✅ |
+| `src/features/parametres/page.jsx` 155, 167, 186, 255 | `/api/employes` PATCH/POST/DELETE | ✅ pour l'écriture |
+| `src/services/seed.js` 86 | `/api/employes` POST | ✅ (401 sans session — voulu) |
+| `src/services/auth.jsx` `createUser` / `changePassword` | `/api/auth-creer-utilisateur`, `/api/auth-changer-mot-de-passe` | ✅ |
+
+➡️ **La condition posée par la migration 001 est donc remplie.**
+
+### 🟠 Ce qui reste, et qui n'empêche pas la migration
+
+Deux écrans **fabriquent encore l'empreinte dans le navigateur** avec
+`src/services/crypto.js`, puis l'envoient au serveur :
+
+- `src/features/parametres/page.jsx` 149-152 et 165-170 → `db.employes.update/create`
+- `src/services/seed.js` 84-94 → `db.employes.create`
+
+Ce n'est **pas** une écriture directe en base, et l'algorithme du navigateur
+(`SHA-256(sel + mot_de_passe)` hexadécimal) est **identique** à `hacherMotDePasse` côté
+serveur. `api/_lib/comptes.js` accepte donc ces empreintes en **pont de compatibilité** et les
+range dans `auth_credentials` : c'est ce qui répare le mot de passe perdu sans toucher à ces
+écrans, sur lesquels un autre chantier est en cours.
+
+**Ce pont devrait disparaître** : les deux écrans doivent envoyer `motDePasse` en clair (sur
+HTTPS) et laisser le serveur générer le sel, comme le fait déjà `/api/auth-creer-utilisateur`.
+Tant que ce n'est pas fait, un sel généré par le navigateur suffit — mais le hachage reste du
+SHA-256 simple, sans coût de calcul : **ce n'est pas un stockage de mot de passe acceptable à
+terme** (bcrypt ou argon2 sont le vrai objectif, avec réinitialisation générale).
+
+Deux détails cosmétiques à corriger dans le même passage, hors périmètre de ce chantier :
+
+- `src/features/parametres/page.jsx:410` teste `emp.password_hash` pour afficher un badge
+  « mot de passe défini ». Ce champ est filtré par `/api/employes` depuis toujours : **le badge
+  affiche déjà la mauvaise réponse pour les 13 comptes**. Il faudrait le nourrir autrement.
+- Le même écran accepte un mot de passe de **6 caractères** là où les endpoints en exigent
+  **8** : l'utilisateur reçoit un refus après coup. Aligner sur 8.
 
 ## ⛔ Ce qui reste réellement ouvert après tout ça
 
