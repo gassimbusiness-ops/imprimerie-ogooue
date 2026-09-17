@@ -152,9 +152,21 @@ emplacements coexistent sans conflit.
 
 ## ⚠️ Ce qui casse, dans les deux sens
 
-**Si la base est migrée avant que le code soit déployé** — c'est le scénario grave.
-Le bundle actuellement servi en production date d'avant ces correctifs (aucun redéploiement
-n'a eu lieu depuis le 14/09, le bouton « Redeploy » n'a pas été cliqué) :
+> ### ✅ Mise à jour du 17/09/2026 — ce paragraphe décrivait une situation qui n'existe plus
+>
+> Le code **est déployé** en production depuis le 17/09 (plusieurs promotions dans la journée,
+> chacune passée par une prévisualisation mesurée). Et la **PHASE A a été appliquée**, dans
+> l'ordre inverse de celui décrit plus bas : la table a été créée **avant** le déploiement, ce
+> qui a évité le 503 « stockage indisponible » à l'écran de création d'utilisateur.
+>
+> Le scénario grave ci-dessous n'est donc plus d'actualité **pour la PHASE A**. Il reste
+> entièrement valable pour la **PHASE B**, qui n'est pas appliquée. Le texte est conservé
+> plutôt que supprimé : il explique pourquoi l'ordre compte, et il servira au prochain qui
+> lira ce fichier sans connaître l'histoire.
+
+**Si la base est migrée avant que le code soit déployé** — c'était le scénario grave, et il
+décrit l'état du 14 au 17/09. À cette date, le bundle servi en production datait d'avant les
+correctifs :
 
 - PHASE B → la policy refuse à la clé publiable toute écriture sur `employes` : plus aucune
   création ni modification d'employé depuis l'application, sans message d'erreur exploitable ;

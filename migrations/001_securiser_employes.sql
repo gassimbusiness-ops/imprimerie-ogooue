@@ -8,8 +8,21 @@
 --
 --    PHASE A — création + recopie. Non destructive, réversible, sans effet de
 --              bord sur l'application en cours d'exécution.
+--              ✅ APPLIQUÉE EN PRODUCTION LE 17/09/2026, contrôles relus :
+--                 13 empreintes recopiées, 13 identiques, 0 manquante ;
+--                 `auth_credentials` : RLS activée, 0 policy (la clé publiable
+--                 n'a donc aucun droit dessus) ; les 13 empreintes inline sont
+--                 TOUJOURS en place — rien n'a été détruit.
+--              Appliquée AVANT le déploiement du code, volontairement : la
+--              table attendait déjà quand le nouveau code est arrivé, donc le
+--              503 « stockage indisponible » n'est jamais apparu à l'écran.
 --    PHASE B — retrait des empreintes de `app_data` + remplacement de la policy.
 --              DESTRUCTIVE. Ne s'applique qu'après vérification de la PHASE A.
+--              🔴 NON APPLIQUÉE. C'est elle qui ferme la base : tant qu'elle
+--                 n'est pas passée, `allow_all_operations` reste la seule règle
+--                 de `app_data`. Elle exige un test de connexion PAR RÔLE
+--                 (admin, employé, client), donc des mots de passe — c'est le
+--                 seul geste de cette migration qui ne peut pas être automatisé.
 --
 -- ── CONSTAT, RE-VÉRIFIÉ SUR LA BASE DE PRODUCTION LE 17/09/2026 ────────────
 --   projet `bcwkrrqmjpaohmafcncw`

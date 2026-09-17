@@ -1,8 +1,22 @@
 -- ════════════════════════════════════════════════════════════════════════════
 -- 006 — Rattraper les anciennes notifications client
 --
---        ⛔ NON APPLIQUÉE. Rédigée le 2026-09-17 après mesure en lecture seule
---           du projet bcwkrrqmjpaohmafcncw. Aucune écriture n'a été faite.
+--        ✅ APPLIQUÉE EN PRODUCTION LE 2026-09-17, sur accord explicite.
+--           Rédigée d'abord d'après une mesure en lecture seule, puis exécutée
+--           dans l'ordre prescrit : simulation, correctif, contrôles.
+--
+--        CE QUI A ÉTÉ MESURÉ À L'EXÉCUTION :
+--          simulation avant écriture ......... 18 lignes
+--          UPDATE réellement appliqué ........ 18 lignes
+--          restant à corriger après .......... 0
+--          notifications du PERSONNEL encore
+--            sur /commandes, donc intactes ... 16
+--          total notifications, avant/après .. 92 / 92 (rien créé ni supprimé)
+--
+--        ⚠️ Les 16 intactes : le rapport de mesure en annonçait 15. La 16ᵉ est
+--           une `commande_validee` adressée à un EMPLOYÉ (rôle `employe`, pas
+--           `client`) : /commandes est le bon lien pour elle, et le filtre l'a
+--           correctement laissée. Prédiction légèrement fausse, filtre juste.
 --
 --        CE QUI A ÉTÉ MESURÉ, ET NON SUPPOSÉ (2026-09-17) :
 --          notifications_app ................................ 92 lignes
