@@ -1,3 +1,17 @@
+-- ✅ APPLIQUÉE EN PRODUCTION LE 2026-09-18, sur demande explicite de Gassim.
+--    Contrôles relus un par un après exécution :
+--      comptes actifs ............ 13 → 7      identités distinctes ..... 7
+--      adresses en double ........ 3 → 0       comptes archivés ......... 6
+--      identifiants actifs ....... 7           identifiants archivés .... 6
+--      rapports réaffectés ....... 82 (témoin `fusion_007_operateur_precedent`)
+--      rapports pointant encore sur un compte archivé ........ 0
+--      total rapports ............ 237 avant COMME après — rien perdu
+--      compte actif SANS identifiant ......................... 0  ← le contrôle
+--        qui compte le plus : personne ne s'est retrouvé sans mot de passe.
+--    Rien n'a été supprimé : les 6 comptes écartés vivent dans
+--    `employes_fusionnes_007`, leurs empreintes dans
+--    `auth_credentials_fusionnes_007` (RLS, aucune policy).
+--
 -- ════════════════════════════════════════════════════════════════════════════
 -- 007 — Fusionner les comptes en double
 --
