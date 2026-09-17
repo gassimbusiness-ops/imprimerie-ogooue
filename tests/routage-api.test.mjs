@@ -327,3 +327,47 @@ test('PLAFOND HOBBY : le dossier api/ reste sous 12 fonctions serverless', () =>
     );
   }
 });
+
+/**
+ * ⚠️ MESURE DU 17/09/2026, PAS UNE PRECAUTION THEORIQUE.
+ *
+ * Les trois pages legales ont ete deployees dans `public/`, sur la foi de la
+ * documentation Vercel qui annonce que le systeme de fichiers a la priorite sur
+ * les rewrites. Le controle en production a dit l inverse :
+ *
+ *     GET /confidentialite.html  ->  200, mais 1 656 octets et le titre
+ *     « Imprimerie Ogooue - Gestion » — c etait l APPLICATION, pas la page.
+ *     La page fait 13 720 octets.
+ *
+ * La regle attrape-tout `/((?!api/).*)` n exclut que `/api/`, donc elle avalait
+ * aussi les fichiers statiques. Consequence si personne ne l avait vu : les
+ * trois URL declarees a Meta auraient affiche l ecran de connexion au lieu
+ * d une politique de confidentialite — et Meta aurait refuse la publication,
+ * sans qu on comprenne pourquoi.
+ *
+ * Trois rewrites explicites, places AVANT l attrape-tout, reglent le cas.
+ */
+test('vercel.json : les pages legales ne sont pas avalees par l attrape-tout', () => {
+  const conf = JSON.parse(lire('vercel.json'));
+  const attrapeTout = conf.rewrites.findIndex((r) => r.destination === '/index.html');
+  const PAGES = ['/confidentialite.html', '/conditions.html', '/suppression-donnees.html'];
+
+  for (const page of PAGES) {
+    const i = conf.rewrites.findIndex((r) => r.source === page);
+    assert.ok(i !== -1, `${page} doit avoir sa regle explicite, sinon l application est servie a sa place`);
+    assert.equal(conf.rewrites[i].destination, page, `${page} doit se rediriger vers elle-meme`);
+    assert.ok(
+      i < attrapeTout,
+      `${page} est APRES l attrape-tout : la premiere regle qui correspond gagne, `
+      + 'donc c est l application qui serait servie — exactement le defaut du 17/09',
+    );
+  }
+});
+
+test('les trois pages legales existent vraiment dans public/', () => {
+  for (const f of ['confidentialite.html', 'conditions.html', 'suppression-donnees.html']) {
+    const contenu = lire(`public/${f}`);
+    assert.ok(contenu.length > 3000, `public/${f} est trop court pour etre une vraie page (${contenu.length} octets)`);
+    assert.match(contenu, /IMPRIMERIE OGOOU/i, `public/${f} doit nommer l entreprise`);
+  }
+});

@@ -3,29 +3,71 @@
     {
       "source": "/sw.js",
       "headers": [
-        { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" },
-        { "key": "Pragma", "value": "no-cache" }
+        {
+          "key": "Cache-Control",
+          "value": "no-cache, no-store, must-revalidate"
+        },
+        {
+          "key": "Pragma",
+          "value": "no-cache"
+        }
       ]
     },
     {
       "source": "/registerSW.js",
       "headers": [
-        { "key": "Cache-Control", "value": "no-cache, no-store, must-revalidate" }
+        {
+          "key": "Cache-Control",
+          "value": "no-cache, no-store, must-revalidate"
+        }
       ]
     },
     {
       "source": "/manifest.webmanifest",
       "headers": [
-        { "key": "Cache-Control", "value": "no-cache, must-revalidate" }
+        {
+          "key": "Cache-Control",
+          "value": "no-cache, must-revalidate"
+        }
       ]
     }
   ],
   "rewrites": [
-    { "source": "/api/singpay-initiate", "destination": "/api/singpay?voie=initiate" },
-    { "source": "/api/singpay-status", "destination": "/api/singpay?voie=status" },
-    { "source": "/api/singpay-callback", "destination": "/api/singpay?voie=callback" },
-    { "source": "/api/zakat-analyse", "destination": "/api/ai?voie=zakat" },
-    { "source": "/api/(.*)", "destination": "/api/$1" },
-    { "source": "/((?!api/).*)", "destination": "/index.html" }
+    {
+      "source": "/api/singpay-initiate",
+      "destination": "/api/singpay?voie=initiate"
+    },
+    {
+      "source": "/api/singpay-status",
+      "destination": "/api/singpay?voie=status"
+    },
+    {
+      "source": "/api/singpay-callback",
+      "destination": "/api/singpay?voie=callback"
+    },
+    {
+      "source": "/api/zakat-analyse",
+      "destination": "/api/ai?voie=zakat"
+    },
+    {
+      "source": "/confidentialite.html",
+      "destination": "/confidentialite.html"
+    },
+    {
+      "source": "/conditions.html",
+      "destination": "/conditions.html"
+    },
+    {
+      "source": "/suppression-donnees.html",
+      "destination": "/suppression-donnees.html"
+    },
+    {
+      "source": "/api/(.*)",
+      "destination": "/api/$1"
+    },
+    {
+      "source": "/((?!api/).*)",
+      "destination": "/index.html"
+    }
   ]
 }
