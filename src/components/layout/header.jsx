@@ -36,6 +36,7 @@ const PAGE_TITLES = {
   '/rapports-analyses': 'Rapports & Analyses',
   '/performance-rh': 'Performance & Dashboard RH',
   '/marketing': 'Marketing',
+  '/autopost': 'Publications automatiques',
   '/mockup-ia': 'Mockups IA',
 };
 

@@ -35,6 +35,7 @@ import {
   Megaphone,
   Paintbrush,
   Moon,
+  Send,
 } from 'lucide-react';
 
 const NAV_GROUPS = [
@@ -87,6 +88,7 @@ const NAV_GROUPS = [
       { name: 'Messagerie', href: '/messagerie', icon: MessageCircle, module: 'clients' },
       { name: 'Événements', href: '/evenements', icon: CalendarDays, module: 'marketing' },
       { name: 'Marketing', href: '/marketing', icon: Megaphone, module: 'marketing' },
+      { name: 'Publications auto', href: '/autopost', icon: Send, module: 'marketing' },
       { name: 'Notifications SMS', href: '/notifications', icon: MessageSquare, module: 'marketing' },
     ],
   },

@@ -50,3 +50,139 @@ export function addDaysISO(n, d = new Date()) {
   x.setDate(x.getDate() + n);
   return toISODate(x);
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   CRÉNEAUX DE PUBLICATION — le même piège, mais à l'envers
+   ═══════════════════════════════════════════════════════════════════════════
+
+   Les fonctions ci-dessus protègent une DATE MÉTIER d'une conversion en UTC.
+   Celles qui suivent font le trajet inverse, et il est tout aussi piégeux :
+   transformer « le 21 septembre à 17 h 30, heure de Moanda » en un INSTANT
+   comparable à `Date.now()`.
+
+   ⛔ La forme fausse, celle qu'on écrit spontanément :
+
+       new Date('2026-09-21T17:30')      // minuit LOCAL de la machine
+       new Date(2026, 8, 21, 17, 30)     // idem
+
+   Sur Vercel (UTC) ces deux formes donnent 17:30Z, soit 18 h 30 à Moanda :
+   la publication part une heure trop tard. Sur un portable réglé à Los Angeles
+   (UTC−7), elles donnent 00:30Z du 22 : la publication part le lendemain.
+
+   ✅ La forme juste : `Date.UTC(...)` avec l'offset RETIRÉ à la main. `Date.UTC`
+   n'a aucun fuseau — c'est de l'arithmétique sur des nombres. Le résultat est
+   donc identique quelle que soit la machine, ce que les tests vérifient sous
+   TZ=Africa/Libreville, TZ=UTC et TZ=America/Los_Angeles.
+
+   📙 `Africa/Libreville` est à UTC+1 toute l'année, sans heure d'été. Cela rend
+   le calcul simple — et ne dispense pas de le faire correctement : le serveur
+   qui publie n'est pas au Gabon, et le navigateur du gérant non plus.        */
+
+const RE_DATE = /^\d{4}-\d{2}-\d{2}$/;
+const RE_HEURE = /^\d{2}:\d{2}$/;
+const RE_OFFSET = /^[+-]\d{2}:\d{2}$/;
+
+/**
+ * Convertit un créneau local (date + heure + offset écrits en clair) en instant
+ * UTC, sous la forme `YYYY-MM-DDTHH:MM:SSZ`.
+ *
+ * Aucune dépendance au fuseau de la machine : que le processus tourne à
+ * Libreville, à Los Angeles ou en UTC, la valeur rendue est la même.
+ *
+ * @param {{date_locale?: string, heure_locale?: string, offset_utc?: string}} creneau
+ * @returns {string|null} l'instant UTC, ou `null` si un champ est absent ou mal formé.
+ */
+export function instantUtcDepuisCreneau(creneau) {
+  const date = creneau?.date_locale;
+  const heure = creneau?.heure_locale;
+  const offset = creneau?.offset_utc;
+  if (typeof date !== 'string' || !RE_DATE.test(date)) return null;
+  if (typeof heure !== 'string' || !RE_HEURE.test(heure)) return null;
+  if (typeof offset !== 'string' || !RE_OFFSET.test(offset)) return null;
+
+  const [annee, mois, jour] = date.split('-').map(Number);
+  const [hh, mm] = heure.split(':').map(Number);
+  const signe = offset[0] === '-' ? -1 : 1;
+  const [offH, offM] = offset.slice(1).split(':').map(Number);
+
+  if (mois < 1 || mois > 12 || jour < 1 || jour > 31) return null;
+  if (hh > 23 || mm > 59 || offH > 23 || offM > 59) return null;
+
+  // Minutes à retrancher pour passer du local à l'UTC (+01:00 → on retire 60).
+  const decalageMinutes = signe * (offH * 60 + offM);
+  const ms = Date.UTC(annee, mois - 1, jour, hh, mm - decalageMinutes, 0, 0);
+  const d = new Date(ms);
+
+  // Contrôle de débordement : le 31 février serait silencieusement reporté au
+  // 2 ou 3 mars. Un créneau inventé doit être refusé, pas décalé.
+  const localVerif = new Date(Date.UTC(annee, mois - 1, jour));
+  if (localVerif.getUTCMonth() !== mois - 1 || localVerif.getUTCDate() !== jour) return null;
+
+  return formaterInstantUtc(d);
+}
+
+/**
+ * Formate un objet Date en instant UTC `YYYY-MM-DDTHH:MM:SSZ`, à partir des
+ * composantes UTC. Équivalent au début de `toISOString()` — écrit à la main
+ * pour qu'aucune relecture de ce fichier n'ait à se demander si la ligne est
+ * le bug de 55 300 F ou non.
+ * @param {Date} d
+ * @returns {string}
+ */
+export function formaterInstantUtc(d) {
+  const p = (n, l = 2) => String(n).padStart(l, '0');
+  return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())}`
+    + `T${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}Z`;
+}
+
+/**
+ * Lit un instant UTC (`…Z`) et rend le nombre de millisecondes, ou `null`.
+ * Refuse tout ce qui ne finit pas par `Z` : une chaîne sans fuseau explicite
+ * serait interprétée en heure locale par `new Date()`, et c'est exactement le
+ * genre de tolérance qui a coûté 55 300 F.
+ * @param {string} instant
+ * @returns {number|null}
+ */
+export function msDepuisInstantUtc(instant) {
+  if (typeof instant !== 'string' || !/Z$/.test(instant)) return null;
+  const ms = Date.parse(instant);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/**
+ * Rend un instant UTC lisible par un humain à Moanda :
+ * `2026-09-21 17:30:42 (+01:00 Africa/Libreville)`.
+ *
+ * Écrit avec l'offset ET le nom du fuseau : un compte rendu lu par le gérant ne
+ * doit exiger aucune conversion mentale, et ne doit pas non plus laisser croire
+ * qu'une heure sans fuseau se lit « comme chez moi ».
+ *
+ * @param {string} instantUtc
+ * @param {string} [offset] offset à appliquer, `+01:00` par défaut
+ * @param {string} [fuseau] nom du fuseau, `Africa/Libreville` par défaut
+ * @returns {string} chaîne vide si l'instant est illisible
+ */
+export function formaterInstantLocal(instantUtc, offset = '+01:00', fuseau = FUSEAU_METIER) {
+  const ms = msDepuisInstantUtc(instantUtc);
+  if (ms === null || !RE_OFFSET.test(offset)) return '';
+  const signe = offset[0] === '-' ? -1 : 1;
+  const [offH, offM] = offset.slice(1).split(':').map(Number);
+  const local = new Date(ms + signe * (offH * 60 + offM) * 60_000);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${local.getUTCFullYear()}-${p(local.getUTCMonth() + 1)}-${p(local.getUTCDate())} `
+    + `${p(local.getUTCHours())}:${p(local.getUTCMinutes())}:${p(local.getUTCSeconds())} `
+    + `(${offset} ${fuseau})`;
+}
+
+/**
+ * Date métier locale (`YYYY-MM-DD`) d'un instant UTC, dans le fuseau donné.
+ * Sert à comparer une échéance d'offre (`valide_jusqu_au_local`) à la date du
+ * créneau : la comparaison se fait EN DATE LOCALE, jamais en UTC.
+ * @param {string} instantUtc
+ * @param {string} [offset]
+ * @returns {string|null}
+ */
+export function dateLocaleDepuisInstantUtc(instantUtc, offset = '+01:00') {
+  const rendu = formaterInstantLocal(instantUtc, offset, '');
+  return rendu ? rendu.slice(0, 10) : null;
+}

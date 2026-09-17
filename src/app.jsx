@@ -34,6 +34,7 @@ import Gouvernance from '@/features/gouvernance/page';
 import RapportsAnalyses from '@/features/rapports-analyses/page';
 import PerformanceRH from '@/features/performance-rh/page';
 import Marketing from '@/features/marketing/page';
+import Autopost from '@/features/autopost/page';
 import MockupIA from '@/features/mockup-ia/page';
 import AdminImport from '@/features/admin-import/page';
 // Client portal
@@ -162,6 +163,7 @@ export default function App() {
           <Route path="rapports-analyses" element={<RequirePermission module="statistiques"><RapportsAnalyses /></RequirePermission>} />
           <Route path="performance-rh" element={<RequirePermission module="employes"><PerformanceRH /></RequirePermission>} />
           <Route path="marketing" element={<RequirePermission module="marketing"><Marketing /></RequirePermission>} />
+          <Route path="autopost" element={<RequirePermission module="marketing"><Autopost /></RequirePermission>} />
           <Route path="mockup-ia" element={<RequirePermission module="catalogue"><MockupIA /></RequirePermission>} />
           <Route path="admin-import" element={<RequirePermission module="parametres"><AdminImport /></RequirePermission>} />
           <Route path="zakat" element={<RequirePermission module="gouvernance"><ZakatPage /></RequirePermission>} />

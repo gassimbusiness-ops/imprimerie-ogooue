@@ -371,3 +371,88 @@ test('les trois pages legales existent vraiment dans public/', () => {
     assert.match(contenu, /IMPRIMERIE OGOOU/i, `public/${f} doit nommer l entreprise`);
   }
 });
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   AUTO-POSTER — la onzième fonction, et ses deux voies
+   ═══════════════════════════════════════════════════════════════════════════
+
+   `api/autopost.js` sert /api/autopost-tick (la tache planifiee qui publie) et
+   /api/autopost-etat (ce que l ecran du gerant lit). Le meme raisonnement que
+   pour SingPay s applique, en plus tendu : la voie « tick » publie sur la Page
+   de l entreprise. Un chemin inconnu ne doit JAMAIS y atterrir par defaut.   */
+
+test('autopost : chaque chemin historique atteint sa voie', async () => {
+  const { voieAutopost } = await import('../api/autopost.js');
+  assert.equal(voieAutopost({ url: '/api/autopost-tick', query: {} }), 'tick');
+  assert.equal(voieAutopost({ url: '/api/autopost-etat', query: {} }), 'etat');
+  // En production, le rewrite remplace le chemin par la destination.
+  assert.equal(voieAutopost({ url: '/api/autopost', query: { voie: 'tick' } }), 'tick');
+  assert.equal(voieAutopost({ url: '/api/autopost', query: { voie: 'etat' } }), 'etat');
+});
+
+test('autopost : sans voie explicite, la reponse est 404 — jamais « publier » par defaut', async () => {
+  const { voieAutopost } = await import('../api/autopost.js');
+  assert.equal(voieAutopost({ url: '/api/autopost', query: {} }), null);
+  assert.equal(voieAutopost({ url: '/api/autopost', query: { voie: 'inventee' } }), null);
+});
+
+test('autopost : la tache planifiee sans CRON_SECRET n est pas autorisee', async () => {
+  const { autorisationTick } = await import('../api/autopost.js');
+  const avant = process.env.CRON_SECRET;
+  delete process.env.CRON_SECRET;
+  assert.equal(autorisationTick({ headers: { authorization: 'Bearer nimporte-quoi' } }).autorise, false);
+
+  process.env.CRON_SECRET = 'secret-de-tache-planifiee-de-test';
+  assert.equal(autorisationTick({ headers: { authorization: 'Bearer secret-de-tache-planifiee-de-test' } }).autorise, true);
+  assert.equal(autorisationTick({ headers: { authorization: 'Bearer presque-le-bon-secret' } }).autorise, false);
+  assert.equal(autorisationTick({ headers: {} }).autorise, false);
+
+  if (avant === undefined) delete process.env.CRON_SECRET; else process.env.CRON_SECRET = avant;
+});
+
+test('vercel.json : les rewrites autopost sont AVANT l attrape-tout /api/(.*)', () => {
+  const conf = JSON.parse(lire('vercel.json'));
+  const generique = conf.rewrites.findIndex((r) => r.source === '/api/(.*)');
+  for (const [source, destination] of [
+    ['/api/autopost-tick', '/api/autopost?voie=tick'],
+    ['/api/autopost-etat', '/api/autopost?voie=etat'],
+  ]) {
+    const i = conf.rewrites.findIndex((r) => r.source === source);
+    assert.ok(i !== -1, `${source} n a pas de regle`);
+    assert.equal(conf.rewrites[i].destination, destination);
+    assert.ok(i < generique, `${source} doit passer avant /api/(.*) : la premiere regle qui correspond gagne`);
+  }
+});
+
+/**
+ * LA CADENCE — ce qui fixe la precision horaire reellement atteinte.
+ *
+ * Le plan Hobby ne declenche une tache qu une fois par jour, a l heure pres.
+ * La precision ne vient donc pas de la frequence d une tache mais du NOMBRE de
+ * taches quotidiennes declarees : une par heure. Si ce tableau retrecit, le
+ * retard maximal grandit — et c est une decision, pas un detail de config.
+ */
+test('vercel.json : une tache planifiee par heure, et toutes vers la voie tick', () => {
+  const conf = JSON.parse(lire('vercel.json'));
+  assert.ok(Array.isArray(conf.crons) && conf.crons.length > 0, 'aucune tache planifiee declaree');
+
+  const heures = new Set();
+  for (const c of conf.crons) {
+    assert.match(c.path, /^\/api\/autopost\?voie=tick/, `tache vers un chemin inattendu : ${c.path}`);
+    const m = /^0 (\d{1,2}) \* \* \*$/.exec(c.schedule);
+    assert.ok(m, `« ${c.schedule} » n est pas une tache QUOTIDIENNE : le plan Hobby n accepte que ca`);
+    assert.ok(!heures.has(m[1]), `deux taches sur la meme heure UTC (${m[1]})`);
+    heures.add(m[1]);
+  }
+
+  // Les deux creneaux du jour, en UTC : 09h00 local = 08:00Z, 17h30 local = 16:30Z.
+  // Le creneau de 17h30 est vu par la tache de 17:00Z (au pire 17:59Z, soit 89 min).
+  assert.ok(heures.has('8'), 'aucune tache ne couvre le creneau de 09 h 00 locales (08:00Z)');
+  assert.ok(heures.has('17'), 'aucune tache ne couvre le creneau de 17 h 30 locales (16:30Z)');
+});
+
+test('les chemins de tache portent un marqueur distinct : ce sont des chemins differents', () => {
+  const conf = JSON.parse(lire('vercel.json'));
+  const chemins = conf.crons.map((c) => c.path);
+  assert.equal(new Set(chemins).size, chemins.length, 'deux taches partagent le meme chemin');
+});

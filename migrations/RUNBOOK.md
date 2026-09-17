@@ -296,3 +296,60 @@ aucune migration, aucun redéploiement Vercel sans fenêtre convenue avec lui.
 Les deux variables créées le 14/09/2026 ne changent rien tant qu'un redéploiement n'a pas eu
 lieu — c'est voulu : le bouton « Redeploy » proposé par Vercel après leur création **n'a pas
 été cliqué**.
+
+---
+
+## 📮 Migration 008 — la file de l'auto-posteur (18/09/2026, NON appliquée)
+
+`008_autopost_file_publication.sql` crée trois tables neuves (`autopost_file`,
+`autopost_controle`, `autopost_journal`) et **ne touche à aucune table existante**.
+L'ordre habituel s'inverse donc, et c'est sans danger :
+
+1. **Le code peut être déployé avant la migration.** L'écran « Publications auto »
+   affiche alors « l'état de la chaîne n'a pas pu être lu » avec le nom du fichier de
+   migration, et rien d'autre ne bouge. Aucun autre écran n'en dépend.
+2. **La migration peut être appliquée avant le code.** Les trois tables restent vides.
+
+⚠️ `CREATE INDEX` et `ALTER TABLE … ENABLE ROW LEVEL SECURITY` passent sans verrou ici,
+les tables étant neuves et vides. Exécuter les blocs A → D dans l'ordre, puis les
+contrôles du bloc E — en particulier **le contrôle 3**, qui tente d'insérer deux lignes
+portant le même `id_distant` dans un bloc annulé : PostgreSQL doit la refuser en 23505.
+Tant que ce contrôle n'est pas vert, l'idempotence de la publication n'est pas garantie,
+et la chaîne ne doit pas passer en `live`.
+
+**Après la migration, rien ne publie encore, et c'est voulu.** La ligne de contrôle est
+créée à `actif = false`, `mode = 'dry_run'`. Il faut trois gestes séparés pour publier
+pour de vrai :
+
+```sql
+-- 1. armer la chaîne (les passages examinent la file, en simulation)
+UPDATE autopost_controle SET actif = true WHERE id = 'global';
+-- 2. basculer en réel — seulement après le test de visibilité du §2.2
+UPDATE autopost_controle SET mode = 'live' WHERE id = 'global';
+```
+
+…et le jeton `META_PAGE_ACCESS_TOKEN` doit exister côté Vercel. Sans lui, même en
+`live`, chaque passage est journalisé comme **simulé** et ne touche pas le réseau.
+
+**Arrêt d'urgence, en une ligne, sans redéploiement :**
+
+```sql
+UPDATE autopost_controle SET actif = false, motif = 'arrêt manuel' WHERE id = 'global';
+```
+
+### Variables Vercel à poser pour l'auto-poster
+
+| Nom | Portée | Sans elle |
+|---|---|---|
+| `CRON_SECRET` | Production | **les tâches planifiées sont refusées** — poser celle-ci en premier |
+| `META_PAGE_ACCESS_TOKEN` | Production | simulation permanente (état actuel, assumé) |
+| `AUTOPOST_MODE` | Production | `dry_run` |
+| `AUTOPOST_CLE_APPROBATION` | Production | la signature des approbations n'est pas vérifiée (l'empreinte du contenu l'est toujours) |
+| `GOOGLE_SERVICE_ACCOUNT_EMAIL` · `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY` · `DRIVE_DOSSIER_PUBLICATIONS_ID` | Production | pas de lecture du Drive ; dépôt depuis l'application |
+
+⛔ Aucune de ces variables ne porte le préfixe `VITE_`. Le jeton de Page Meta porte
+`ads_management` **sans plafond de dépense** : dans le bundle public, ce serait une
+exposition financière permanente.
+
+ℹ️ `api/autopost.js` porte le total à **11 fonctions serverless sur 12**. Il reste une
+place ; `tests/routage-api.test.mjs` le vérifie à chaque exécution.
