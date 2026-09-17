@@ -91,7 +91,7 @@ test('aucun catch IA ne se prive de la cause', () => {
 test('le nom du modele reste une configuration, pas une constante en dur', () => {
   const src = readFileSync(new URL('../api/_lib/modeles.js', import.meta.url), 'utf8');
   assert.ok(src.includes('process.env.ANTHROPIC_MODEL'), 'le modèle doit rester surchargeable');
-  for (const endpoint of ['api/ai.js', 'api/zakat-analyse.js']) {
+  for (const endpoint of ['api/ai.js', 'api/_lib/zakat-analyse.js']) {
     const s = readFileSync(new URL(`../${endpoint}`, import.meta.url), 'utf8');
     assert.ok(
       !/model:\s*['"]claude-/.test(s),

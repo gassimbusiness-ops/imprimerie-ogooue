@@ -11,6 +11,12 @@ pour toute l'équipe.
 - `api/_lib/limite.js` — limite de débit par IP
 - Les 4 endpoints IA (`ai`, `generate-image`, `generate-mockup`, `zakat-analyse`) exigent une
   session, plafonnent `max_tokens` à 2000, et limitent le débit
+  - ℹ️ depuis le 17/09/2026, `/api/zakat-analyse` et les trois `/api/singpay-*` gardent leurs
+    URL mais ne sont plus des fichiers à la racine d'`api/` : le plan Vercel Hobby plafonne le
+    projet à **12 fonctions serverless** et `api/` en comptait 13. Les logiques vivent dans
+    `api/_lib/` (hors plafond) et sont servies par `api/ai.js` et `api/singpay.js` via les
+    `rewrites` de `vercel.json`. Voir l'en-tête de `api/singpay.js` pour la procédure de
+    démontage au passage au plan Pro.
 - Le repli `VITE_ANTHROPIC_API_KEY` est supprimé d'`api/ai.js`
 - Côté client, tous les appels IA passent par `apiFetch` qui joint le jeton
 

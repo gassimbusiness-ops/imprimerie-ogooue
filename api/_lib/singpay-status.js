@@ -25,13 +25,13 @@
  * Cet endpoint n'écrit jamais un statut qu'il n'a pas obtenu de SingPay.
  */
 import { createClient } from '@supabase/supabase-js';
-import { limiteDepassee } from './_lib/limite.js';
+import { limiteDepassee } from './limite.js';
 import {
   depotSupabase,
   verifierAupresDeSingPay,
   appliquerStatutPaiement,
   STATUTS_FINAUX,
-} from './_lib/singpay-encaissement.js';
+} from './singpay-encaissement.js';
 
 const supabase = createClient(
   process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL,
@@ -42,7 +42,7 @@ export default async function handler(req, res) {
   // Un sondage légitime, c'est 12 appels/minute et par onglet. Le plafond est
   // volontairement très haut (≈ 25 onglets simultanés derrière une même IP,
   // cas du wifi de l'atelier) : il borne l'abus sans jamais gêner l'usage réel.
-  if (limiteDepassee(req, { max: 300, fenetreMs: 60_000 })) {
+  if (limiteDepassee(req, { max: 300, fenetreMs: 60_000, portee: 'singpay-status' })) {
     return res.status(429).json({ error: 'Trop de requetes, reessayez dans une minute' });
   }
 

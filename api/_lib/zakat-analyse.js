@@ -3,9 +3,9 @@
  * POST /api/zakat-analyse
  * Utilise Claude (Anthropic) pour fournir des conseils Zakat personnalisés.
  */
-import { exigerSession } from './_lib/session.js';
-import { limiteDepassee } from './_lib/limite.js';
-import { modeleAnthropic, messageErreurAnthropic } from './_lib/modeles.js';
+import { exigerSession } from './session.js';
+import { limiteDepassee } from './limite.js';
+import { modeleAnthropic, messageErreurAnthropic } from './modeles.js';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
@@ -15,7 +15,7 @@ export default async function handler(req, res) {
   // aucun plafond. N'importe qui connaissant l'URL disposait d'un proxy IA
   // facture sur le compte de l'entreprise. Verifie par requete depuis une
   // machine tierce non authentifiee.
-  if (limiteDepassee(req, { max: 10, fenetreMs: 60_000 })) {
+  if (limiteDepassee(req, { max: 10, fenetreMs: 60_000, portee: 'zakat' })) {
     return res.status(429).json({ error: 'Trop de requetes. Reessayez dans une minute.' });
   }
   if (!exigerSession(req, res)) return;

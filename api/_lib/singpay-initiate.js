@@ -15,8 +15,8 @@
  * Headers : x-client-id, x-client-secret, x-wallet
  * Body    : { amount, reference, client_msisdn, portefeuille, isTransfer }
  */
-import { getSingPayHeaders, getPaiementEndpoint, SINGPAY_BASE_URL } from '../src/lib/singpayAuth.js';
-import { controlerPlafond } from './_lib/singpay-encaissement.js';
+import { getSingPayHeaders, getPaiementEndpoint, SINGPAY_BASE_URL } from '../../src/lib/singpayAuth.js';
+import { controlerPlafond } from './singpay-encaissement.js';
 import { createClient } from '@supabase/supabase-js';
 
 const supabase = createClient(
@@ -118,7 +118,7 @@ export default async function handler(req, res) {
                        ou `node scripts/test-singpay.mjs callback <url>`
        Où la vérifier : `node scripts/test-singpay.mjs verifier`  (lecture seule,
                        compare le portefeuille à SINGPAY_CALLBACK_URL)
-       Qui la traite  : api/singpay-callback.js
+       Qui la traite  : api/_lib/singpay-callback.js (URL publique /api/singpay-callback)
        ──────────────────────────────────────────────────────────────────────── */
 
     // ── Construction du body selon endpoint

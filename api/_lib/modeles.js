@@ -10,7 +10,7 @@
  *
  * Ce n'etait donc PAS une cle revoquee — une cle revoquee renvoie 401, pas 404. La cle
  * authentifiait correctement ; c'est le NOM DU MODELE qui n'existait plus. Il etait ecrit
- * en dur, a l'identique, dans `api/ai.js` et `api/zakat-analyse.js`.
+ * en dur, a l'identique, dans `api/ai.js` et `api/_lib/zakat-analyse.js`.
  *
  * C'est exactement le motif qui a fige le scheduler d'Aurelia en `v21.0` : une valeur qui
  * vieillit, ecrite en dur dans du code de production, et qui casse en silence le jour ou le

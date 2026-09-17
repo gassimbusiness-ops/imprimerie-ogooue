@@ -39,7 +39,7 @@ import {
   verifierSecretCallback,
   verifierAupresDeSingPay,
   appliquerStatutPaiement,
-} from './_lib/singpay-encaissement.js';
+} from './singpay-encaissement.js';
 
 const supabase = createClient(
   process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL,

@@ -8,7 +8,7 @@
  *
  * 1. LE RAPPEL N'ÉTAIT PAS MORT — MAIS IL ÉTAIT CROYABLE SUR PAROLE
  *
- *    `api/singpay-initiate.js` construisait une variable `callbackUrl` et ne
+ *    `api/_lib/singpay-initiate.js` construisait une variable `callbackUrl` et ne
  *    l'envoyait nulle part. Il était tentant d'en conclure que SingPay n'était
  *    jamais rappelée. La base de production dit le contraire : les 3 paiements
  *    de la collection `paiements_singpay` portent tous un `raw_callback` reçu

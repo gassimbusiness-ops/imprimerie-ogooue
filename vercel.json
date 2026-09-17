@@ -21,6 +21,10 @@
     }
   ],
   "rewrites": [
+    { "source": "/api/singpay-initiate", "destination": "/api/singpay?voie=initiate" },
+    { "source": "/api/singpay-status", "destination": "/api/singpay?voie=status" },
+    { "source": "/api/singpay-callback", "destination": "/api/singpay?voie=callback" },
+    { "source": "/api/zakat-analyse", "destination": "/api/ai?voie=zakat" },
     { "source": "/api/(.*)", "destination": "/api/$1" },
     { "source": "/((?!api/).*)", "destination": "/index.html" }
   ]

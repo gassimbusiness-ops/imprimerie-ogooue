@@ -557,7 +557,7 @@ test('aucun nom de champ de rappel n est invente dans le corps envoye a SingPay'
   // `transaction.portefeuille.callbackURL` de chaque reponse de la passerelle.
   // Envoyer un champ invente a une passerelle de paiement peut faire rejeter la
   // requete entiere : ce test empeche la tentation de revenir.
-  const initiate = readFileSync(new URL('../api/singpay-initiate.js', import.meta.url), 'utf8');
+  const initiate = readFileSync(new URL('../api/_lib/singpay-initiate.js', import.meta.url), 'utf8');
 
   // On isole les deux corps de requete, entre `let body;` et l'appel fetch.
   const zoneCorps = initiate.slice(initiate.indexOf('let body;'), initiate.indexOf('await fetch(endpoint'));
@@ -572,7 +572,7 @@ test('aucun nom de champ de rappel n est invente dans le corps envoye a SingPay'
 });
 
 test('la variable morte callbackUrl a disparu de l initiation', () => {
-  const initiate = readFileSync(new URL('../api/singpay-initiate.js', import.meta.url), 'utf8');
+  const initiate = readFileSync(new URL('../api/_lib/singpay-initiate.js', import.meta.url), 'utf8');
   assert.ok(
     !/const callbackUrl\s*=/.test(initiate),
     'la variable construite puis jamais utilisee doit rester supprimee',
@@ -637,7 +637,7 @@ test('PLAFOND : les grilles operateur changent — les valeurs sont surchargeabl
 });
 
 test('l endpoint d initiation refuse le montant AVANT d appeler la passerelle', () => {
-  const initiate = readFileSync(new URL('../api/singpay-initiate.js', import.meta.url), 'utf8');
+  const initiate = readFileSync(new URL('../api/_lib/singpay-initiate.js', import.meta.url), 'utf8');
   const posControle = initiate.indexOf('controlerPlafond(montant');
   const posAppel = initiate.indexOf('await fetch(endpoint');
   assert.ok(posControle > 0, 'le controle de plafond doit exister');
