@@ -20,14 +20,30 @@
  * sens, si bien qu'une ligne « Carte » peut decrementer « Cartes de visite »,
  * « Cartouche noire » ou « Carton » selon l'ordre de la liste. Le `produit_id`
  * est pourtant present dans les lignes du portail.
+ *
+ * ── Ce qui a change le 18/09/2026 (arbitrage n°5) ─────────────────────────
+ *
+ * Toute cette mecanique ne s'execute plus par defaut. Q4 dit que les supports
+ * d'une commande personnalisee NE SONT PAS deduits du stock : le code faisait
+ * l'inverse de la pratique. La decision est prise par `decisionSortieStock()`,
+ * qui est pure et testee — voir src/services/sortie-stock-commande.js pour le
+ * raisonnement complet et pour ce qui reste a trancher.
  */
 import { db } from '@/services/db';
 import { notifyStockAlerte } from '@/services/notifications';
 import { referenceEffet } from '@/services/livraison-commande';
+import { decisionSortieStock, lignesCommande } from '@/services/sortie-stock-commande';
 
 export async function syncStockFromCommande(commande) {
-  const items = commande.lignes || commande.produits || [];
-  if (items.length === 0) return { sorties: 0, ignorees: 0 };
+  // Decision AVANT toute lecture : interrupteur ferme, on ne paie meme pas la
+  // requete. Aucune lecture, aucune ecriture, donc aucun risque.
+  const decision = decisionSortieStock({ commande });
+  if (decision.action !== 'sortir') {
+    console.info(`[STOCK] stock non modifié — ${decision.motif}`);
+    return { sorties: 0, ignorees: 0, motif: decision.motif };
+  }
+
+  const items = lignesCommande(commande);
 
   const [allStock, mouvements] = await Promise.all([
     db.produits.list(),

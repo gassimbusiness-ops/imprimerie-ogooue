@@ -11,6 +11,11 @@ import { verrouPrelevements, CLE_PRELEVEMENTS } from '@/services/execution-uniqu
 import { todayISO } from '@/lib/dates';
 import { exportGrandLivrePDF } from '@/services/export-pdf';
 import { tresorerieImprimerie, chargeMensuelle } from '@/services/finance-calc';
+// Nature d'un mouvement et effet sur les soldes — regle unique, testee.
+// `depot_hebdo` y est un TRANSFERT INTERNE depuis Q3 : voir le fichier.
+import {
+  estEntreeDeTresorerie, estTransfertInterne, effetSurSoldes,
+} from '@/services/mouvements-financiers';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -241,7 +246,9 @@ export default function Finances() {
     });
   }, [mouvements, filterMonth, mvDateFrom, mvDateTo, mvSearch, mvUsePlage, mvShowAll, comptes]);
 
-  const mvEntrees = mouvementsFiltres.filter((m) => m.type === 'entree' || m.type === 'depot_hebdo').reduce((s, m) => s + (m.montant || 0), 0);
+  // Un dépôt hebdomadaire n'est plus compté ici : porter la caisse à la banque
+  // n'est pas une recette (Q3, arbitrage n°13).
+  const mvEntrees = mouvementsFiltres.filter((m) => estEntreeDeTresorerie(m.type)).reduce((s, m) => s + (m.montant || 0), 0);
   const mvSorties = mouvementsFiltres.filter((m) => m.type === 'sortie').reduce((s, m) => s + (m.montant || 0), 0);
 
   // ── Helpers ──
@@ -335,27 +342,13 @@ export default function Finances() {
 
       // 1) Annuler l'ancien mouvement (en edition uniquement)
       if (editItem) {
-        const m = Number(editItem.montant) || 0;
-        if (editItem.type === 'entree' || editItem.type === 'depot_hebdo') {
-          addDelta(editItem.compte_id, -m);
-        } else if (editItem.type === 'sortie') {
-          addDelta(editItem.compte_id, +m);
-        } else if (editItem.type === 'transfert') {
-          addDelta(editItem.compte_id, +m);
-          addDelta(editItem.compte_dest_id, -m);
+        for (const [id, d] of Object.entries(effetSurSoldes(editItem, { inverser: true }))) {
+          addDelta(id, d);
         }
       }
 
       // 2) Appliquer le nouveau mouvement
-      const m2 = Number(data.montant) || 0;
-      if (data.type === 'entree' || data.type === 'depot_hebdo') {
-        addDelta(data.compte_id, +m2);
-      } else if (data.type === 'sortie') {
-        addDelta(data.compte_id, -m2);
-      } else if (data.type === 'transfert') {
-        addDelta(data.compte_id, -m2);
-        addDelta(data.compte_dest_id, +m2);
-      }
+      for (const [id, d] of Object.entries(effetSurSoldes(data))) addDelta(id, d);
 
       // 3) Persister les deltas
       for (const [compteId, delta] of Object.entries(deltas)) {
@@ -415,25 +408,14 @@ export default function Finances() {
   const handleDelete = async (item) => {
     if (!confirm('Supprimer cet élément ?')) return;
 
-    // Si c'est un mouvement financier, annuler son impact sur le solde du compte
-    // (operation inverse de ce qui est fait a la creation, lignes 307-318)
-    if (activeTab === 'mouvements' && item.compte_id) {
-      const compte = comptes.find((c) => c.id === item.compte_id);
-      const montant = item.montant || 0;
-      if (compte) {
-        if (item.type === 'entree' || item.type === 'depot_hebdo') {
-          // Etait un credit : on debite pour annuler
-          await db.comptes_bancaires.update(compte.id, { solde: (compte.solde || 0) - montant });
-        } else if (item.type === 'sortie') {
-          // Etait un debit : on credite pour annuler
-          await db.comptes_bancaires.update(compte.id, { solde: (compte.solde || 0) + montant });
-        } else if (item.type === 'transfert') {
-          // Inverse du transfert : recrediter la source + redebiter la destination
-          await db.comptes_bancaires.update(compte.id, { solde: (compte.solde || 0) + montant });
-          const dest = comptes.find((c) => c.id === item.compte_dest_id);
-          if (dest) {
-            await db.comptes_bancaires.update(dest.id, { solde: (dest.solde || 0) - montant });
-          }
+    // Si c'est un mouvement financier, annuler son impact sur le solde du compte.
+    // Exactement l'effet inverse de la creation, calcule par le meme module :
+    // deux formules symetriques ecrites a la main finissent par diverger.
+    if (activeTab === 'mouvements') {
+      for (const [compteId, delta] of Object.entries(effetSurSoldes(item, { inverser: true }))) {
+        const compte = comptes.find((c) => c.id === compteId);
+        if (compte) {
+          await db.comptes_bancaires.update(compte.id, { solde: (compte.solde || 0) + delta });
         }
       }
     }
@@ -688,7 +670,7 @@ export default function Finances() {
                           <CheckCircle2 className="h-5 w-5" />
                         </button>
                       )}
-                      <div className={`flex h-9 w-9 items-center justify-center rounded-lg shrink-0 ${m.type === 'entree' || m.type === 'depot_hebdo' ? 'bg-emerald-500/10' : m.type === 'sortie' ? 'bg-red-500/10' : 'bg-blue-500/10'}`}>
+                      <div className={`flex h-9 w-9 items-center justify-center rounded-lg shrink-0 ${estEntreeDeTresorerie(m.type) ? 'bg-emerald-500/10' : m.type === 'sortie' ? 'bg-red-500/10' : 'bg-blue-500/10'}`}>
                         <MtIcon className={`h-4 w-4 ${mt?.color || 'text-muted-foreground'}`} />
                       </div>
                       <div className="flex-1 min-w-0">
@@ -696,13 +678,15 @@ export default function Finances() {
                         <div className="flex items-center gap-2 mt-0.5">
                           <Badge variant="outline" className="text-[10px]">{mt?.label}</Badge>
                           <span className="text-[10px] text-muted-foreground">{compteNom(m.compte_id)}</span>
-                          {m.type === 'transfert' && <span className="text-[10px] text-muted-foreground">→ {compteNom(m.compte_dest_id)}</span>}
+                          {estTransfertInterne(m.type) && <span className="text-[10px] text-muted-foreground">→ {compteNom(m.compte_dest_id)}</span>}
                           {m.reference && <span className="text-[10px] text-muted-foreground">Réf: {m.reference}</span>}
                         </div>
                       </div>
                       <div className="text-right shrink-0">
-                        <p className={`text-sm font-bold ${m.type === 'entree' || m.type === 'depot_hebdo' ? 'text-emerald-600' : m.type === 'sortie' ? 'text-red-600' : 'text-blue-600'}`}>
-                          {m.type === 'sortie' ? '-' : '+'}{fmt(m.montant)} F
+                        <p className={`text-sm font-bold ${estEntreeDeTresorerie(m.type) ? 'text-emerald-600' : m.type === 'sortie' ? 'text-red-600' : 'text-blue-600'}`}>
+                          {/* Un transfert interne ne porte ni + ni − : il n'ajoute rien
+                              au total de l'entreprise, il déplace. */}
+                          {estTransfertInterne(m.type) ? '' : (m.type === 'sortie' ? '-' : '+')}{fmt(m.montant)} F
                         </p>
                         <p className="text-[10px] text-muted-foreground">{m.date || m.created_at?.slice(0, 10)}</p>
                       </div>
@@ -1022,7 +1006,7 @@ export default function Finances() {
                   </SelectContent>
                 </Select>
               </div>
-              <div><label className="mb-1.5 block text-sm font-medium">Compte</label>
+              <div><label className="mb-1.5 block text-sm font-medium">{estTransfertInterne(form.type) ? "Compte d'origine (d'où sort l'argent)" : 'Compte'}</label>
                 <Select value={form.compte_id || '__none__'} onValueChange={(v) => setForm({ ...form, compte_id: v === '__none__' ? '' : v })}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
@@ -1030,8 +1014,16 @@ export default function Finances() {
                     {comptes.map((c) => <SelectItem key={c.id} value={c.id}>{c.nom} ({c.devise})</SelectItem>)}
                   </SelectContent>
                 </Select>
+                {estTransfertInterne(form.type) && (
+                  <p className="mt-1.5 text-xs text-muted-foreground">
+                    Un dépôt déplace de l&apos;argent, il n&apos;en crée pas : la caisse baisse du montant
+                    dont la banque monte. Sans compte de destination, rien n&apos;est enregistré.
+                  </p>
+                )}
               </div>
-              {form.type === 'transfert' && (
+              {/* Le dépôt hebdomadaire est un transfert interne depuis Q3 : il lui faut
+                  une destination, sinon la caisse ne peut pas être débitée. */}
+              {estTransfertInterne(form.type) && (
                 <div><label className="mb-1.5 block text-sm font-medium">Compte destination</label>
                   <Select value={form.compte_dest_id || '__none__'} onValueChange={(v) => setForm({ ...form, compte_dest_id: v === '__none__' ? '' : v })}>
                     <SelectTrigger><SelectValue /></SelectTrigger>

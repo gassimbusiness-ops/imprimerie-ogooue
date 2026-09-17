@@ -127,7 +127,47 @@ export function livraisonDejaConfirmee(cmd) {
  */
 export function doitDeclencherLivraison(cmd, nouveauStatut) {
   if (!estStatutLivree(nouveauStatut)) return false;
+  if (!livraisonAutorisee(cmd).autorise) return false;
   return !livraisonDejaConfirmee(cmd);
+}
+
+/**
+ * Une commande marquee comme un essai peut-elle etre livree ? NON.
+ *
+ * ── La garde qui passe avant tout le reste ────────────────────────────────
+ *
+ * Q4, le 14/09/2026 : « les commandes actuellement affichees dans
+ * l'application sont des TESTS, pas de vraies commandes ».
+ *
+ * Or passer une commande a « Livree » declenche SIX ecritures d'argent
+ * REELLES : une facture numerotee, un encaissement en tresorerie, une sortie
+ * de stock, des points de fidelite, une reprise dans le rapport journalier, la
+ * cloture de la tache. Une manipulation d'essai contamine donc cinq domaines
+ * de donnees d'exploitation — et la regle du projet « on ne supprime rien »
+ * interdit ensuite de revenir en arriere proprement.
+ *
+ * `estCommandeTest()` existait depuis le 16/09. Personne ne l'appelait sur le
+ * chemin du changement de statut : la garde etait ecrite, pas branchee.
+ *
+ * ⚠️ Elle ne repose QUE sur le drapeau explicite `est_test`, jamais sur le nom.
+ * « test couleur » et « test daltonien » sont deux prestations REELLES
+ * d'imprimerie : les bloquer empecherait de livrer de vraies commandes.
+ *
+ * @param {object} cmd
+ * @returns {{autorise: boolean, motif: string|null}}
+ */
+export function livraisonAutorisee(cmd) {
+  if (estCommandeTest(cmd)) {
+    return {
+      autorise: false,
+      motif:
+        'Cette commande est marquée comme un essai. La livrer écrirait pour de bon '
+        + 'une facture, un encaissement en trésorerie, une sortie de stock et des '
+        + 'points de fidélité — et rien ne pourrait être supprimé ensuite. '
+        + 'Retirez le marquage « test » si c\'est une vraie commande.',
+    };
+  }
+  return { autorise: true, motif: null };
 }
 
 /**

@@ -67,11 +67,13 @@ import {
   doitDeclencherLivraison,
   doitContrePasser,
   estStatutAnnulee,
+  estStatutLivree,
   resumerEffets,
   referenceEffet,
   suppressionAutorisee,
   commandesPurgeables,
   ressembleACommandeTest,
+  livraisonAutorisee,
 } from '@/services/livraison-commande';
 import { contrePasserCommande, messageAnnulationClient } from '@/services/contre-passation-commande';
 // La règle « fiche client → compte portail » n'existe qu'ici. Voir le fichier.
@@ -517,6 +519,20 @@ export default function Commandes() {
         // On relit la commande EN BASE avant de decider : l'ancienne garde
         // lisait l'objet du rendu, qui peut dater d'avant un autre appareil.
         const enBase = (await db.commandes.getById(cmd.id)) || cmd;
+
+        // ── Garde : une commande d'essai ne passe pas « Livrée » ────────────
+        //
+        // Consultée AVANT l'écriture du statut, et pas seulement avant les
+        // effets : une commande de test affichée « Livrée » en base serait déjà
+        // un faux, même sans facture derrière. On sort sans rien écrire.
+        if (estStatutLivree(newStatut)) {
+          const verdict = livraisonAutorisee(enBase);
+          if (!verdict.autorise) {
+            toast.error(verdict.motif, { duration: 12000 });
+            return;
+          }
+        }
+
         const declencheLivraison = doitDeclencherLivraison(enBase, newStatut);
         const contrePassation = doitContrePasser(enBase, newStatut);
         // Une commande DEJA annulee en base ne re-previent pas le client : le

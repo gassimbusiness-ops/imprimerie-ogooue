@@ -3,6 +3,9 @@
  * Utilise une technique d'impression via iframe caché + window.print().
  * En-tête standardisé Imprimerie OGOOUÉ avec coordonnées complètes.
  */
+// Le grand livre doit lire un dépôt hebdomadaire comme le reste de
+// l'application : un transfert interne, pas une recette (Q3, arbitrage n°13).
+import { estTransfertInterne } from '@/services/mouvements-financiers';
 
 /**
  * Génère un PDF à partir de HTML (via impression du navigateur).
@@ -843,7 +846,10 @@ export function exportGrandLivrePDF({ mouvements = [], comptes = [], compteId = 
   let rows = '';
   filtres.forEach((m) => {
     const montant = Number(m.montant) || 0;
-    const estEntree = m.type === 'entree' || m.type === 'depot_hebdo' || (m.type === 'transfert' && m.compte_dest_id === compteId);
+    // Un transfert interne — dépôt hebdomadaire compris — n'est une entrée que
+    // pour le compte qui REÇOIT. Pour la caisse qui envoie, c'est une sortie.
+    const estEntree = m.type === 'entree'
+      || (estTransfertInterne(m.type) && m.compte_dest_id === compteId);
     if (estEntree) { solde += montant; totalEntrees += montant; }
     else { solde -= montant; totalSorties += montant; }
     rows += `<tr>
