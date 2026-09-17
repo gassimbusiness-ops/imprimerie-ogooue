@@ -150,6 +150,17 @@ La PHASE A seule est déjà un gain net et peut rester en place indéfiniment : 
 lit `auth_credentials` en priorité et retombe sur les champs inline, donc les deux
 emplacements coexistent sans conflit.
 
+> ### ✅ 18/09/2026 — LA PHASE B EST APPLIQUÉE
+>
+> Gassim a testé les trois connexions, elles fonctionnent. La phase B a suivi :
+> 0 empreinte restante dans `app_data`, 7 comptes, 7 identifiants, `allow_all_operations`
+> remplacée par 4 policies. Vérifié **contre l'application** : avec la clé publique du
+> bundle, l'insertion d'un compte admin répond désormais `401 — new row violates row-level
+> security policy`. Avant, elle réussissait.
+>
+> ⚠️ **La lecture reste ouverte** (`FOR SELECT USING (true)`). La base n'est pas « fermée » :
+> elle n'est plus **modifiable** par la clé publique sur `employes`. Un SELECT répond 200.
+
 ## ⚠️ Ce qui casse, dans les deux sens
 
 > ### ✅ Mise à jour du 17/09/2026 — ce paragraphe décrivait une situation qui n'existe plus

@@ -17,12 +17,30 @@
 --              table attendait déjà quand le nouveau code est arrivé, donc le
 --              503 « stockage indisponible » n'est jamais apparu à l'écran.
 --    PHASE B — retrait des empreintes de `app_data` + remplacement de la policy.
---              DESTRUCTIVE. Ne s'applique qu'après vérification de la PHASE A.
---              🔴 NON APPLIQUÉE. C'est elle qui ferme la base : tant qu'elle
---                 n'est pas passée, `allow_all_operations` reste la seule règle
---                 de `app_data`. Elle exige un test de connexion PAR RÔLE
---                 (admin, employé, client), donc des mots de passe — c'est le
---                 seul geste de cette migration qui ne peut pas être automatisé.
+--              DESTRUCTIVE.
+--              ✅ APPLIQUÉE LE 18/09/2026, après que Gassim a testé lui-même
+--                 les trois connexions (admin, employé, client) et confirmé
+--                 qu'elles fonctionnent. Contrôles relus :
+--                   empreintes encore dans app_data ........ 0
+--                   comptes ................................ 7
+--                   identifiants dans auth_credentials ..... 7
+--                   compte SANS identifiant ................ 0  ← le contrôle
+--                     qui compte : personne n'a perdu son mot de passe.
+--                   policies sur app_data .................. 4
+--                   allow_all_operations ................... supprimée
+--
+--              PREUVE CONTRE L'APPLICATION ELLE-MÊME : avec la clé publique
+--              extraite du bundle servi à tout visiteur, un INSERT d'un compte
+--              `role: admin` répond désormais :
+--                   401 — new row violates row-level security policy
+--              Avant le 18/09, cette requête RÉUSSISSAIT.
+--
+--              ⚠️ CE QUI RESTE OUVERT, ET QU'IL NE FAUT PAS CROIRE FERMÉ :
+--                 la policy de LECTURE est `USING (true)`. Un SELECT sur
+--                 `employes` répond toujours 200. On est passé de « on peut
+--                 prendre le contrôle » à « on peut regarder » — ce n'est pas
+--                 la même chose qu'une base fermée. Le chantier suivant est
+--                 une vraie règle par rôle, avec une vraie session.
 --
 -- ── CONSTAT, RE-VÉRIFIÉ SUR LA BASE DE PRODUCTION LE 17/09/2026 ────────────
 --   projet `bcwkrrqmjpaohmafcncw`
