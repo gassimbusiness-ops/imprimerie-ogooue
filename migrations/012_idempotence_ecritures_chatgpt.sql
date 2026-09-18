@@ -1,7 +1,17 @@
 -- ════════════════════════════════════════════════════════════════════════════
 -- 012 — Rendre l'idempotence des écritures ChatGPT RÉELLE, hors argent
 --
---        ⚠️ **NON APPLIQUÉE.** Rédigée le 2026-09-18 avec le pont d'écriture
+--        ✅ **APPLIQUÉE le 2026-09-19 vers 00 h 05 (heure de Moanda)** sur le
+--        projet bcwkrrqmjpaohmafcncw. Contrôle préalable refait avant la pose :
+--        zéro doublon de `chatgpt_cle` dans les 16 collections. Contrôle après :
+--        16 index créés, 16 valides, 0 invalide.
+--
+--        Note d'exécution : la passerelle SQL enveloppe les requêtes multiples
+--        dans une transaction, ce que `CREATE INDEX CONCURRENTLY` interdit. Les
+--        seize ordres ont donc été passés UN PAR UN, tels quels, sans retirer le
+--        `CONCURRENTLY` — aucun verrou exclusif n'a été pris sur `app_data`.
+--
+--        (texte d'origine : ⚠️ NON APPLIQUÉE.) Rédigée le 2026-09-18 avec le pont d'écriture
 --        ChatGPT. À exécuter par Gassim, dans l'ordre : contrôle (A) d'abord,
 --        création (B) ensuite, preuve (C) pour finir.
 --

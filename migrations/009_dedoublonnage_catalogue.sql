@@ -1,8 +1,26 @@
 -- ════════════════════════════════════════════════════════════════════════════
 -- 009 — Dédoublonner le catalogue produits
 --
---        ⛔ NON APPLIQUÉE. Rédigée le 2026-09-18 après mesure en lecture seule
---           du projet bcwkrrqmjpaohmafcncw. Aucune écriture n'a été faite.
+--        ✅ APPLIQUÉE le 2026-09-19 vers 00 h 20 (heure de Moanda) sur le projet
+--           bcwkrrqmjpaohmafcncw, sur instruction explicite du dirigeant.
+--
+--           Contrôles REFAITS juste avant la pose, pas repris de la veille :
+--             195 lignes · 50 produits distincts · 145 à archiver
+--             0 ligne à archiver portant une photo
+--             0 ligne à archiver citée par une commande, un devis ou une facture
+--           Les deux garde-fous RAISE EXCEPTION du § C.1 ont donc laissé passer.
+--
+--           Résultat mesuré après :
+--             produits_catalogue ................  50 lignes (était 195)
+--             produits_catalogue_archive_009 .... 145 lignes
+--             noms distincts conservés ...........  50 — aucun produit perdu
+--             lignes portant une photo ...........  17 — les 17 sont conservées
+--
+--           Retour arrière : § E. L'archive porte `archive_009` et
+--           `archive_009_conserve_id` ; rien n'a été supprimé.
+--
+--        (texte d'origine : ⛔ NON APPLIQUÉE. Rédigée le 2026-09-18 après mesure
+--         en lecture seule. Aucune écriture n'avait alors été faite.)
 --
 --        ⚠️ LIRE LE § B AVANT D'EXÉCUTER. Cette migration NE RÉSOUT PAS la
 --           lenteur du comptoir, contrairement à ce qui a été annoncé au
