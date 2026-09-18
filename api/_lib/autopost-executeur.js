@@ -318,10 +318,13 @@ async function publierUnCanal({ travail, client, depot, cle }) {
   const urlMedia = travail.url_media || null;
   if (!urlMedia) {
     const e = new Error('url_media absente : Instagram exige une URL publiquement accessible, '
-      + 'et Facebook la demande aussi dans ce chemin. Elle est produite au moment de l\'approbation '
-      + '(stockage privé + URL signée courte), pas au moment de publier.');
+      + 'et Facebook la demande aussi dans ce chemin. Elle est produite au moment d\'ALIMENTER la '
+      + 'file (le média est recopié du Drive vers le bucket « publications »), pas au moment de '
+      + 'publier — improviser une adresse ici serait publier un fichier que personne n\'a vu.');
     e.codeMeta = 'url_media_absente';
-    e.piste = 'Voir la recommandation d\'accès au Drive en tête de api/autopost.js.';
+    e.piste = 'La ligne porte le motif dans `derniere_erreur` : type non admis, média trop lourd, '
+      + 'Drive ou stockage injoignable, ou report au prochain passage. Voir '
+      + 'api/_lib/autopost-medias.js.';
     throw e;
   }
 

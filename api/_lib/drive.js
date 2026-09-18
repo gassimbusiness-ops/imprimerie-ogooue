@@ -696,6 +696,36 @@ export function creerClientDrive({
     return corps;
   }
 
+  /**
+   * Télécharge le contenu d'un fichier, en OCTETS.
+   *
+   * Même appel que `telechargerFichier` — `files.get?alt=media`, en GET, dans
+   * la portée `drive.readonly` — mais le corps n'est pas décodé en texte : une
+   * image passée par `response.text()` revient corrompue, et le fichier
+   * réhébergé ne s'ouvrirait pas.
+   *
+   * ⛔ La portée N'EST PAS élargie pour autant : lire des octets est la même
+   *    permission que lire du texte. Rien ici n'écrit dans le Drive.
+   *
+   * @param {string} idFichier
+   * @returns {Promise<Uint8Array>}
+   */
+  async function telechargerOctets(idFichier) {
+    exigerConfiguration();
+    const parametres = new URLSearchParams({ alt: 'media', supportsAllDrives: 'true' });
+    const reponse = await requete(
+      `${BASE_DRIVE}/files/${encodeURIComponent(idFichier)}?${parametres.toString()}`,
+      // `Accept: */*` remplace le `application/json` des appels d'API : ce
+      // qu'on demande ici est un fichier, pas un document JSON.
+      { method: 'GET', headers: { ...(await entetes()), Accept: '*/*' } },
+    );
+    if (!reponse.ok) {
+      const corps = await lireCorps(reponse);
+      throw erreurDrive(reponse.status, corps, idFichier);
+    }
+    return new Uint8Array(await reponse.arrayBuffer());
+  }
+
   /** L'instant de cette lecture, et la date qu'il est À MOANDA à cet instant. */
   function horodatage() {
     const instant = formaterInstantUtc(maintenant());
@@ -1143,6 +1173,7 @@ export function creerClientDrive({
     listerDossier,
     rechercherParNom,
     telechargerFichier,
+    telechargerOctets,
     sonder,
     lirePublications,
   };

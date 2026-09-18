@@ -105,7 +105,16 @@ function fauxGoogle({ jeton = null, listes = {}, fichiers = {}, recherche = null
       if (contenu === undefined) {
         return { ok: false, status: 404, async text() { return JSON.stringify({ error: { code: 404, message: 'File not found' } }); } };
       }
-      return { ok: true, status: 200, async text() { return contenu; } };
+      // Un vrai `alt=media` rend des OCTETS. Le faux les rend aussi : une
+      // image passée par `text()` revient corrompue, et c'est exactement ce
+      // que `telechargerOctets` existe pour éviter.
+      const octets = typeof contenu === 'string' ? Buffer.from(contenu, 'utf8') : Buffer.from(contenu);
+      return {
+        ok: true,
+        status: 200,
+        async text() { return typeof contenu === 'string' ? contenu : octets.toString('utf8'); },
+        async arrayBuffer() { return octets; },
+      };
     }
 
     /* ── La RECHERCHE PAR NOM ────────────────────────────────────────────
@@ -1127,4 +1136,52 @@ test('une legende annoncee mais ABSENTE est dite — sans ecarter la publication
   assert.equal(lot.publications.length, 1);
   assert.equal(lot.publications[0].captions.facebook.fichier_id, null);
   assert.match(lot.publications[0].avertissements.join(' '), /caption_facebook\.txt/);
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   I. LES OCTETS D'UN MÉDIA — ce qu'on réhéberge doit arriver INTACT
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/** Quelques octets qui ne survivraient pas à un décodage en texte. */
+const OCTETS_BINAIRES = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46]);
+
+test('telechargerOctets rend les octets INTACTS — une image lue en texte serait corrompue', async () => {
+  viderCacheJeton();
+  const g = fauxGoogle({ fichiers: { 'f-media': OCTETS_BINAIRES } });
+  const client = creerClientDrive({ env: env(), fetchImpl: g.impl });
+
+  const octets = await client.telechargerOctets('f-media');
+
+  assert.ok(octets instanceof Uint8Array, 'des octets, pas une chaîne');
+  assert.deepEqual([...octets], [...OCTETS_BINAIRES],
+    'un JPEG passé par response.text() ne se rouvre pas : c est le bogue que ce chemin évite');
+});
+
+test('⛔ telechargerOctets reste un GET dans alt=media : la portée n est pas élargie', async () => {
+  viderCacheJeton();
+  const g = fauxGoogle({ fichiers: { 'f-media': OCTETS_BINAIRES } });
+  await creerClientDrive({ env: env(), fetchImpl: g.impl }).telechargerOctets('f-media');
+
+  const appel = g.appels.find((a) => /alt=media/.test(a.url));
+  assert.ok(appel, 'le téléchargement doit bien passer par alt=media');
+  assert.equal(appel.methode, 'GET', 'lire des octets est une LECTURE, et rien d autre');
+  for (const a of g.appels) {
+    if (a.url.startsWith(URL_JETON)) continue;
+    assert.equal(a.methode, 'GET', `écriture interdite : ${a.methode} ${a.url}`);
+  }
+});
+
+test('un média introuvable lève un diagnostic lisible, pas un octet vide', async () => {
+  viderCacheJeton();
+  const g = fauxGoogle({ fichiers: {} });
+  const client = creerClientDrive({ env: env(), fetchImpl: g.impl });
+
+  await assert.rejects(
+    () => client.telechargerOctets('f-absent'),
+    (err) => {
+      assert.equal(err.diagnostic, DIAGNOSTICS.DOSSIER_INACCESSIBLE);
+      assert.match(String(err.detail), /404/);
+      return true;
+    },
+  );
 });

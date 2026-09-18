@@ -57,13 +57,31 @@
  * pose. Tant que les trois variables sont absentes, **le code ne bricole aucun
  * accès** : il le dit dans le journal et s'arrête là.
  *
- * ⚠️ Et le compte de service ne suffira pas à lui seul. L'API Instagram ne
- * reçoit pas de fichier : elle va CHERCHER une URL publiquement accessible. Le
- * chemin complet est donc : Drive (privé) → contrôle du format et empreinte, au
- * moment de l'approbation → dépôt dans un bucket Supabase **privé** → URL
- * signée à durée courte, créée juste avant l'appel. La colonne `url_media` de
- * la file porte cette URL. Sans elle, l'exécuteur refuse de publier plutôt que
- * d'improviser.
+ * ⚠️ Et le compte de service ne suffit pas à lui seul. L'API Instagram ne reçoit
+ * pas de fichier : elle va CHERCHER une URL publiquement accessible. Ce maillon
+ * existe depuis le 19/09/2026 (`api/_lib/autopost-medias.js`) :
+ *
+ *   Drive (privé, lecture seule) → contrôle du type et du poids → dépôt dans le
+ *   bucket Supabase **`publications`** → adresse publique, écrite dans la
+ *   colonne `url_media` de la file. Sans elle, l'exécuteur refuse de publier
+ *   plutôt que d'improviser.
+ *
+ * 🔴 POURQUOI UN BUCKET PUBLIC ET NON UNE URL SIGNÉE À DURÉE COURTE — la
+ * question a été tranchée, et dans l'autre sens que ce fichier l'annonçait :
+ *
+ *   1. Meta ne va pas chercher le média au moment où on l'appelle. La création
+ *      d'un conteneur Instagram est asynchrone, et la reprise d'un conteneur
+ *      orphelin peut arriver bien plus tard. Une adresse qui expire est une
+ *      course perdue d'avance — et elle serait perdue au pire moment, une fois
+ *      la publication déjà acceptée.
+ *   2. Ce bucket ne contient QUE des affiches sur le point d'être publiées sur
+ *      la page publique de l'entreprise. Le rendre lisible ne révèle rien que
+ *      la publication ne s'apprête à révéler elle-même. C'est la différence
+ *      exacte avec le Drive, qui porte les baux et la procuration bancaire — et
+ *      c'est pour ça que le Drive, lui, reste privé et en lecture seule.
+ *   3. Il reste FERMÉ EN ÉCRITURE : `storage.objects` a RLS activé et aucune
+ *      policy, donc seul le rôle de service (le serveur) y dépose quoi que ce
+ *      soit. Public ne veut pas dire ouvert.
  *
  * ════════════════════════════════════════════════════════════════════════════
  * LA PRÉCISION HORAIRE RÉELLEMENT ATTEINTE — mesurée, pas promise
@@ -109,6 +127,7 @@ import { depotSupabaseAutopost } from './_lib/autopost-depot.js';
 import { creerClientMeta } from './_lib/autopost-meta.js';
 import { executerPassage, modeGlobalDemande } from './_lib/autopost-executeur.js';
 import { alimenterFile } from './_lib/autopost-alimentation.js';
+import { creerHebergeurMedias, stockageSupabase } from './_lib/autopost-medias.js';
 import { sonderDrive, lireConfigurationDrive, creerClientDrive, DIAGNOSTICS, MESSAGES } from './_lib/drive.js';
 
 /** Voies servies par ce point d'entrée. */
@@ -180,7 +199,26 @@ export function creerGestionnaireAutopost({
    *      sinon il n'y a rien à regarder avant d'ouvrir les verrous.
    */
   async function alimenter(depot, instantUtc) {
-    const faire = alimente || ((arg) => alimenterFile({ ...arg, client: creerClientDrive() }));
+    const faire = alimente || (async (arg) => {
+      // ⛔ Le MÊME client Drive sert à lire les manifestes ET à télécharger les
+      //    octets des médias : une seule configuration, un seul jeton, un seul
+      //    compteur de requêtes. Deux clients, ce seraient deux comptages, et le
+      //    garde-fou des 150 requêtes ne garderait plus rien.
+      const client = creerClientDrive();
+      return alimenterFile({
+        ...arg,
+        client,
+        // 🔴 L'hébergement des médias. Sans lui, les lignes entrent en file sans
+        //    adresse joignable et l'exécuteur refuse de publier. Il est construit
+        //    ICI, dans le `try` de l'appelant : une clé Supabase absente donne un
+        //    diagnostic, pas une exception qui traverse le passage.
+        medias: creerHebergeurMedias({
+          stockage: stockageSupabase(supabaseAdmin()),
+          client,
+          tracer: (...a) => console.log(...a),
+        }),
+      });
+    });
     try {
       return await faire({ depot, instant: instantUtc });
     } catch (err) {
@@ -198,6 +236,7 @@ export function creerGestionnaireAutopost({
         conflits: 0,
         ecartees: [],
         ecartees_par_le_lecteur: [],
+        medias: { hebergement: 'absent', heberges: 0, deja_presents: 0, reportes: 0, ecartes: [] },
       };
     }
   }

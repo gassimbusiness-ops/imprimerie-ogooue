@@ -88,6 +88,17 @@ const MOTIFS_ALIMENTATION = {
   legende_absente: 'Aucune légende déclarée pour ce canal : une affiche ne part pas sans un mot.',
   legende_introuvable: 'La légende annoncée n\'est pas dans le dossier de la publication.',
   depot_illisible: 'Ce dossier du Drive n\'a pas pu être lu.',
+
+  /* Hébergement du média. La SOURCE DE VÉRITÉ des codes est `MOTIFS_MEDIA` dans
+     `api/_lib/autopost-medias.js` ; un test refuse qu'un code y apparaisse sans
+     phrase ici, sinon l'écran affiche le code brut au gérant. */
+  aucun_media_pour_ce_canal: 'Aucun média ne cible ce canal dans publication.json.',
+  media_introuvable_dans_le_dossier: 'Le fichier annoncé n\'est pas dans le dossier de la publication.',
+  type_de_media_non_admis: 'Format de fichier refusé par le stockage. Rien n\'est converti ici.',
+  media_trop_lourd: 'Fichier trop lourd : le stockage refuse au-delà de 15 Mo.',
+  empreinte_media_absente: 'Google ne donne pas d\'empreinte pour ce fichier : ce n\'est probablement pas une vraie image.',
+  media_illisible_dans_le_drive: 'Google n\'a pas rendu le fichier. Le prochain passage réessaiera.',
+  hebergement_indisponible: 'Le stockage des médias n\'a pas répondu. Le prochain passage réessaiera.',
 };
 
 const DETAILS_APPROBATION = {
@@ -512,9 +523,10 @@ export default function Autopost() {
             Facebook et Instagram ne reçoivent pas de fichier : ils vont <strong>chercher</strong> l&apos;image
             à une adresse publiquement joignable, et un fichier du Drive privé n&apos;en est pas une.
             Ces publications entrent bien dans la file et y sont examinées, mais elles
-            <strong> ne partiront pas</strong> tant que l&apos;hébergement du média n&apos;existe pas.
-            C&apos;est un chantier à part : dépôt dans un stockage privé à l&apos;approbation, puis adresse
-            signée à durée courte.
+            <strong> ne partiront pas</strong> tant que le média n&apos;est pas hébergé.
+            L&apos;hébergement se fait désormais tout seul à chaque passage. S&apos;il reste des lignes
+            ici, la raison exacte est écrite sur chacune : fichier introuvable, format refusé,
+            trop lourd, ou simplement reporté au passage suivant.
           </p>
         </div>
       )}

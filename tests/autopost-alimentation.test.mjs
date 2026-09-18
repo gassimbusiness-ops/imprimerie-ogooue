@@ -228,6 +228,37 @@ function depotFactice({ lignes = [], actif = false, mode = 'dry_run' } = {}) {
   };
 }
 
+/** Racine du bucket public tel que Supabase le sert. */
+const RACINE_BUCKET = 'https://exemple.supabase.co/storage/v1/object/public/publications';
+
+/**
+ * Hébergeur de médias de test.
+ *
+ * ⛔ Il ne parle ni à Google ni à Supabase : ce fichier teste le CÂBLAGE (ce
+ *    que l'alimentation fait du résultat), pas l'hébergement lui-même — celui-là
+ *    a son propre fichier, `tests/autopost-medias.test.mjs`.
+ */
+function hebergeurFactice({ resultat = null, dejaLa = false } = {}) {
+  const appels = [];
+  return {
+    appels,
+    async heberger({ depose, canal }) {
+      const pub = depose?.publication;
+      appels.push(`${pub?.publication_id}|${canal}`);
+      if (resultat) return resultat;
+      return {
+        url: `${RACINE_BUCKET}/${pub.publication_id}/v${pub.version_contenu}/objet.jpg`,
+        chemin: `${pub.publication_id}/v${pub.version_contenu}/objet.jpg`,
+        deja_present: dejaLa,
+        televerse: !dejaLa,
+        motif: null,
+        detail: null,
+        piste: null,
+      };
+    },
+  };
+}
+
 /** Raccourci : une ligne de file déjà en place, telle que l'alimentation l'écrit. */
 function ligneExistante(pub, { canal = 'facebook', compte = PAGE_ID, ...sur } = {}) {
   return {
@@ -255,7 +286,9 @@ function ligneExistante(pub, { canal = 'facebook', compte = PAGE_ID, ...sur } = 
   };
 }
 
-const passage = (depot, client) => alimenterFile({ depot, client, instant: INSTANT, tracer: muet });
+const passage = (depot, client, medias = null) => alimenterFile({
+  depot, client, medias, instant: INSTANT, tracer: muet,
+});
 
 /* ═══════════════════════════════════════════════════════════════════════════
    1. LE CAS NOMINAL — le maillon qui manquait
@@ -729,29 +762,289 @@ test('⛔ l alimentation ne publie RIEN et ne pose aucun témoin', async () => {
    8. LE MÉDIA — la vérité, écrite dans la ligne
    ═══════════════════════════════════════════════════════════════════════════ */
 
-test('🔴 url_media reste VIDE : un fichier Drive n est pas une URL publique', async () => {
+test('🔴 SANS hébergeur injecté, url_media reste VIDE — on n invente pas d adresse', async () => {
   // Instagram ne reçoit pas de fichier : il va CHERCHER une URL publiquement
-  // joignable. Un lien Drive privé n'en est pas une. Tant que l'hébergement
-  // n'existe pas, la ligne entre en file SANS url_media, et l'exécuteur refuse
-  // de publier (`url_media_absente`) au lieu d'improviser.
+  // joignable. Un lien Drive privé n'en est pas une. Quand l'hébergement n'est
+  // pas câblé, la ligne entre en file SANS url_media, l'exécuteur refuse de
+  // publier (`url_media_absente`) au lieu d'improviser — et le bilan DIT que
+  // l'hébergement est absent, plutôt que de laisser croire à une panne Google.
   const pub = manifeste();
   const depot = depotFactice();
   const client = clientFactice({ publications: [deposee(pub)] });
 
-  await passage(depot, client);
+  const bilan = await passage(depot, client);
 
   const ligne = [...depot.file.values()][0];
   assert.equal(ligne.url_media, null);
+  assert.equal(ligne.derniere_erreur, null, 'aucun hébergement tenté : aucun motif à inventer');
+  assert.equal(bilan.medias.hebergement, 'absent');
 });
 
 test('⛔ aucune URL googleapis / drive.google ne peut se glisser dans url_media', () => {
   const source = readFileSync(
     fileURLToPath(new URL('../api/_lib/autopost-alimentation.js', import.meta.url)), 'utf8',
   );
-  assert.equal(/url_media:(?!\s*null\b)/.test(source), false,
-    'url_media doit être écrit à null, et nulle part ailleurs');
-  assert.equal(/drive\.google\.com|googleusercontent|uc\?export=download/.test(source), false,
+
+  // ⛔ LA RÈGLE, ET SA SEULE ÉVOLUTION DEPUIS LE 18/09 : `url_media` n'est plus
+  //    forcément `null`, mais ce qui y entre reste INTERDIT D'ÊTRE FABRIQUÉ
+  //    ICI. La seule valeur non nulle admise est l'adresse rendue par
+  //    l'hébergeur — l'objet réellement déposé dans notre bucket. Aucune chaîne
+  //    écrite à la main ne peut atterrir dans cette colonne.
+  const code = source.split('\n').filter((l) => !/^\s*(\*|\/\/)/.test(l)).join('\n');
+  const ecritures = [...code.matchAll(/url_media\s*[:=]\s*([^,;\n]+)/g)].map((m) => m[1].trim());
+  assert.notEqual(ecritures.length, 0, 'le module doit bien écrire url_media quelque part');
+  ecritures.forEach((valeur) => {
+    assert.equal(/['"`]/.test(valeur), false,
+      `url_media ne reçoit jamais une chaîne écrite ici : « ${valeur} »`);
+    assert.match(valeur, /^(null|[\w$]+(\??\.url)?(\s*\?\?\s*null)?)$/,
+      `url_media ne reçoit que null ou l adresse rendue par l hébergeur : « ${valeur} »`);
+
+    // Une simple variable ne prouve rien par elle-même : on remonte à sa
+    // déclaration, et elle doit venir du `.url` de l'hébergeur. Sans ce
+    // contrôle, `url_media: adresse` passerait quelle que soit son origine.
+    const nu = valeur.replace(/\s*\?\?\s*null$/, '');
+    if (/^[\w$]+$/.test(nu) && nu !== 'null') {
+      assert.match(code, new RegExp(`const ${nu} = [^;]*\\.url`),
+        `« ${nu} » doit être déclarée à partir de l adresse rendue par l hébergeur`);
+    }
+  });
+  assert.equal(/https?:\/\//.test(code), false,
+    'aucune adresse en dur dans le code de ce module : elles viennent du stockage');
+
+  // Sur le CODE, pas sur les commentaires : l'en-tête du module explique
+  // justement pourquoi un lien Drive n'est pas une adresse publique, et un test
+  // qui interdirait d'en parler interdirait d'expliquer.
+  assert.equal(/drive\.google\.com|googleusercontent|uc\?export=download/.test(code), false,
     'un lien Drive n est pas une URL publique : ne jamais en fabriquer une');
+});
+
+test('🔴 le média hébergé entre dans la ligne, et rien d autre n y entre', async () => {
+  const pub = manifeste();
+  const depot = depotFactice();
+  const client = clientFactice({ publications: [deposee(pub)] });
+  const medias = hebergeurFactice();
+
+  const bilan = await passage(depot, client, medias);
+
+  const ligne = [...depot.file.values()][0];
+  assert.equal(ligne.url_media, `${RACINE_BUCKET}/PUB-2026-S39-1-01/v1/objet.jpg`);
+  assert.equal(ligne.derniere_erreur, null);
+  assert.equal(bilan.medias.heberges, 1);
+  assert.equal(bilan.medias.hebergement, 'cable');
+  assert.deepEqual(medias.appels, ['PUB-2026-S39-1-01|facebook']);
+});
+
+test('🔴 DEUX PASSAGES : le second ne redemande rien et ne réécrit pas la ligne', async () => {
+  const pub = manifeste();
+  const depot = depotFactice();
+  const client = clientFactice({ publications: [deposee(pub)] });
+
+  await passage(depot, client, hebergeurFactice());
+  const medias2 = hebergeurFactice();
+  const bilan2 = await passage(depot, client, medias2);
+
+  assert.equal(depot.file.size, 1);
+  assert.equal(bilan2.creees, 0);
+  assert.equal(bilan2.inchangees, 1);
+  assert.deepEqual(medias2.appels, [],
+    'la ligne a déjà une adresse et le dépôt n a pas bougé : on ne redemande rien');
+});
+
+test('🔴 UNE PANNE D HÉBERGEMENT NE FAIT PAS PERDRE LE DÉPÔT', async () => {
+  // Alimenter et héberger sont deux gestes. La ligne entre quand même en file,
+  // sans adresse, et le motif est écrit LÀ OÙ L ÉCRAN LE MONTRE.
+  const pub = manifeste();
+  const depot = depotFactice();
+  const client = clientFactice({ publications: [deposee(pub)] });
+  const medias = hebergeurFactice({
+    resultat: {
+      url: null,
+      motif: 'hebergement_indisponible',
+      detail: 'le stockage n a pas répondu : connexion perdue',
+      piste: 'La ligne reste en file : le prochain passage réessaiera.',
+    },
+  });
+
+  const bilan = await passage(depot, client, medias);
+
+  assert.equal(bilan.creees, 1, 'la ligne existe : une panne d image n annule pas un dépôt');
+  const ligne = [...depot.file.values()][0];
+  assert.equal(ligne.url_media, null, '⛔ jamais d adresse pour un objet non déposé');
+  assert.equal(ligne.derniere_erreur.code_erreur, 'hebergement_indisponible');
+  assert.match(ligne.derniere_erreur.message_erreur, /connexion perdue/);
+  assert.equal(ligne.derniere_erreur.a_utc, INSTANT);
+  assert.equal(bilan.medias.ecartes.length, 1);
+  assert.equal(bilan.medias.ecartes[0].canal, 'facebook');
+});
+
+test('🔴 un hébergeur qui LÈVE ne fait pas tomber l alimentation', async () => {
+  const pub = manifeste();
+  const depot = depotFactice();
+  const client = clientFactice({ publications: [deposee(pub)] });
+  const medias = { appels: [], async heberger() { throw new Error('Storage 500'); } };
+
+  const bilan = await passage(depot, client, medias);
+
+  assert.equal(bilan.creees, 1);
+  const ligne = [...depot.file.values()][0];
+  assert.equal(ligne.url_media, null);
+  assert.match(ligne.derniere_erreur.message_erreur, /Storage 500/);
+});
+
+test('🔴 une ligne DÉJÀ en file sans média reçoit son adresse au passage suivant', async () => {
+  // Les 14 publications entrées avant l'hébergement ne doivent pas rester
+  // bloquées pour toujours : sans ce rattrapage, la file resterait pleine de
+  // lignes qui ne peuvent pas partir.
+  const pub = manifeste();
+  const depot = depotFactice({ lignes: [ligneExistante(pub, { url_media: null })] });
+  const client = clientFactice({ publications: [deposee(pub)] });
+
+  const bilan = await passage(depot, client, hebergeurFactice());
+
+  assert.equal(bilan.creees, 0, 'aucune ligne en double');
+  assert.equal(bilan.mises_a_jour, 1);
+  assert.equal(bilan.medias.heberges, 1);
+  const ligne = [...depot.file.values()][0];
+  assert.equal(ligne.url_media, `${RACINE_BUCKET}/PUB-2026-S39-1-01/v1/objet.jpg`);
+});
+
+test('un motif de média qui disparaît est EFFACÉ — mais jamais l erreur de l exécuteur', async () => {
+  const pub = manifeste();
+  const avecMotifMedia = ligneExistante(pub, {
+    url_media: null,
+    derniere_erreur: { code_erreur: 'media_illisible_dans_le_drive', message_erreur: 'x', a_utc: INSTANT },
+  });
+  const depot = depotFactice({ lignes: [avecMotifMedia] });
+  const client = clientFactice({ publications: [deposee(pub)] });
+
+  await passage(depot, client, hebergeurFactice());
+
+  assert.equal([...depot.file.values()][0].derniere_erreur, null,
+    'notre propre motif ne se traîne pas une fois le média hébergé');
+
+  // Et l'inverse : une erreur laissée par l'exécuteur raconte une tentative de
+  // PUBLICATION. Ce n'est pas à l'alimentation de la faire disparaître.
+  const erreurExecuteur = { code_erreur: 'meta_refuse', message_erreur: 'jeton expiré', a_utc: INSTANT };
+  const depot2 = depotFactice({
+    lignes: [ligneExistante(pub, { url_media: null, etat: 'failed', derniere_erreur: erreurExecuteur })],
+  });
+  await passage(depot2, clientFactice({ publications: [deposee(pub)] }), hebergeurFactice());
+  assert.deepEqual([...depot2.file.values()][0].derniere_erreur, erreurExecuteur);
+});
+
+test('🔴 contenu changé + média NON réhébergé : l ANCIENNE adresse est RETIRÉE', async () => {
+  // Le cas qui publierait la mauvaise image. L'adresse porte l'empreinte du
+  // fichier : garder l'ancienne « en attendant », ce serait poster la vieille
+  // affiche sous la nouvelle légende. Une ligne sans adresse ne part pas — et
+  // c'est le bon échec.
+  const pub = manifeste();
+  const enFile = ligneExistante(pub, { url_media: `${RACINE_BUCKET}/vieille/v1/objet.jpg` });
+  const depot = depotFactice({ lignes: [enFile] });
+  const client = clientFactice({
+    publications: [deposee(pub)],
+    fichiers: { 'cap-fb': 'Une légende corrigée — OG-01-S39' },
+  });
+  const medias = hebergeurFactice({
+    resultat: {
+      url: null,
+      motif: 'media_illisible_dans_le_drive',
+      detail: 'Google n a pas rendu le fichier',
+      piste: 'La ligne reste en file : le prochain passage réessaiera.',
+    },
+  });
+
+  await passage(depot, client, medias);
+
+  const ligne = [...depot.file.values()][0];
+  assert.equal(ligne.url_media, null,
+    'une adresse qui pointe sur l image d avant la correction ne se garde pas');
+  assert.equal(ligne.derniere_erreur.code_erreur, 'media_illisible_dans_le_drive');
+});
+
+test('🔴 contenu changé + média REPORTÉ faute de budget : l ancienne adresse part aussi', async () => {
+  const pub = manifeste();
+  const enFile = ligneExistante(pub, { url_media: `${RACINE_BUCKET}/vieille/v1/objet.jpg` });
+  const depot = depotFactice({ lignes: [enFile] });
+  const client = clientFactice({
+    publications: [deposee(pub)],
+    fichiers: { 'cap-fb': 'Une légende corrigée — OG-01-S39' },
+  });
+
+  const bilan = await alimenterFile({
+    depot,
+    client,
+    medias: hebergeurFactice(),
+    televersementsMax: 0, // budget épuisé d'avance
+    instant: INSTANT,
+    tracer: muet,
+  });
+
+  assert.equal(bilan.medias.reportes, 1);
+  const ligne = [...depot.file.values()][0];
+  assert.equal(ligne.url_media, null);
+  assert.equal(ligne.derniere_erreur, null, 'un report n est pas une erreur');
+});
+
+test('🔴 LE BUDGET DE TÉLÉVERSEMENTS : au-delà, on REPORTE — sans inventer une erreur', async () => {
+  // Alimenter tourne dans la même fonction serverless que publier. Une
+  // alimentation qui fait expirer la fonction n'empêche pas seulement
+  // d'alimenter : elle empêche de PUBLIER ce qui est déjà en file.
+  const pubs = ['09', '10', '11'].map((h, i) => manifeste({ id: `PUB-2026-S39-1-0${i + 1}`, heure: `${h}:00` }));
+  const depot = depotFactice();
+  const client = clientFactice({ publications: pubs.map((p, i) => deposee(p, { dossier: `p${i}` })) });
+  const medias = hebergeurFactice();
+
+  const bilan = await alimenterFile({
+    depot, client, medias, televersementsMax: 2, instant: INSTANT, tracer: muet,
+  });
+
+  assert.equal(bilan.creees, 3, 'les trois lignes entrent en file : un report n annule rien');
+  assert.equal(bilan.medias.heberges, 2);
+  assert.equal(bilan.medias.reportes, 1);
+  assert.equal(bilan.medias.ecartes.length, 0, 'un report n est PAS un écartement');
+
+  const reportee = [...depot.file.values()].find((l) => !l.url_media);
+  assert.equal(reportee.derniere_erreur, null,
+    'un bandeau rouge pour une décision volontaire serait un faux témoin dans l autre sens');
+});
+
+test('un média DÉJÀ hébergé ne consomme pas le budget de téléversements', async () => {
+  const pubs = ['09', '10', '11'].map((h, i) => manifeste({ id: `PUB-2026-S39-1-0${i + 1}`, heure: `${h}:00` }));
+  const depot = depotFactice();
+  const client = clientFactice({ publications: pubs.map((p, i) => deposee(p, { dossier: `p${i}` })) });
+  // Tout est déjà dans le bucket : trois questions, zéro dépôt.
+  const medias = hebergeurFactice({ dejaLa: true });
+
+  const bilan = await alimenterFile({
+    depot, client, medias, televersementsMax: 1, instant: INSTANT, tracer: muet,
+  });
+
+  assert.equal(bilan.medias.deja_presents, 3);
+  assert.equal(bilan.medias.reportes, 0, 'une question au bucket ne coûte pas un téléversement');
+  assert.equal([...depot.file.values()].filter((l) => l.url_media).length, 3);
+});
+
+test('🔴 un dépôt dont le CONTENU a changé fait redemander une adresse', async () => {
+  // Le chemin de l'objet porte l'empreinte du fichier : une affiche corrigée a
+  // une autre adresse. Garder l'ancienne, ce serait publier l'image d'avant.
+  const pub = manifeste();
+  const enFile = ligneExistante(pub, { url_media: 'https://exemple.invalid/ancienne.jpg' });
+  // Même clé (même version, même créneau, même compte) mais légende différente :
+  // l'empreinte du dépôt change, donc le contenu a bougé.
+  const depot = depotFactice({ lignes: [enFile] });
+  const client = clientFactice({
+    publications: [deposee(pub)],
+    fichiers: { 'cap-fb': 'Une légende corrigée — OG-01-S39' },
+  });
+  const medias = hebergeurFactice();
+
+  const bilan = await passage(depot, client, medias);
+
+  assert.equal(bilan.mises_a_jour, 1);
+  assert.deepEqual(medias.appels, ['PUB-2026-S39-1-01|facebook'],
+    'le contenu a changé : on redemande l adresse au lieu de garder l ancienne');
+  assert.equal([...depot.file.values()][0].url_media,
+    `${RACINE_BUCKET}/PUB-2026-S39-1-01/v1/objet.jpg`);
 });
 
 /* ═══════════════════════════════════════════════════════════════════════════

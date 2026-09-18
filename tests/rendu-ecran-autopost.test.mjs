@@ -487,3 +487,54 @@ test('une ligne DONT le media est heberge ne porte PAS l avertissement', async (
     await r.demonter();
   }
 });
+
+test('🔴 le MOTIF du media non heberge remonte JUSQU A L ECRAN, ligne par ligne', async () => {
+  // La regle de la mission d'hebergement : « ce motif doit remonter jusqu'a
+  // l'ecran, pas mourir dans un console.error ». L'alimentation l'ecrit dans
+  // `derniere_erreur` de la ligne — la colonne que cet ecran affiche deja.
+  // Ce test monte l'ecran POUR DE VRAI et verifie que le gerant de Moanda lit
+  // la phrase, et le geste qui repare.
+  const f = installerFetchRoutee({ '/api/autopost-etat': { charge: {
+    ...ETAT,
+    file: [{
+      ...ETAT.file[0],
+      url_media: null,
+      derniere_erreur: {
+        code_erreur: 'media_trop_lourd',
+        message_erreur: '« affiche.jpg » pese 18874368 octets ; le stockage refuse au-dela de 15728640',
+        piste: 'Alleger l image ou la video avant de la deposer : le stockage refuse au-dela de 15 Mo.',
+        a_utc: '2026-09-21T06:00:00Z',
+      },
+    }],
+  } } });
+  const r = await rendreEcran({ ecran: 'src/features/autopost/page.jsx' });
+  try {
+    assert.equal(r.erreurs.length, 0, 'un ecran qui plante ne montre aucun motif');
+    assert.match(r.texte, /18874368/, 'le chiffre exact, pas « trop lourd » en general');
+    assert.match(r.texte, /Alleger l image/, 'et le geste qui repare, en toutes lettres');
+  } finally {
+    f.restaurer();
+    await r.demonter();
+  }
+});
+
+test('🔴 une adresse de media HEBERGE fait disparaitre l avertissement « media non heberge »', async () => {
+  // L'inverse du precedent : le jour ou l'hebergement marche, l'ecran doit
+  // cesser de dire que rien ne peut partir. Un avertissement qui reste affiche
+  // apres sa reparation est un faux temoin, dans l'autre sens.
+  const urlHebergee = 'https://bcwkrrqmjpaohmafcncw.supabase.co/storage/v1/object/public/'
+    + 'publications/PUB-2026-S39-1-01/v1/abc-affiche.jpg';
+  const f = installerFetchRoutee({ '/api/autopost-etat': { charge: {
+    ...ETAT,
+    file: [{ ...ETAT.file[0], url_media: urlHebergee }],
+  } } });
+  const r = await rendreEcran({ ecran: 'src/features/autopost/page.jsx' });
+  try {
+    assert.equal(r.erreurs.length, 0);
+    assert.doesNotMatch(r.texte, /média non hébergé/i);
+    assert.doesNotMatch(r.texte, /n'ont pas de média hébergé|n’ont pas de média hébergé/i);
+  } finally {
+    f.restaurer();
+    await r.demonter();
+  }
+});

@@ -114,15 +114,33 @@
  * rendre public serait exactement le partage par lien que le dossier interdit
  * (le Drive porte les baux, les contrats de travail, la procuration bancaire).
  *
- * Ce module n'invente donc AUCUNE adresse. Les lignes entrent en file **sans
- * média joignable**, et l'exécuteur refuse de publier (`url_media_absente`)
- * plutôt que d'improviser. C'est volontaire et c'est dit à l'écran : mieux vaut
- * une file honnête qu'une file qui échouera au moment de publier.
+ * Ce module n'invente donc AUCUNE adresse — il n'en a jamais fabriqué une et
+ * n'en fabriquera jamais. Depuis le 19/09/2026 il en DEMANDE une à
+ * `autopost-medias.js`, qui recopie les octets du Drive dans le bucket
+ * Supabase `publications` (public, 15 Mo, quatre types) et rend l'adresse de
+ * l'objet déposé. Aucun lien `drive.google.com` ni `googleusercontent` ne peut
+ * entrer dans `url_media` : ce qui y entre est une adresse de NOTRE stockage,
+ * ou rien.
  *
- * L'hébergement (dépôt dans un bucket Supabase privé au moment de
- * l'approbation, puis adresse signée à durée courte) est un chantier à part
- * entière — il touche au stockage, aux droits et à l'écran d'approbation. Il
- * n'est pas fait ici, et faire semblant serait pire que de ne pas le faire.
+ * Trois règles tiennent ce câblage :
+ *
+ *   1. **Héberger et alimenter sont deux gestes.** Une panne Google ou Storage
+ *      ne fait pas perdre le dépôt : la ligne entre en file avec
+ *      `url_media: null` et le motif est écrit dans `derniere_erreur` — là où
+ *      l'écran l'affiche déjà, à côté de la ligne concernée. Un motif qui
+ *      meurt dans un `console.error` n'existe pas.
+ *   2. **Une ligne déjà en file sans adresse est retentée à chaque passage.**
+ *      Sinon les lignes entrées avant l'hébergement resteraient à jamais sans
+ *      média, et la file serait pleine de publications qui ne peuvent pas
+ *      partir.
+ *   3. **Un dépôt dont le contenu a changé fait REDEMANDER l'adresse**, même
+ *      si la ligne en portait déjà une : le chemin de l'objet contient
+ *      l'empreinte du fichier, donc une image corrigée a une autre adresse.
+ *      Sans ce point, on publierait l'ancienne image sous le contenu nouveau.
+ *
+ * Sans hébergeur injecté, le comportement d'avant revient à l'identique : la
+ * ligne entre sans média, et le bilan le DIT (`medias.hebergement: "absent"`)
+ * plutôt que de laisser croire à une panne de Google.
  *
  * ════════════════════════════════════════════════════════════════════════════
  * LE CONTRAT DU DÉPÔT (le port, injecté — jamais Supabase en dur ici)
@@ -143,6 +161,7 @@
  */
 import crypto from 'node:crypto';
 import { validerManifeste, cleIdempotence, empreinteCanonique, CANAUX_PUBLIANTS } from './autopost-contrat.js';
+import { erreurDeMedia, CODES_MEDIA, MOTIFS_MEDIA } from './autopost-medias.js';
 import { formaterInstantUtc, dateLocaleDepuisInstantUtc } from '../../src/lib/dates.js';
 
 /**
@@ -163,6 +182,29 @@ export const ETAT_ENTREE = 'scheduled';
  * plan Hobby — pas une valeur choisie ici au hasard.
  */
 export const TOLERANCE_PAR_DEFAUT = 90;
+
+/**
+ * 🔴 LE BUDGET DE TÉLÉVERSEMENTS D'UN PASSAGE.
+ *
+ * Alimenter était jusqu'ici une affaire de listings et de quelques fichiers
+ * texte. Depuis l'hébergement des médias, un passage peut avoir à descendre
+ * puis remonter plusieurs mégaoctets — et les 14 publications qui attendent
+ * dans le Drive en feraient une vingtaine d'un coup, au premier passage.
+ *
+ * Or l'alimentation tourne DANS la même fonction serverless que la publication.
+ * Une alimentation qui fait expirer la fonction n'empêche pas seulement
+ * d'alimenter : elle empêche de PUBLIER ce qui est déjà en file. C'est
+ * exactement la règle « alimenter et publier sont deux gestes », vue du côté du
+ * temps.
+ *
+ * Au-delà de ce budget, les médias restants ne sont pas tentés : leur ligne
+ * entre quand même en file, sans adresse, et le passage suivant les reprend —
+ * ce qui est déjà hébergé ne coûte alors qu'une question au bucket. Un report
+ * n'est PAS une erreur : il est compté (`medias.reportes`) et dit au journal,
+ * mais il n'écrit rien dans `derniere_erreur`. Un bandeau rouge pour une
+ * décision volontaire est un faux témoin, dans l'autre sens.
+ */
+export const TELEVERSEMENTS_MAX_PAR_PASSAGE = 6;
 
 /**
  * Pourquoi un canal n'est pas entré en file. Ces chaînes sont écrites dans le
@@ -216,6 +258,57 @@ function normaliserInstant(instant) {
 }
 
 /**
+ * Ce qu'un résultat d'hébergement change sur une ligne DÉJÀ en file — et rien
+ * de plus.
+ *
+ * Rend `null` quand il n'y a rien à écrire : c'est ce qui empêche la file
+ * d'être réécrite deux fois par jour pour un média qui échoue toujours pour la
+ * même raison. Une ligne réécrite pour rien est du bruit dans `updated_at`, et
+ * du bruit dans `updated_at` finit par cacher un vrai changement.
+ *
+ * @param {object|null} media      résultat de `heberger()`, ou `null` si non tenté
+ * @param {object} existante       la ligne telle qu'elle est en base
+ * @param {string} instantUtc
+ * @returns {object|null}
+ */
+function champsDuMedia(media, existante, instantUtc, { contenuChange = false } = {}) {
+  const champs = {};
+  const nouvelle = media?.url ?? null;
+  const ancienneUrl = existante?.url_media ?? null;
+
+  if (contenuChange) {
+    /* 🔴 LE CAS QUI PUBLIERAIT LA MAUVAISE IMAGE.
+       Le contenu déposé a changé, donc l'adresse d'avant pointe sur l'image
+       d'avant — l'adresse porte l'empreinte du fichier. `url_media` vaut donc
+       EXACTEMENT ce que cet hébergement-ci a rendu : une adresse fraîche, ou
+       RIEN. Garder l'ancienne « en attendant », ce serait publier la vieille
+       affiche sous la nouvelle légende, et personne n'aurait approuvé ça.
+       Une ligne sans adresse ne part pas ; c'est le bon échec. */
+    if (nouvelle !== ancienneUrl) champs.url_media = nouvelle;
+  } else if (nouvelle && nouvelle !== ancienneUrl) {
+    champs.url_media = nouvelle;
+  }
+
+  // Hébergement non tenté (pas d'hébergeur, ou budget du passage atteint) : on
+  // n'invente aucun motif. Le report est compté dans le bilan et dit au journal.
+  if (!media) return Object.keys(champs).length > 0 ? champs : null;
+
+  const erreur = erreurDeMedia(media, instantUtc);
+  const ancienne = existante?.derniere_erreur || null;
+  if (erreur) {
+    // Le même motif qu'au passage précédent ne se réécrit pas.
+    if (ancienne?.code_erreur !== erreur.code_erreur) champs.derniere_erreur = erreur;
+  } else if (CODES_MEDIA.includes(ancienne?.code_erreur)) {
+    // ⛔ On n'efface QUE nos propres motifs : une erreur laissée par l'exécuteur
+    //    raconte une tentative de publication, et ce n'est pas à l'alimentation
+    //    de la faire disparaître.
+    champs.derniere_erreur = null;
+  }
+
+  return Object.keys(champs).length > 0 ? champs : null;
+}
+
+/**
  * ⛔ LE MAILLON. Lit les publications conformes du Drive et crée les lignes de
  * file correspondantes.
  *
@@ -225,6 +318,9 @@ function normaliserInstant(instant) {
  * @param {object} arg
  * @param {object} arg.depot   le port décrit en tête de fichier
  * @param {object} arg.client  client Drive (`lirePublications`, `telechargerFichier`)
+ * @param {object} [arg.medias] hébergeur de `autopost-medias.js` (`heberger`).
+ *   Absent, les lignes entrent sans média joignable — et le bilan le dit.
+ * @param {number} [arg.televersementsMax] voir `TELEVERSEMENTS_MAX_PAR_PASSAGE`
  * @param {Date|string} [arg.instant]
  * @param {Function} [arg.tracer]
  * @returns {Promise<object>} bilan de l'alimentation
@@ -232,6 +328,8 @@ function normaliserInstant(instant) {
 export async function alimenterFile({
   depot,
   client,
+  medias = null,
+  televersementsMax = TELEVERSEMENTS_MAX_PAR_PASSAGE,
   instant = new Date(),
   tracer = (...a) => console.log(...a),
 }) {
@@ -251,6 +349,21 @@ export async function alimenterFile({
     conflits: 0,
     ecartees: [],
     ecartees_par_le_lecteur: [],
+    /**
+     * Le média, compté À PART des écartements.
+     *
+     * ⚠️ Un média non hébergé n'écarte PAS la ligne : elle entre en file, elle
+     *    est examinée, elle ne peut simplement pas partir. Le ranger dans
+     *    `ecartees` ferait mentir le compteur affiché à l'écran (« N écartée(s) »
+     *    alors que la ligne existe bel et bien).
+     */
+    medias: {
+      hebergement: medias ? 'cable' : 'absent',
+      heberges: 0,
+      deja_presents: 0,
+      reportes: 0,
+      ecartes: [],
+    },
   };
 
   const ecarter = (pub, canal, motif, detail) => {
@@ -260,6 +373,67 @@ export async function alimenterFile({
       motif,
       detail: detail ?? null,
     });
+  };
+
+  /**
+   * L'hébergement d'un canal, tenté une seule fois par passage.
+   *
+   * Le cache n'est pas une optimisation cosmétique : deux canaux d'une même
+   * publication partagent souvent le même fichier, et sans lui on redemanderait
+   * au stockage ce qu'on vient de lui demander.
+   *
+   * ⛔ NE LÈVE JAMAIS. `heberger()` ne lève déjà pas ; ce `catch` est le filet
+   *    du filet, et il existe parce que la règle « alimenter et publier sont
+   *    deux gestes » vaut aussi un cran plus bas.
+   */
+  const hebergements = new Map();
+  let televersements = 0;
+  const hebergerPour = async (depose, canal) => {
+    if (!medias) return null;
+    const cleH = `${depose?.publication?.publication_id ?? ''}|${canal}`;
+    if (hebergements.has(cleH)) return hebergements.get(cleH);
+
+    // ⛔ Le budget se compte en TÉLÉVERSEMENTS RÉELS, pas en tentatives : un
+    //    média déjà hébergé ne coûte qu'une question au bucket et ne doit pas
+    //    consommer le droit de déposer celui qui suit.
+    if (televersements >= televersementsMax) {
+      bilan.medias.reportes += 1;
+      tracer('[autopost] média reporté au prochain passage (budget atteint) : %s', cleH);
+      return null;
+    }
+
+    let resultat;
+    try {
+      resultat = await medias.heberger({ depose, canal });
+    } catch (err) {
+      resultat = {
+        url: null,
+        chemin: null,
+        deja_present: false,
+        televerse: false,
+        motif: MOTIFS_MEDIA.STOCKAGE_INJOIGNABLE,
+        detail: `hébergement impossible : ${err?.message || err}`,
+        piste: 'La ligne reste en file : le prochain passage réessaiera.',
+      };
+      tracer('[autopost] hébergement impossible : %s', err?.message || err);
+    }
+
+    if (resultat?.televerse) televersements += 1;
+
+    if (resultat?.url) {
+      if (resultat.deja_present) bilan.medias.deja_presents += 1;
+      else bilan.medias.heberges += 1;
+    } else {
+      bilan.medias.ecartes.push({
+        publication_id: depose?.publication?.publication_id ?? null,
+        canal,
+        motif: resultat?.motif ?? null,
+        detail: resultat?.detail ?? null,
+      });
+    }
+
+    hebergements.set(cleH, resultat);
+    return resultat;
   };
 
   /* ── 1. LIRE LE DRIVE ─────────────────────────────────────────────────── */
@@ -409,20 +583,41 @@ export async function alimenterFile({
           surface: existante.surface,
           tolerance: existante.tolerance_minutes,
         });
-        if (actuelle === empreinte) {
+        const depotInchange = actuelle === empreinte;
+
+        /* 🔴 LE MÉDIA D'UNE LIGNE DÉJÀ EN FILE.
+           Deux raisons de (re)demander une adresse :
+             - la ligne n'en a pas — elle ne partira jamais sans ;
+             - le dépôt a changé — l'adresse porte l'empreinte du fichier, donc
+               l'ancienne pointerait sur l'image d'avant la correction.
+           Et une seule raison de ne rien faire : la ligne a une adresse ET le
+           dépôt n'a pas bougé. C'est le cas le plus fréquent, et il ne coûte
+           alors ni appel à Google ni appel au stockage. */
+        const media = (existante.url_media && depotInchange)
+          ? null
+          : await hebergerPour(depot_, canal.canal);
+        const champsMedia = champsDuMedia(media, existante, instantUtc, {
+          contenuChange: !depotInchange,
+        });
+
+        if (depotInchange && !champsMedia) {
           // Le cas de très loin le plus fréquent : le passage horaire relit un
           // dépôt qui n'a pas bougé. Aucune écriture, aucun bruit.
           bilan.inchangees += 1;
           continue;
         }
 
-        const fait = await depot.mettreAJourDepuisDepot(cle, {
-          surface: canal.surface,
-          tolerance_minutes: tolerance,
-          legende,
-          publication: pub,
-          approbation: depot_.approbation ?? null,
-        });
+        const fait = await depot.mettreAJourDepuisDepot(cle, depotInchange
+          // Le dépôt n'a pas bougé : on ne réécrit QUE ce que le média change.
+          ? champsMedia
+          : {
+            surface: canal.surface,
+            tolerance_minutes: tolerance,
+            legende,
+            publication: pub,
+            approbation: depot_.approbation ?? null,
+            ...(champsMedia || {}),
+          });
         if (fait) {
           bilan.mises_a_jour += 1;
           tracer('[autopost] file mise à jour depuis le dépôt : %s', cle);
@@ -466,6 +661,10 @@ export async function alimenterFile({
       if (remplacee) bilan.remplacees += 1;
 
       /* ── 3.f L'INSERTION ─────────────────────────────────────────────── */
+      // 🔴 Le média est demandé AVANT l'insertion : une ligne qui naîtrait sans
+      //    adresse alors que le fichier est hébergeable attendrait le passage
+      //    suivant pour rien.
+      const mediaNeuf = await hebergerPour(depot_, canal.canal);
       const issue = await depot.inserer({
         cle_idempotence: cle,
         publication_id: pub.publication_id,
@@ -486,8 +685,13 @@ export async function alimenterFile({
         id_distant: null,
         id_conteneur: null,
         legende,
-        // 🔴 Aucune adresse de média n'est fabriquée ici : voir l'en-tête.
-        url_media: null,
+        // 🔴 L'adresse n'est pas FABRIQUÉE ici : elle est celle de l'objet
+        //    réellement déposé dans le bucket `publications` par
+        //    `autopost-medias.js`, ou `null`. Jamais un lien Drive, jamais une
+        //    URL devinée — et jamais une adresse pour un téléversement qui a
+        //    échoué : dans ce cas c'est `derniere_erreur` qui parle.
+        url_media: mediaNeuf?.url ?? null,
+        derniere_erreur: erreurDeMedia(mediaNeuf, instantUtc),
         publication: pub,
         // ⛔ Ce qui a été déposé, ou `null`. JAMAIS une approbation fabriquée.
         approbation: depot_.approbation ?? null,
@@ -519,7 +723,12 @@ export async function alimenterFile({
  * Le bilan complet — écartements compris — est rangé dans la colonne `bilan`.
  */
 async function journaliserSiUtile({ depot, bilan, instantUtc, force = false }) {
-  const change = bilan.creees + bilan.mises_a_jour + bilan.remplacees;
+  const m = bilan.medias || { heberges: 0, ecartes: [] };
+  // Un média nouvellement hébergé — ou refusé — est un changement : sans lui
+  // dans ce calcul, le passage qui débloque enfin une publication resterait
+  // muet au journal.
+  const change = bilan.creees + bilan.mises_a_jour + bilan.remplacees
+    + (m.heberges || 0) + (m.ecartes?.length || 0);
   const pannne = bilan.diagnostic && !['ok', 'dossier_vide'].includes(bilan.diagnostic);
   if (!force && change === 0 && !pannne) return;
 
@@ -529,7 +738,10 @@ async function journaliserSiUtile({ depot, bilan, instantUtc, force = false }) {
     resume: `Drive → file : ${bilan.creees} créée(s), ${bilan.mises_a_jour} mise(s) à jour, `
       + `${bilan.remplacees} remplacée(s), ${bilan.inchangees} inchangée(s), `
       + `${bilan.ecartees.length} écartée(s)`
-      + (bilan.conflits ? `, ${bilan.conflits} conflit(s) d'écriture` : ''),
+      + (bilan.conflits ? `, ${bilan.conflits} conflit(s) d'écriture` : '')
+      + ` · médias : ${m.heberges || 0} hébergé(s), ${m.deja_presents || 0} déjà là, `
+      + `${m.ecartes?.length || 0} sans adresse`
+      + (m.reportes ? `, ${m.reportes} reporté(s) au prochain passage` : ''),
     piste: pannne ? bilan.message : null,
     bilan,
   });
