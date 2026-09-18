@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Plus, Trash2, Megaphone, Sparkles } from 'lucide-react';
 import { toast } from 'sonner';
+import { todayISO, estDateMetier, dateMetierEnDateLocale } from '@/lib/dates';
 
 const TYPES_EVT = {
   fete_nationale: { label: 'Fête nationale', emoji: '🇬🇦', color: 'bg-emerald-100 text-emerald-700' },
@@ -30,6 +31,28 @@ const EVENEMENTS_GABON = [
 ];
 
 const emptyForm = { nom: '', date: '', type: 'autre', opportunites: '', description: '', recurrent: true };
+
+/**
+ * Le jour d'un événement, écrit en français — ou un tiret si la date est
+ * absente ou illisible.
+ *
+ * ⚠️ NE PAS REVENIR À `new Date(e.date).toLocaleDateString(...)`.
+ *
+ * Deux dégâts en une ligne, tous deux constatés le 18/09/2026 :
+ *   1. `new Date('')` rend `Invalid Date`, que `toLocaleDateString()` imprime
+ *      TEL QUEL. Trois cartes affichaient « Invalid Date » au gérant.
+ *   2. `new Date('2026-11-08')` est lu en UTC, puis rendu dans le fuseau de la
+ *      machine : sur un portable réglé à Los Angeles, le 8 novembre s'affiche
+ *      « 7 novembre ». C'est le bug de 55 300 F, côté lecture.
+ *
+ * `dateMetierEnDateLocale()` construit minuit LOCAL et rend `null` si la date
+ * n'existe pas : les deux pièges tombent ensemble.
+ */
+function jourEnFrancais(valeur) {
+  const d = dateMetierEnDateLocale(valeur);
+  if (!d) return '—';
+  return d.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' });
+}
 
 export default function Evenements() {
   const [evenements, setEvenements] = useState([]);
@@ -66,11 +89,15 @@ export default function Evenements() {
 
   // Upcoming events
   const upcoming = useMemo(() => {
-    const today = new Date();
-    const todayStr = today.toISOString().slice(5, 10);
+    // `new Date().toISOString().slice(5, 10)` donnait le jour de LONDRES : le
+    // 1er janvier à 00 h 30 à Moanda, il rendait « 12-31 » et la liste des
+    // prochains événements sautait une journée. `todayISO()` reste local.
+    const todayStr = todayISO().slice(5);
     return allEvents.filter((e) => {
-      const evtDate = (e.date || '').slice(5);
-      return evtDate >= todayStr;
+      // Une date absente ou illisible n'est pas « à venir » : elle ne peut pas
+      // être comparée, et c'est elle qui produisait « Invalid Date » ici.
+      if (!estDateMetier(e.date)) return false;
+      return e.date.slice(5) >= todayStr;
     }).slice(0, 6);
   }, [allEvents]);
 
@@ -84,6 +111,17 @@ export default function Evenements() {
 
   const handleSave = async () => {
     if (!form.nom.trim()) { toast.error('Nom requis'); return; }
+    // ⚠️ RÈGLE (décision du dirigeant, 18/09/2026) : PAS D'ÉVÉNEMENT SANS DATE.
+    //
+    // Avant ce jour, seul le nom était validé. Le gérant tapait un nom, laissait
+    // la date vide, cliquait « Ajouter » : la ligne partait en base avec
+    // `date: ''`, le toast annonçait « Événement ajouté », et la carte affichait
+    // « Invalid Date ». Un événement sans date n'a aucun usage — il ne peut ni
+    // être classé, ni remonter dans « Prochains événements ».
+    //
+    // Le refus se fait AVANT l'écriture : mieux vaut un message que 145 lignes
+    // à réparer plus tard.
+    if (!estDateMetier(form.date)) { toast.error('Date requise (jour, mois, année)'); return; }
     if (editItem) { await db.evenements.update(editItem.id, form); toast.success('Événement modifié'); }
     else { await db.evenements.create(form); toast.success('Événement ajouté'); }
     setShowForm(false); load();
@@ -112,16 +150,21 @@ export default function Evenements() {
             <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
               {upcoming.map((e) => {
                 const t = TYPES_EVT[e.type] || TYPES_EVT.autre;
-                const dateObj = new Date(e.date);
-                const daysUntil = Math.ceil((dateObj - new Date()) / (1000 * 60 * 60 * 24));
+                // `upcoming` a déjà écarté les dates illisibles : `dateObj` ne
+                // peut pas être `null` ici. On garde le repli malgré tout — un
+                // futur changement de filtre ne doit pas rendre « NaN ».
+                const dateObj = dateMetierEnDateLocale(e.date);
+                const daysUntil = dateObj
+                  ? Math.ceil((dateObj - new Date()) / (1000 * 60 * 60 * 24))
+                  : null;
                 return (
                   <div key={e.id} className="flex items-center gap-3 rounded-lg bg-white p-3 shadow-sm">
                     <span className="text-2xl">{t.emoji}</span>
                     <div className="flex-1 min-w-0">
                       <p className="font-medium text-sm truncate">{e.nom}</p>
-                      <p className="text-[10px] text-muted-foreground">{dateObj.toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })}</p>
+                      <p className="text-[10px] text-muted-foreground">{jourEnFrancais(e.date)}</p>
                     </div>
-                    {daysUntil >= 0 && daysUntil <= 30 && (
+                    {daysUntil !== null && daysUntil >= 0 && daysUntil <= 30 && (
                       <Badge className="text-[10px] bg-amber-100 text-amber-700 shrink-0">J-{daysUntil}</Badge>
                     )}
                   </div>
@@ -149,7 +192,7 @@ export default function Evenements() {
                     </div>
                     <Badge className={`mt-1 text-[10px] ${t.color}`}>{t.label}</Badge>
                     <p className="text-xs text-muted-foreground mt-1">
-                      {new Date(e.date).toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })}
+                      {jourEnFrancais(e.date)}
                     </p>
                   </div>
                   {e.source !== 'default' && (
@@ -173,7 +216,7 @@ export default function Evenements() {
           <div className="space-y-4 pt-2">
             <div><label className="mb-1.5 block text-sm font-medium">Nom *</label><Input value={form.nom} onChange={(e) => setForm({ ...form, nom: e.target.value })} /></div>
             <div className="grid grid-cols-2 gap-3">
-              <div><label className="mb-1.5 block text-sm font-medium">Date</label><Input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} /></div>
+              <div><label className="mb-1.5 block text-sm font-medium">Date *</label><Input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} /></div>
               <div><label className="mb-1.5 block text-sm font-medium">Type</label><Select value={form.type} onValueChange={(v) => setForm({ ...form, type: v })}><SelectTrigger><SelectValue /></SelectTrigger><SelectContent>{Object.entries(TYPES_EVT).map(([k, v]) => <SelectItem key={k} value={k}>{v.emoji} {v.label}</SelectItem>)}</SelectContent></Select></div>
             </div>
             <div><label className="mb-1.5 block text-sm font-medium">Opportunités marketing</label><textarea className="flex min-h-[60px] w-full rounded-md border border-input bg-background px-3 py-2 text-sm" value={form.opportunites} onChange={(e) => setForm({ ...form, opportunites: e.target.value })} placeholder="Quels produits promouvoir ?" /></div>

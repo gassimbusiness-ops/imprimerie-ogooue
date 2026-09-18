@@ -39,6 +39,49 @@ export function todayISO() {
   return toISODate(new Date());
 }
 
+const RE_DATE_METIER = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Vrai si `valeur` est une date métier `YYYY-MM-DD` qui EXISTE vraiment.
+ *
+ * ⚠️ Écrit le 18/09/2026 pour l'écran Événements. `handleSave()` n'y validait
+ * que le nom : un événement pouvait partir en base avec `date: ''`, et la carte
+ * affichait « Invalid Date » au gérant — `new Date('')` rend `Invalid Date`,
+ * que `toLocaleDateString()` imprime tel quel.
+ *
+ * Le contrôle de forme ne suffit pas : `2026-02-31` a la bonne forme et
+ * n'existe pas. On reconstruit donc la date et on vérifie qu'elle n'a pas été
+ * silencieusement reportée au 2 ou 3 mars — même précaution qu'au § créneaux.
+ *
+ * @param {unknown} valeur
+ * @returns {boolean}
+ */
+export function estDateMetier(valeur) {
+  if (typeof valeur !== 'string' || !RE_DATE_METIER.test(valeur)) return false;
+  const [a, m, j] = valeur.split('-').map(Number);
+  if (m < 1 || m > 12 || j < 1 || j > 31) return false;
+  const d = new Date(a, m - 1, j);
+  return d.getFullYear() === a && d.getMonth() === m - 1 && d.getDate() === j;
+}
+
+/**
+ * Objet `Date` à MINUIT LOCAL pour une date métier, ou `null` si elle n'existe
+ * pas.
+ *
+ * ⛔ Ne jamais écrire `new Date('2026-11-08')` pour afficher un jour : cette
+ * forme est interprétée en UTC, et `toLocaleDateString()` la rend ensuite dans
+ * le fuseau de la machine. Sur un portable réglé à Los Angeles (UTC−8), le
+ * 8 novembre s'affiche « 7 novembre ». C'est le bug de 55 300 F, côté lecture.
+ *
+ * @param {unknown} valeur date métier `YYYY-MM-DD`
+ * @returns {Date|null}
+ */
+export function dateMetierEnDateLocale(valeur) {
+  if (!estDateMetier(valeur)) return null;
+  const [a, m, j] = valeur.split('-').map(Number);
+  return new Date(a, m - 1, j);
+}
+
 /** Premier jour du mois de `d` (par défaut : le mois en cours). */
 export function startOfMonthISO(d = new Date()) {
   return toISODate(new Date(d.getFullYear(), d.getMonth(), 1));

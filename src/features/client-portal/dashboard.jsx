@@ -38,6 +38,20 @@ const NIVEAUX = {
 
 const STEPS = ['Envoyée', 'Validée', 'Production', 'Prête', 'Livrée'];
 
+/**
+ * Le nom du client, écrit UNE seule fois pour tout ce fichier.
+ *
+ * ⚠️ Ce fichier portait la même expression deux fois : protégée l. 66, NON
+ * protégée l. 146 (`Bienvenue, ${user?.prenom} !`). Les 14 lignes de `clients`
+ * relevées le 18/09/2026 n'ont AUCUN champ `prenom` : la première ligne que
+ * lisait un client en ouvrant son espace était donc « Bienvenue, undefined ! ».
+ * Une fonction commune plutôt qu'un second `|| ''` : il n'y a plus deux
+ * versions à garder d'accord.
+ */
+function nomComplet(u) {
+  return `${u?.prenom || ''} ${u?.nom || ''}`.trim();
+}
+
 function MiniProgress({ step }) {
   if (step < 0) return null;
   return (
@@ -63,7 +77,7 @@ export default function ClientDashboard() {
   // avec `list()` et son `[]`, le client voyait « Aucune commande » alors qu'il
   // venait d'en passer une — et il rappelait pour savoir si elle etait perdue.
   const loadData = useCallback(async () => {
-      const clientName = `${user?.prenom || ''} ${user?.nom || ''}`.trim().toLowerCase();
+      const clientName = nomComplet(user).toLowerCase();
       const clientId = user?.id;
 
       const [cmds, devisAll, facturesAll, convs, allMsgs, fidAll, settings] = await Promise.all([
@@ -129,6 +143,9 @@ export default function ClientDashboard() {
   }
 
   const niveauConfig = NIVEAUX[fidelite?.niveau || 'bronze'] || NIVEAUX.bronze;
+  // Un client sans nom exploitable est accueilli sans nom — jamais par un
+  // « undefined ». Voir `nomComplet()` en tête de fichier.
+  const accueil = nomComplet(user) ? `Bienvenue, ${nomComplet(user)} !` : 'Bienvenue !';
 
   return (
     <div className="space-y-6">
@@ -143,7 +160,7 @@ export default function ClientDashboard() {
           {bannerSettings?.image && <div className="absolute inset-0 bg-black/40" />}
           <div className="relative z-10">
             <h1 className="text-2xl sm:text-3xl font-bold">
-              {bannerSettings?.texte || `Bienvenue, ${user?.prenom} !`}
+              {bannerSettings?.texte || accueil}
             </h1>
             <p className="text-white/80 mt-1 text-sm sm:text-base">
               {bannerSettings?.sous_texte || 'Suivez vos commandes et gérez vos devis depuis votre espace dédié.'}

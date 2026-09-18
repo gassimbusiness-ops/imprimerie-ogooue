@@ -17,6 +17,7 @@ import { toast } from 'sonner';
 import { syncClientFromCommande } from '@/services/sync-clients';
 import { notifyNouvelleCommande } from '@/services/notifications';
 import { todayISO } from '@/lib/dates';
+import { photosDuProduit, photoPrincipale, referencePhotoLegere } from '@/services/photos-catalogue';
 
 function fmt(n) { return new Intl.NumberFormat('fr-FR').format(Math.round(n || 0)); }
 
@@ -135,7 +136,16 @@ export default function ClientCatalogue() {
       lignes: panier.map((p) => ({
         produit_id: p.id, nom: p.nom, qte: p.qte,
         prix: p.prix_calc || prixPourQte(p, p.qte),
-        image: p.images?.[0] || null,
+        // ⚠️ NE PAS REMETTRE `p.images?.[0]`.
+        //
+        // Cette ligne recopiait la data-URL ENTIÈRE dans la commande. Relevé
+        // le 18/09/2026 : les 5 commandes du portail portent 163 117 octets de
+        // photo dupliquée, et une commande d'« Enveloppe invitation » en aurait
+        // ajouté 1 596 858 à elle seule — dans une collection que sept écrans
+        // relisent. `referencePhotoLegere()` laisse passer une URL (une
+        // référence) et une vignette légère, jamais une photo lourde. La ligne
+        // garde `produit_id` et `nom` : rien n'est perdu, on cesse de dupliquer.
+        image: referencePhotoLegere(photoPrincipale(p)),
       })),
       historique_statuts: [{ statut: 'en_attente_validation', date: new Date().toISOString(), auteur: clientNom }],
     });
@@ -222,17 +232,17 @@ export default function ClientCatalogue() {
           const CatIcon = CAT_ICON[p.categorie] || Package;
           const gradient = CAT_GRADIENT[p.categorie] || 'from-gray-400 to-gray-500';
           const inPanier = panier.find((x) => x.id === p.id);
-          const hasImages = p.images && p.images.length > 0;
+          const vignette = photoPrincipale(p);
 
           return (
             <Card key={p.id} className="overflow-hidden group hover:shadow-lg transition-all duration-200">
               {/* Product visual */}
               <div
-                className={`relative h-32 ${hasImages ? 'bg-slate-100' : `bg-gradient-to-br ${gradient}`} flex items-center justify-center cursor-pointer`}
+                className={`relative h-32 ${vignette ? 'bg-slate-100' : `bg-gradient-to-br ${gradient}`} flex items-center justify-center cursor-pointer`}
                 onClick={() => setDetailProduct(p)}
               >
-                {hasImages ? (
-                  <img src={p.images[p.image_principale || 0] || p.images[0]} alt={p.nom} className="w-full h-full object-cover" />
+                {vignette ? (
+                  <img src={vignette} alt={p.nom} className="w-full h-full object-cover" />
                 ) : (
                   <CatIcon className="h-12 w-12 text-white/40" />
                 )}
@@ -241,8 +251,8 @@ export default function ClientCatalogue() {
                     {inPanier.qte}
                   </div>
                 )}
-                {hasImages && p.images.length > 1 && (
-                  <Badge className="absolute top-2 right-2 bg-black/40 text-white text-[9px]">{p.images.length} photos</Badge>
+                {photosDuProduit(p).length > 1 && (
+                  <Badge className="absolute top-2 right-2 bg-black/40 text-white text-[9px]">{photosDuProduit(p).length} photos</Badge>
                 )}
                 {p.vedette && (
                   <Badge className="absolute top-2 left-2 bg-amber-500 text-white text-[9px] gap-0.5">
@@ -289,9 +299,9 @@ export default function ClientCatalogue() {
               </DialogHeader>
               <div className="space-y-3">
                 {/* Image */}
-                {detailProduct.images && detailProduct.images.length > 0 ? (
+                {photoPrincipale(detailProduct) ? (
                   <div className="h-48 bg-slate-100 rounded-lg overflow-hidden">
-                    <img src={detailProduct.images[detailProduct.image_principale || 0] || detailProduct.images[0]} alt="" className="w-full h-full object-contain" />
+                    <img src={photoPrincipale(detailProduct)} alt="" className="w-full h-full object-contain" />
                   </div>
                 ) : (
                   <div className={`h-32 bg-gradient-to-br ${CAT_GRADIENT[detailProduct.categorie] || 'from-slate-400 to-slate-600'} rounded-lg flex items-center justify-center`}>

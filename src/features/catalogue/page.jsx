@@ -19,6 +19,7 @@ import {
   Sparkles, FileDown, Brain, Loader2, ChevronDown,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { photosDuProduit, photoPrincipale } from '@/services/photos-catalogue';
 import { AIButton } from '@/components/ui/ai-button';
 import { askAI, AI_PROMPTS } from '@/services/ai';
 import { apiFetch } from '@/services/api-client';
@@ -647,7 +648,10 @@ function ProductDetail({ product, open, onClose, canWrite, onEdit, onDelete }) {
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto p-0">
           {/* Carousel */}
           <div className="p-4 pb-0">
-            <ImageCarousel images={product.images} categorie={product.categorie} onZoom={setZoomSrc} />
+            {/* `photosDuProduit()` écarte les entrées vides et laisse passer
+                les deux formes — data-URL d'avant la migration 010 comme URL
+                de Storage d'après. Le carrousel n'a rien à en savoir. */}
+            <ImageCarousel images={photosDuProduit(product)} categorie={product.categorie} onZoom={setZoomSrc} />
           </div>
 
           <div className="p-4 pt-3 space-y-4">
@@ -1317,7 +1321,8 @@ export default function Catalogue() {
           {filtered.map((p) => {
             const gradient = CAT_GRADIENT[p.categorie] || 'from-slate-400 to-slate-600';
             const CatIcon = CAT_ICON[p.categorie] || Package;
-            const hasImages = p.images && p.images.length > 0;
+            const vignette = photoPrincipale(p);
+            const nbPhotos = photosDuProduit(p).length;
 
             return (
               <Card
@@ -1326,18 +1331,18 @@ export default function Catalogue() {
                 onClick={() => openDetail(p)}
               >
                 {/* Image/Gradient header */}
-                <div className={`relative h-36 ${hasImages ? 'bg-slate-100' : `bg-gradient-to-br ${gradient}`} flex items-center justify-center`}>
-                  {hasImages ? (
-                    <img src={p.images[p.image_principale || 0] || p.images[0]} alt={p.nom} className="w-full h-full object-cover" />
+                <div className={`relative h-36 ${vignette ? 'bg-slate-100' : `bg-gradient-to-br ${gradient}`} flex items-center justify-center`}>
+                  {vignette ? (
+                    <img src={vignette} alt={p.nom} className="w-full h-full object-cover" />
                   ) : (
                     <CatIcon className="h-14 w-14 text-white/30 group-hover:scale-110 transition-transform duration-200" />
                   )}
                   {!p.actif && (
                     <Badge className="absolute top-2 left-2 bg-black/50 text-white text-[9px]">Inactif</Badge>
                   )}
-                  {hasImages && p.images.length > 1 && (
+                  {nbPhotos > 1 && (
                     <Badge className="absolute top-2 right-2 bg-black/40 text-white text-[9px]">
-                      {p.images.length} photos
+                      {nbPhotos} photos
                     </Badge>
                   )}
                   {canWrite && (
@@ -1389,7 +1394,7 @@ export default function Catalogue() {
               {filtered.map((p) => {
                 const gradient = CAT_GRADIENT[p.categorie] || 'from-slate-400 to-slate-600';
                 const CatIcon = CAT_ICON[p.categorie] || Package;
-                const hasImages = p.images && p.images.length > 0;
+                const vignetteListe = photoPrincipale(p);
                 return (
                   <div
                     key={p.id}
@@ -1397,8 +1402,8 @@ export default function Catalogue() {
                     onClick={() => openDetail(p)}
                   >
                     {/* Thumbnail */}
-                    {hasImages ? (
-                      <img src={p.images[0]} alt="" className="h-12 w-12 rounded-lg object-cover shrink-0" />
+                    {vignetteListe ? (
+                      <img src={vignetteListe} alt="" className="h-12 w-12 rounded-lg object-cover shrink-0" />
                     ) : (
                       <div className={`flex h-12 w-12 items-center justify-center rounded-lg bg-gradient-to-br ${gradient} shrink-0`}>
                         <CatIcon className="h-5 w-5 text-white/80" />

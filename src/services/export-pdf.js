@@ -619,7 +619,11 @@ export function exportFicheClientPDF(client, commandes = [], devis = []) {
     html += '</tbody></table>';
   }
 
-  printHTML(`Fiche Client — ${client.nom}`, html);
+  // Le même repli qu'au titre du corps (`${client.nom || '—'}`, plus haut dans
+  // cette fonction). Sans lui, le document remis au client s'intitulait
+  // « Fiche Client — undefined » : une fiche créée au comptoir ou importée sans
+  // nom existe bel et bien en base.
+  printHTML(`Fiche Client — ${client.nom || '—'}`, html);
 }
 
 /**

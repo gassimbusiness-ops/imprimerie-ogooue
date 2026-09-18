@@ -75,15 +75,24 @@ export default function ClientMessagerie() {
 
   const send = async () => {
     if (!text.trim() && !attachedFile) return;
+    // ⚠️ Un seul endroit où le nom du client est composé.
+    //
+    // Trois lignes écrivaient `${user?.prenom} ${user?.nom}` SANS repli, à
+    // quelques lignes de la version protégée de `loadMessages()`. Les 14 clients
+    // en base n'ont AUCUN champ `prenom` (relevé du 18/09/2026) : chacun d'eux
+    // enregistrait « undefined Mairie de Moanda » dans `client_nom`, dans
+    // `sujet` et dans `auteur` — en base, pas seulement à l'écran. Un correctif
+    // d'affichage n'aurait rien réparé.
+    const nomClient = `${user?.prenom || ''} ${user?.nom || ''}`.trim() || 'un client';
     let cid = convId;
     if (!cid) {
       const conv = await db.conversations.create({
         client_id: user?.id,
-        client_nom: `${user?.prenom} ${user?.nom}`,
+        client_nom: nomClient,
         client_email: user?.email,
         plateforme: 'interne',
         statut: 'nouveau',
-        sujet: `Conversation avec ${user?.prenom} ${user?.nom}`,
+        sujet: `Conversation avec ${nomClient}`,
       });
       cid = conv.id;
       setConvId(cid);
@@ -92,7 +101,7 @@ export default function ClientMessagerie() {
       conversation_id: cid,
       type: 'entrant',
       contenu: text.trim() || (attachedFile ? `Fichier : ${attachedFile.name}` : ''),
-      auteur: `${user?.prenom} ${user?.nom}`,
+      auteur: nomClient,
       auteur_id: user?.id,
     };
     if (attachedFile) {
@@ -108,7 +117,7 @@ export default function ClientMessagerie() {
     // depuis le portail n'apparaissait dans aucun panneau de notifications, et
     // n'était vue que si quelqu'un ouvrait la messagerie. `all_staff` : celui
     // qui est devant l'écran, pas seulement le gérant.
-    notifyNouveauMessagePersonnel(`${user?.prenom || ''} ${user?.nom || ''}`.trim() || 'un client');
+    notifyNouveauMessagePersonnel(nomClient);
     setText('');
     setReplyTo(null);
     setAttachedFile(null);

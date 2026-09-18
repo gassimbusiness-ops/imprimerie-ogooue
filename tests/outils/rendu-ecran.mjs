@@ -157,6 +157,24 @@ export const USE_SUPABASE = false;
 export const supabase = null;
 `;
 
+/**
+ * Un champ passe a `undefined` est RETIRE de l'utilisateur de session.
+ *
+ * Sans cela, un test ne pouvait pas exprimer « ce champ n'existe pas » : les
+ * valeurs par defaut du harnais (`prenom: 'Gassim'`) le remplissaient toujours,
+ * et `JSON.stringify` efface un `undefined` explicite. Or c'est exactement la
+ * forme de production : les 14 lignes de `clients` relevees le 18/09/2026 n'ont
+ * AUCUN champ `prenom`. Un test qui ne sait pas reproduire cette forme passe au
+ * vert sans rien prouver.
+ */
+function retirerChampsAbsents(objet) {
+  const copie = { ...objet };
+  for (const [cle, valeur] of Object.entries(copie)) {
+    if (valeur === undefined) delete copie[cle];
+  }
+  return copie;
+}
+
 function sourceDoublureAuth(utilisateur) {
   return `
 import React from 'react';
@@ -270,9 +288,11 @@ export { MemoryRouter } from 'react-router-dom';
     [resoudreFichier(resolve(RACINE, 'src/services/db')),
       sourceDoublureDb(donnees, echecsLecture, echecsEcriture)],
     [resoudreFichier(resolve(RACINE, 'src/services/supabase')), DOUBLURE_SUPABASE],
-    [resoudreFichier(resolve(RACINE, 'src/services/auth')), sourceDoublureAuth({
-      id: 'u-admin', prenom: 'Gassim', nom: 'Admin', role: 'admin', ...utilisateur,
-    })],
+    [resoudreFichier(resolve(RACINE, 'src/services/auth')), sourceDoublureAuth(
+      retirerChampsAbsents({
+        id: 'u-admin', prenom: 'Gassim', nom: 'Admin', role: 'admin', ...utilisateur,
+      }),
+    )],
     ...FEUILLES_INERTES.map((f) => [resoudreFichier(resolve(RACINE, f)), doublureInerte(f)]),
   ]);
 
@@ -448,7 +468,19 @@ function installerDom() {
  * Compile, monte et vidange un ecran. C'est la fonction que les tests appellent.
  *
  * @param {object} p voir compilerEcran, plus `routeur` (enveloppe l'ecran dans
- *   un MemoryRouter, necessaire des que l'ecran rend un `<Link>`)
+ *   un MemoryRouter, necessaire des que l'ecran rend un `<Link>`) et
+ *   `proprietes` (props passees au composant monte).
+ *
+ *   `proprietes` sert aux composants qui ne sont pas des ecrans de route mais
+ *   des FORMULAIRES appeles avec des props — `RapportForm({ rapport, onSave })`
+ *   par exemple. Sans elle, le seul moyen d'atteindre un tel formulaire serait
+ *   de piloter l'ecran parent au travers de ses menus Radix, qui se testent
+ *   mal dans jsdom : le formulaire de saisie des ventes resterait sans test,
+ *   et c'est celui par lequel passe chaque franc encaisse au comptoir.
+ *
+ *   Les props sont passees a l'execution, pas serialisees : un `onSave` peut
+ *   donc etre une vraie fonction, et le test observe ce que le formulaire lui
+ *   a REELLEMENT transmis.
  * @returns {Promise<{texte, html, conteneur, journal, toasts, demonter}>}
  */
 export async function rendreEcran(p) {
@@ -483,13 +515,14 @@ export async function rendreEcran(p) {
   // `entreesRouteur` : l'adresse depuis laquelle on monte. Indispensable pour
   // tester une GARDE DE ROUTE — « un employe qui tape /associe » n'a de sens
   // qu'a partir d'une URL. Absent, le routeur demarre a « / » comme avant.
+  const contenu = React.createElement(module.Ecran, p.proprietes || null);
   const element = p.routeur
     ? React.createElement(
       module.MemoryRouter,
       p.entreesRouteur ? { initialEntries: p.entreesRouteur } : null,
-      React.createElement(module.Ecran),
+      contenu,
     )
-    : React.createElement(module.Ecran);
+    : contenu;
 
   await act(async () => {
     racine = createRoot(conteneur);

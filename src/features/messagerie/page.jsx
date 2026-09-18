@@ -12,6 +12,7 @@ import {
   ArrowLeft, Paperclip, FileText, Download, X, AlertTriangle,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { photoPrincipale, referencePhotoLegere } from '@/services/photos-catalogue';
 import { notifyNouveauMessageClient } from '@/services/notifications';
 import { askAI } from '@/services/ai';
 import { Package, Bot, Loader2 } from 'lucide-react';
@@ -187,7 +188,11 @@ export default function Messagerie() {
         id: prod.id,
         nom: prod.nom,
         prix: new Intl.NumberFormat('fr-FR').format(prix),
-        image: prod.images?.[0] || null,
+        // Une photo partagée dans un message est recopiée dans la ligne du
+        // message. Même règle que pour les commandes : une URL passe, une
+        // vignette légère passe, une photo lourde non (voir
+        // `src/services/photos-catalogue.js`).
+        image: referencePhotoLegere(photoPrincipale(prod)),
         delai: prod.delai_estime || null,
       },
     });
@@ -688,8 +693,8 @@ export default function Messagerie() {
                   onClick={() => shareProduit(p)}
                   className="w-full flex items-center gap-3 rounded-lg border p-3 hover:bg-muted/50 text-left transition-colors"
                 >
-                  {p.images?.[0] ? (
-                    <img src={p.images[0]} alt="" className="h-10 w-10 rounded object-cover" />
+                  {photoPrincipale(p) ? (
+                    <img src={photoPrincipale(p)} alt="" className="h-10 w-10 rounded object-cover" />
                   ) : (
                     <div className="h-10 w-10 rounded bg-muted flex items-center justify-center">
                       <Package className="h-5 w-5 text-muted-foreground" />
