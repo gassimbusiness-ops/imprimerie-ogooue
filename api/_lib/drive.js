@@ -139,8 +139,20 @@ const REQUETES_MAX = 150;
  * serré que le parcours complet : ouvrir un écran ne doit jamais coûter
  * l'inventaire intégral d'un Drive. Au-delà, le sondage dit qu'il a tronqué
  * plutôt que de rendre un compte faux.
+ *
+ * ⚠️ 12 ne suffisait pas, et ça s'est vu en production le 18/09/2026. Le Drive
+ * réel demande, pour atteindre un manifeste :
+ *     1  la racine 10_PUBLICATIONS
+ *   + 6  ses sous-dossiers (_CONTROLE, _INBOX_CHATGPT, 4 semaines)
+ *   + 1  _INBOX_CHATGPT
+ *   + 7  les jours de la semaine déposée
+ *   = 15 listings AVANT de trouver le premier publication.json.
+ * Le sondage s'arrêtait donc à « 1 fichier trouvé », ce qui était vrai et
+ * trompeur : 77 fichiers attendaient deux niveaux plus bas. Porté à 30, ce qui
+ * laisse de la marge sans transformer l'ouverture d'un écran en inventaire —
+ * le parcours s'arrête de toute façon au premier manifeste rencontré.
  */
-const SONDAGE_LISTINGS_MAX = 12;
+const SONDAGE_LISTINGS_MAX = 30;
 
 /* ═══════════════════════════════════════════════════════════════════════════
    L'ERREUR QUI PORTE SON DIAGNOSTIC AVEC ELLE

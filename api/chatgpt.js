@@ -346,11 +346,32 @@ export function creerGestionnairePont({ depot = null, maintenant = () => new Dat
       return res.status(429).json({ error: 'Trop de requêtes' });
     }
 
-    /* 4. Le jeton, comparé à temps constant. */
+    /* 4. Le jeton, comparé à temps constant.
+     *
+     * Le refus DIT CE QU'IL A REÇU — le schéma, jamais la valeur. Sans ça, un
+     * GPT configuré en « Basic » au lieu de « Bearer » (le défaut de ChatGPT)
+     * rend le même « jeton invalide » qu'une clé réellement fausse, et on
+     * cherche du mauvais côté. Le schéma n'est pas un secret : il voyage en
+     * clair dans l'en-tête. La valeur, elle, ne sort jamais.
+     */
     const entete = req.headers?.authorization || req.headers?.Authorization || '';
-    const presente = typeof entete === 'string' && entete.startsWith('Bearer ') ? entete.slice(7) : '';
+    const brut = typeof entete === 'string' ? entete : '';
+    const presente = brut.startsWith('Bearer ') ? brut.slice(7) : '';
     if (!presente || !empreintesEgales(presente, attendu)) {
-      return res.status(401).json({ error: 'Jeton du pont invalide ou absent' });
+      const schemaRecu = brut ? (brut.split(' ')[0] || '(sans schéma)') : null;
+      return res.status(401).json({
+        error: 'Jeton du pont invalide ou absent',
+        detail: schemaRecu === null
+          ? "Aucun en-tête Authorization n'est arrivé. Dans le GPT : Action → "
+            + 'Authentification → Clé API, puis colle la clé.'
+          : schemaRecu === 'Bearer'
+            ? 'Le schéma Bearer est correct : c\'est la VALEUR de la clé qui ne '
+              + "correspond pas à CHATGPT_BRIDGE_TOKEN. Vérifie qu'aucun espace "
+              + "ne traîne, et que Vercel a été redéployé depuis le dernier changement."
+            : `Reçu « ${schemaRecu} », attendu « Bearer ». Dans le GPT : `
+              + 'Authentification → Clé API → Type d\'authentification → Bearer. '
+              + "C'est le piège le plus courant : ChatGPT propose Basic par défaut.",
+      });
     }
 
     /* 5. La voie. */

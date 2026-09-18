@@ -959,7 +959,13 @@ test('le sondage reste borné : une arborescence profonde ne fait pas cent requ�
   const g = fauxGoogle({ listes });
   await sonderDrive({ env: env(), fetchImpl: g.impl });
   const listings = g.appels.filter((a) => a.url.includes('/drive/v3/files?'));
-  assert.ok(listings.length <= 15, `sondage trop bavard : ${listings.length} listings`);
+  // La borne a ete portee de 12 a 30 listings le 18/09/2026 : le Drive reel
+  // demandait 15 listings AVANT d'atteindre le premier publication.json, et le
+  // sondage s'arretait donc a « 1 fichier trouve » alors que 77 attendaient deux
+  // niveaux plus bas. Ce que ce test garde, ce n'est pas le chiffre 15 — c'est
+  // qu'une arborescence de 40 dossiers ne declenche PAS 41 requetes.
+  assert.ok(listings.length <= 31, `sondage trop bavard : ${listings.length} listings`);
+  assert.ok(listings.length < 41, 'le sondage a parcouru toute l arborescence : la borne ne borne plus');
 });
 
 test('un publication.json qui ne se télécharge pas n emporte pas les autres', async () => {
