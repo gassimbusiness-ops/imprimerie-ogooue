@@ -353,6 +353,16 @@ export const db = {
   fidelite_clients: new Collection('fidelite_clients'),
   mockups: new Collection('mockups'),
   gouvernance_parametres: new Collection('gouvernance_parametres'),
+
+  // ── Bot Messenger / Instagram ──────────────────────────────────────────
+  // `messages_meta` est REMPLI par api/meta-webhook.js ; `bot_journal` et
+  // `bot_controle` par api/_lib/bot-depot.js. L'ecran de messagerie les LIT.
+  // ⚠️ Le seul ecrit depuis le navigateur est `bot_controle`, et dans un seul
+  // sens : COUPER le bot. Le rallumer demande aussi BOT_META_MODE=live dans
+  // Vercel, ce qu'aucun ecran ne peut faire.
+  messages_meta: new Collection('messages_meta'),
+  bot_journal: new Collection('bot_journal'),
+  bot_controle: new Collection('bot_controle'),
 };
 
 /**

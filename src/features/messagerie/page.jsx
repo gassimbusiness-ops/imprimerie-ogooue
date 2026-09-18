@@ -16,6 +16,7 @@ import { photoPrincipale, referencePhotoLegere } from '@/services/photos-catalog
 import { notifyNouveauMessageClient } from '@/services/notifications';
 import { askAI } from '@/services/ai';
 import { Package, Bot, Loader2 } from 'lucide-react';
+import JournalBot from './journal-bot';
 
 const PLATFORMS = {
   whatsapp: { label: 'WhatsApp', color: 'bg-green-100 text-green-700', dot: 'bg-green-500' },
@@ -546,6 +547,10 @@ export default function Messagerie() {
           </Card>
         ))}
       </div>
+
+      {/* Le bot repond tout seul sur Messenger et Instagram : ce bloc est le
+          SEUL endroit ou l'on peut relire ce qu'il a dit aux clients. */}
+      <JournalBot />
 
       <div className="flex flex-col gap-3 sm:flex-row">
         <div className="relative flex-1">

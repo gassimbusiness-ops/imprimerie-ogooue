@@ -504,14 +504,32 @@ test('une méthode autre que GET/POST répond 405', async () => {
 });
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   6. Le bot ne répond à personne — vérifié sur la source
-   ═══════════════════════════════════════════════════════════════════════════ */
+   6. L'endpoint encaisse ; il ne parle pas lui-même
+   ═══════════════════════════════════════════════════════════════════════════
 
-test('⛔ l endpoint n envoie AUCUN message : aucun appel sortant dans la source', () => {
+   ✏️ RÉÉCRIT LE 19/09/2026. Ce test exigeait auparavant que le bot ne réponde à
+   personne, et que l'avertissement « CE BOT NE RÉPOND À PERSONNE » reste en
+   tête du fichier. Le dirigeant a demandé le bot ; il existe depuis aujourd'hui.
+
+   Ce que la garantie devient — et elle reste utile : l'ENDPOINT ne contient
+   aucun appel sortant. Recevoir et répondre sont deux gestes, et le second vit
+   dans `api/_lib/bot-envoi.js`, où il est testable hors ligne. Un `fetch` qui
+   apparaîtrait ici serait un appel réseau AVANT ou APRÈS le 200 sans passer par
+   le verrou de catalogue : c'est exactement ce qu'on ne veut pas. */
+
+test('⛔ l endpoint lui-même ne contient AUCUN appel sortant', () => {
   const src = readFileSync(new URL('../api/meta-webhook.js', import.meta.url), 'utf8');
   assert.ok(!src.includes('graph.facebook.com'), 'aucun appel à l API Graph ne doit exister ici');
   assert.ok(!/\bfetch\s*\(/.test(src), 'aucun appel réseau sortant ne doit exister ici');
-  assert.ok(src.includes('CE BOT NE RÉPOND À PERSONNE'), 'l avertissement en tête doit rester');
+  assert.ok(src.includes('bot-envoi.js'), 'l envoi passe par le module dédié, jamais en ligne droite');
+});
+
+test('⛔ l endpoint ne fait AUCUNE écriture métier', () => {
+  const src = readFileSync(new URL('../api/meta-webhook.js', import.meta.url), 'utf8');
+  for (const collection of ['commandes', 'clients', 'devis', 'factures', 'produits']) {
+    assert.ok(!src.includes(`'${collection}'`),
+      `le bot ne touche pas à ${collection} : il répond, il ne crée rien`);
+  }
 });
 
 test('aucun secret n est écrit en dur', () => {

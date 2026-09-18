@@ -16,6 +16,8 @@
 | `META_VERIFY_TOKEN` | prouver à Meta que l'adresse de rappel est la nôtre | **403 — refus par défaut, voulu** |
 | `META_APP_SECRET` | vérifier la signature de chaque message Meta | **403 — refus par défaut, voulu** |
 | `META_PAGE_ACCESS_TOKEN` | publier sur la Page et sur Instagram (`api/_lib/autopost-meta.js`) | **simulation, sans aucun appel réseau — voulu** |
+| `BOT_META_MODE` | `live` pour que le bot Messenger / Instagram ENVOIE réellement ses réponses ; toute autre valeur = simulation | **simulation — le bot compose et journalise, il n'envoie rien** |
+| `META_PAGE_ID` · `META_INSTAGRAM_ID` | *facultatives.* Limiter le bot aux comptes de l'imprimerie — le jeton voit AUSSI la Page TopShop, dont les actifs sont dans le même portefeuille | le bot répond sur le compte qui a reçu le message, quel qu'il soit |
 | `AUTOPOST_MODE` | `live` pour publier réellement ; toute autre valeur = simulation | simulation |
 | `AUTOPOST_CLE_APPROBATION` | vérifier la signature HMAC des `APPROBATION.json` | la signature n'est pas contrôlée ; l'empreinte du contenu l'est toujours |
 | `CRON_SECRET` | authentifier les tâches planifiées Vercel sur `/api/autopost-tick` | **toute tâche planifiée est refusée — voulu** |
@@ -84,3 +86,26 @@ Les deux doivent porter la **portée Production ET Preview**. Sans Preview, rien
 
 ⚠️ Le refus par défaut est délibéré : un endpoint qui accepterait n'importe quel jeton
 parce que la variable est vide serait pire qu'un endpoint absent.
+
+## Le bot Messenger et Instagram
+
+`META_PAGE_ACCESS_TOKEN` sert **deux** chaînes : l'auto-poster publie avec, le bot répond
+avec. Une seule variable, un seul jeton — mais deux modules, `autopost-meta.js` et
+`bot-envoi.js`, parce que publier et répondre ne se diagnostiquent pas pareil.
+
+⛔ **Le bot démarre ÉTEINT, et il faut DEUX verrous pour qu'il parle :**
+
+1. la ligne `bot_controle` (collection `app_data`, marquée `cle: 'global'`) avec
+   `actif: true` et `mode: 'live'` — c'est le **verrou d'exploitation**, il se bascule en
+   dix secondes depuis l'écran Messagerie ou la console Supabase, sans redéploiement ;
+2. `BOT_META_MODE=live` dans Vercel — c'est le **cran de sûreté de déploiement**, et le
+   changer exige un redéploiement, ce qui en fait volontairement un mauvais arrêt
+   d'urgence et une bonne sécurité de fond.
+
+Aucun des deux n'ouvre seul. Une ligne de base modifiée par erreur ne met donc pas le bot
+en face des clients, et une variable oubliée à `live` dans Vercel non plus.
+`tests/bot-executeur.test.mjs` vérifie les deux sens.
+
+⚠️ **Couper le bot ne demande AUCUNE variable** : c'est la ligne `bot_controle` qu'on passe
+à `actif: false`, et le bouton existe dans l'écran Messagerie. Le rallumer, en revanche,
+est un geste de déploiement — c'est voulu.

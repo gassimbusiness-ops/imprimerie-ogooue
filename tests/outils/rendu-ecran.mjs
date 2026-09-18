@@ -64,6 +64,7 @@ const COLLECTIONS = [
   'modifications_investisseurs', 'performances_employes', 'comptes_bancaires',
   'mouvements_financiers', 'depots_hebdo', 'campagnes_prospection', 'actions_marketing',
   'notifications_app', 'fidelite_clients', 'mockups', 'gouvernance_parametres',
+  'messages_meta', 'bot_journal', 'bot_controle',
 ];
 
 /**

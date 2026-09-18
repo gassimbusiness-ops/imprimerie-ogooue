@@ -3,22 +3,31 @@
  * Messenger (objet `page`) et messages privés Instagram (objet `instagram`).
  *
  * ════════════════════════════════════════════════════════════════════════════
- * ⛔ CE BOT NE RÉPOND À PERSONNE. IL N'EST PAS EN SERVICE.
+ * CE BOT RÉPOND — MAIS SEULEMENT CE QUI EST VÉRIFIABLE
  * ════════════════════════════════════════════════════════════════════════════
  *
- * Cet endpoint **reçoit et range**, rien d'autre. Aucun message n'est envoyé,
- * aucune réponse automatique n'est produite, aucune écriture métier n'est faite.
+ * ✏️ Mise à jour du 19/09/2026. Cet endpoint ne faisait que RECEVOIR et RANGER.
+ * Il répond désormais, et la nuance tient en une phrase : il ne sert que les
+ * textes des fiches Notion validées le 17/09 — horaires, adresse, prestations —
+ * et PASSE LA MAIN dès qu'une question porte sur un prix, un délai, une
+ * disponibilité, un paiement ou une commande précise.
  *
- * Pourquoi : sur les 19 fiches de connaissance du bot, **4 seulement** sont
- * marquées exportables. La règle du projet est « un bot qui invente une réponse
- * est pire que pas de bot ». Tant qu'il n'y a pas de réponses validées à servir,
- * répondre serait une régression, pas une fonctionnalité.
+ * La règle du projet n'a pas changé : « un bot qui invente une réponse est pire
+ * que pas de bot ». Ce qui a changé, c'est qu'il existe maintenant des réponses
+ * validées à servir, et un verrou qui empêche d'en servir d'autres
+ * (`api/_lib/bot-reponse.js`, catalogue fermé).
  *
- * Ce que cela change concrètement : quand cet endpoint est enregistré chez Meta,
- * les clients qui écrivent sur Messenger ou Instagram ne reçoivent RIEN de plus
- * qu'avant — c'est toujours un humain qui répond. Leurs messages sont
- * simplement journalisés dans la collection `messages_meta`, ce qui permettra
- * plus tard de mesurer le volume réel et d'écrire les réponses sur des cas vrais.
+ * ⛔ Trois choses que le bot ne fait toujours pas, et qu'un test empêche :
+ *   - donner un prix, un délai ou une disponibilité ;
+ *   - promettre un rappel à une heure précise ;
+ *   - se faire passer pour quelqu'un. Pris pour un humain, il le dit.
+ *
+ * ⛔ Et une quatrième : AUCUNE écriture métier. Le bot répond, il ne crée ni
+ *   commande, ni client, ni devis. Son seul geste d'écriture est son journal.
+ *
+ * L'interrupteur vit en base (`bot_controle`, ligne `global`) : le bot démarre
+ * ÉTEINT et se coupe en dix secondes, sans redéploiement. Voir
+ * `api/_lib/bot-executeur.js`.
  *
  * ════════════════════════════════════════════════════════════════════════════
  * LES TROIS PIÈGES DE CE PROTOCOLE — ET COMMENT ILS SONT TRAITÉS ICI
@@ -67,8 +76,14 @@
  * préalable referme la fenêtre courante (un rejeu quelques secondes plus tard),
  * pas la course vraie entre deux instances simultanées. La garantie durable est
  * un index unique sur `data->>'message_id'` pour la collection `messages_meta`.
- * Tant qu'il n'existe pas, un doublon reste possible — et il est sans gravité
- * ici, puisque cet endpoint ne produit aucun effet métier.
+ * Tant qu'il n'existe pas, un doublon reste possible.
+ *
+ * ✏️ Depuis que le bot répond, cette réserve a un COÛT VISIBLE : un doublon de
+ * rangement était sans gravité, un doublon de RÉPONSE se lit chez le client.
+ * L'idempotence de la réponse est donc portée par son propre témoin —
+ * l'identifiant du message SORTANT rendu par Meta, rangé dans `bot_journal`
+ * (`api/_lib/bot-executeur.js`) — et mérite le même index unique, sur
+ * `data->>'message_id_entrant'`.
  *
  * ════════════════════════════════════════════════════════════════════════════
  * DONNÉES PERSONNELLES
@@ -93,12 +108,26 @@
  *       (Tableau de bord → Paramètres → Général). Sert à vérifier la signature
  *       des POST. Absente → l'endpoint refuse tout POST (403).
  *
+ *   META_PAGE_ACCESS_TOKEN — le jeton de Page, pour ENVOYER les réponses.
+ *       Absent → le bot compose sa réponse et la journalise, mais n'envoie
+ *       rien (action `simule`). Aucun appel réseau n'est tenté.
+ *
+ *   BOT_META_MODE — `live` pour autoriser l'envoi réel. Absente → simulation.
+ *       ⚠️ Elle ne suffit PAS : la ligne `bot_controle` doit aussi être active.
+ *
+ *   META_PAGE_ID / META_INSTAGRAM_ID — facultatives. Posées, elles limitent le
+ *       bot aux comptes de l'imprimerie : le jeton voit AUSSI la Page TopShop,
+ *       dont les actifs vivent dans le même portefeuille.
+ *
  * Détail documenté dans `livrables_claude/meta/WEBHOOK_META_ENDPOINT.md`.
  */
 import crypto from 'node:crypto';
 import { empreintesEgales } from './_lib/session.js';
 import { supabaseAdmin } from './_lib/supabase-admin.js';
 import { toISODate } from '../src/lib/dates.js';
+import { repondreAuxEvenements } from './_lib/bot-executeur.js';
+import { depotSupabaseBot } from './_lib/bot-depot.js';
+import { creerClientBot } from './_lib/bot-envoi.js';
 
 /**
  * Indication pour les hôtes de type Next : ne pas analyser le corps.
@@ -389,11 +418,19 @@ function repondreTexte(res, code, texte) {
 }
 
 /**
- * Fabrique le gestionnaire. Le dépôt est injectable pour que
- * `tests/meta-webhook.test.mjs` rejoue un webhook signé, un rejeu et une
- * signature invalide sans réseau ni base.
+ * Fabrique le gestionnaire.
+ *
+ * Les trois collaborateurs sont injectables — dépôt de rangement, dépôt du bot,
+ * client d'envoi — pour que `tests/meta-webhook.test.mjs` et
+ * `tests/bot-meta-bout-en-bout.test.mjs` rejouent un webhook signé, un rejeu,
+ * une signature invalide et une réponse complète SANS réseau ni base.
  */
-export function creerGestionnaireMetaWebhook({ depot: depotFourni = null, maintenant = () => new Date() } = {}) {
+export function creerGestionnaireMetaWebhook({
+  depot: depotFourni = null,
+  depotBot: depotBotFourni = null,
+  clientBot: clientBotFourni = null,
+  maintenant = () => new Date(),
+} = {}) {
   return async function gestionnaireMetaWebhook(req, res) {
     /* ── GET : vérification d'abonnement ─────────────────────────────────── */
     if (req.method === 'GET') {
@@ -467,10 +504,34 @@ export function creerGestionnaireMetaWebhook({ depot: depotFourni = null, mainte
 
         if (evenements.length === 0) return;
 
-        const depot = depotFourni || depotSupabaseMeta(supabaseAdmin());
-        const bilan = await rangerEvenements({ depot, evenements });
-        console.log('[Meta Webhook] Rangés=%d ignorés(déjà connus)=%d erreurs=%d',
-          bilan.ranges, bilan.ignores, bilan.erreurs);
+        /* ── 1. RANGEMENT ────────────────────────────────────────────────── */
+        try {
+          const depot = depotFourni || depotSupabaseMeta(supabaseAdmin());
+          const bilan = await rangerEvenements({ depot, evenements });
+          console.log('[Meta Webhook] Rangés=%d ignorés(déjà connus)=%d erreurs=%d',
+            bilan.ranges, bilan.ignores, bilan.erreurs);
+        } catch (err) {
+          // Le rangement et la réponse sont deux gestes : une base qui refuse
+          // l'insertion ne doit pas, à elle seule, faire taire le bot.
+          console.error('[Meta Webhook] Rangement en échec :', err?.message);
+        }
+
+        /* ── 2. RÉPONSE ──────────────────────────────────────────────────── */
+        try {
+          const depotBot = depotBotFourni || depotSupabaseBot(supabaseAdmin());
+          const clientBot = clientBotFourni || creerClientBot();
+          await repondreAuxEvenements({
+            depot: depotBot,
+            client: clientBot,
+            evenements,
+            instant: maintenant(),
+            tracer: (...a) => console.log(...a),
+          });
+        } catch (err) {
+          // Une panne du bot ne remonte pas : le 200 est parti, Meta ne
+          // rejouera pas, et le webhook doit rester un endpoint qui encaisse.
+          console.error('[Bot Meta] Réponse automatique en échec :', err?.message);
+        }
       } catch (err) {
         // La réponse est déjà partie : Meta ne rejouera pas. C'est assumé —
         // le seul effet perdu est une ligne de journal, aucun effet métier.
