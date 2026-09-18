@@ -1,4 +1,9 @@
 {
+  "functions": {
+    "api/chatgpt.js": {
+      "includeFiles": "api/_lib/chatgpt-openapi.json"
+    }
+  },
   "headers": [
     {
       "source": "/sw.js",
@@ -56,6 +61,34 @@
     {
       "source": "/api/autopost-etat",
       "destination": "/api/autopost?voie=etat"
+    },
+    {
+      "source": "/api/chatgpt-inventaire",
+      "destination": "/api/chatgpt?voie=inventaire"
+    },
+    {
+      "source": "/api/chatgpt-collection",
+      "destination": "/api/chatgpt?voie=collection"
+    },
+    {
+      "source": "/api/chatgpt-ca-mois",
+      "destination": "/api/chatgpt?voie=ca-mois"
+    },
+    {
+      "source": "/api/chatgpt-caisse",
+      "destination": "/api/chatgpt?voie=caisse"
+    },
+    {
+      "source": "/api/chatgpt-commandes",
+      "destination": "/api/chatgpt?voie=commandes"
+    },
+    {
+      "source": "/api/chatgpt-stock",
+      "destination": "/api/chatgpt?voie=stock"
+    },
+    {
+      "source": "/api/chatgpt-schema",
+      "destination": "/api/chatgpt?voie=schema"
     },
     {
       "source": "/confidentialite.html",

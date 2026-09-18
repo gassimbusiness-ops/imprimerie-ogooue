@@ -1,0 +1,163 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "IMPRIMERIE OGOOUÉ — pont de lecture",
+    "version": "1.0.0",
+    "description": "Accès en LECTURE SEULE aux données de gestion de l'IMPRIMERIE OGOOUÉ (Moanda, Gabon) : chiffre d'affaires, caisse, commandes, stock, clients, factures, employés, trésorerie. Aucune écriture n'est possible : toute requête autre que GET est refusée par le serveur. Tous les montants sont en francs CFA (XAF). Toutes les dates et heures sont celles de Moanda (fuseau Africa/Libreville, UTC+1 toute l'année) — jamais celles du serveur. Chaque réponse porte un champ `calcule_le` : cite-le quand tu donnes un chiffre, par exemple « au 18/09 à 18 h ». Si une information n'est pas dans une réponse, dis-le plutôt que de l'estimer : ces chiffres servent à décider, pas à illustrer."
+  },
+  "servers": [
+    {
+      "url": "https://imprimerie-ogooue-app.vercel.app",
+      "description": "Production"
+    }
+  ],
+  "security": [{ "jetonDuPont": [] }],
+  "paths": {
+    "/api/chatgpt-ca-mois": {
+      "get": {
+        "operationId": "chiffreAffairesDuMois",
+        "summary": "Chiffre d'affaires du mois (facturé / livré / encaissé)",
+        "description": "À appeler dès que la question porte sur l'argent gagné : « ce mois on a fait combien ? », « le chiffre d'affaires », « les recettes », « combien on a encaissé », « combien on a facturé », la comparaison entre deux mois. Rend TROIS chiffres DISTINCTS qu'il ne faut jamais additionner ni confondre : FACTURÉ (factures émises, brouillons exclus), LIVRÉ (commandes passées au statut Livrée) et ENCAISSÉ (recettes réellement passées par la caisse, d'après les rapports journaliers — c'est le chiffre que le Tableau de bord de l'application appelle « CA du mois »). Chaque chiffre porte sa définition : reprends-la si l'utilisateur demande pourquoi deux montants diffèrent. L'encaissé est en plus ventilé entre les deux activités, IMPRIMERIE OGOOUÉ et PAPETERIE OGOOUÉ.",
+        "parameters": [
+          {
+            "name": "mois",
+            "in": "query",
+            "required": false,
+            "description": "Mois voulu au format AAAA-MM, par exemple 2026-09. Omettre pour le mois en cours à Moanda.",
+            "schema": { "type": "string", "pattern": "^\\d{4}-\\d{2}$" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Les trois chiffres du mois, datés.",
+            "content": { "application/json": { "schema": { "type": "object", "additionalProperties": true } } }
+          }
+        }
+      }
+    },
+    "/api/chatgpt-caisse": {
+      "get": {
+        "operationId": "etatDeLaCaisse",
+        "summary": "État de caisse du jour et dernière clôture, par activité",
+        "description": "À appeler pour « où en est la caisse ? », « combien il doit y avoir dans le tiroir ce soir ? », « la caisse a-t-elle été clôturée ? », « y a-t-il eu un écart ? », ou dès que la question distingue l'imprimerie de la papeterie. Rend, POUR CHAQUE ACTIVITÉ séparément (IMPRIMERIE OGOOUÉ et PAPETERIE OGOOUÉ) : les recettes du jour, les dépenses du jour, la caisse attendue (recettes moins dépenses, le montant que le comptage du soir doit retrouver), et la dernière clôture enregistrée avec son écart. Les deux caisses sont séparées : ne les additionne jamais sans le dire. Rend aussi la trésorerie totale des comptes bancaires et espèces, qui elle n'est pas ventilée par activité.",
+        "responses": {
+          "200": {
+            "description": "Caisse du jour par activité, dernières clôtures et trésorerie.",
+            "content": { "application/json": { "schema": { "type": "object", "additionalProperties": true } } }
+          }
+        }
+      }
+    },
+    "/api/chatgpt-commandes": {
+      "get": {
+        "operationId": "commandesEtRetards",
+        "summary": "Commandes par statut et commandes en retard",
+        "description": "À appeler pour « quelles commandes sont en retard ? », « qu'est-ce qu'il y a en production ? », « combien de commandes en attente de paiement ? », « qu'est-ce qu'il reste à livrer ? », ou pour l'état général du carnet de commandes. Rend le nombre et le montant total de commandes pour chaque statut, puis la liste détaillée des commandes EN RETARD, triées de la plus en retard à la moins en retard, avec le client, l'échéance et le nombre de jours de retard. Une commande sans date d'échéance n'est jamais comptée en retard : ne conclus pas au retard sur une commande simplement ancienne.",
+        "responses": {
+          "200": {
+            "description": "Répartition par statut et liste des retards.",
+            "content": { "application/json": { "schema": { "type": "object", "additionalProperties": true } } }
+          }
+        }
+      }
+    },
+    "/api/chatgpt-stock": {
+      "get": {
+        "operationId": "alertesDeStock",
+        "summary": "Ruptures et articles sous le seuil d'alerte",
+        "description": "À appeler pour « qu'est-ce qui manque ? », « est-ce qu'il faut racheter du papier ? », « qu'est-ce qui est en rupture ? », « que dois-je commander ? », ou avant de préparer une commande fournisseur. Rend les articles à zéro (rupture) et ceux dont la quantité est tombée au niveau du seuil réglé par le gérant sur l'article lui-même, avec la quantité restante, le seuil, l'unité et le fournisseur. Le seuil est celui saisi dans l'application : ne propose pas un autre seuil et n'invente pas de quantité à commander sans le dire.",
+        "responses": {
+          "200": {
+            "description": "Articles en rupture et en seuil bas.",
+            "content": { "application/json": { "schema": { "type": "object", "additionalProperties": true } } }
+          }
+        }
+      }
+    },
+    "/api/chatgpt-inventaire": {
+      "get": {
+        "operationId": "inventaireDesDonnees",
+        "summary": "Liste des collections disponibles et leur nombre de lignes",
+        "description": "À appeler EN PREMIER quand tu ne sais pas où se trouve l'information demandée, ou quand l'utilisateur pose une question qu'aucune synthèse ne couvre (clients, devis, employés, pointages, charges fixes, mouvements de stock, journal d'audit…). Rend le nom de chaque collection de données et son nombre de lignes, ce qui permet de choisir quoi demander ensuite à l'opération lireUneCollection. N'invente jamais un nom de collection : utilise ceux rendus ici.",
+        "responses": {
+          "200": {
+            "description": "Collections disponibles et volumes.",
+            "content": { "application/json": { "schema": { "type": "object", "additionalProperties": true } } }
+          }
+        }
+      }
+    },
+    "/api/chatgpt-collection": {
+      "get": {
+        "operationId": "lireUneCollection",
+        "summary": "Lire les lignes d'une collection, avec pagination et filtre",
+        "description": "À appeler pour lire le détail brut quand aucune synthèse ne répond : la fiche d'un client, les lignes d'une facture, les mouvements de stock, les pointages, le journal d'audit. Demande d'abord inventaireDesDonnees si tu ignores le nom exact de la collection. La lecture est paginée : commence par une petite limite, puis augmente `decalage` pour la suite plutôt que de tout rapatrier. Le filtre `champ` + `valeur` fait une égalité exacte sur un champ de la ligne (par exemple champ=statut et valeur=livree). Les empreintes de mots de passe ne sont jamais rendues, quelle que soit la collection.",
+        "parameters": [
+          {
+            "name": "collection",
+            "in": "query",
+            "required": true,
+            "description": "Nom exact de la collection, tel que rendu par inventaireDesDonnees (par exemple clients, factures, commandes, produits, employes, audit_logs).",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "limite",
+            "in": "query",
+            "required": false,
+            "description": "Nombre de lignes à rendre, de 1 à 200. Défaut 50.",
+            "schema": { "type": "integer", "minimum": 1, "maximum": 200, "default": 50 }
+          },
+          {
+            "name": "decalage",
+            "in": "query",
+            "required": false,
+            "description": "Nombre de lignes à sauter, pour lire la page suivante. Défaut 0.",
+            "schema": { "type": "integer", "minimum": 0, "default": 0 }
+          },
+          {
+            "name": "champ",
+            "in": "query",
+            "required": false,
+            "description": "Nom d'un champ de la ligne sur lequel filtrer (lettres, chiffres et tirets bas uniquement).",
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "valeur",
+            "in": "query",
+            "required": false,
+            "description": "Valeur exacte attendue pour le champ filtré. Sans effet si `champ` est absent.",
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Une page de lignes, le total et la pagination.",
+            "content": { "application/json": { "schema": { "type": "object", "additionalProperties": true } } }
+          }
+        }
+      }
+    },
+    "/api/chatgpt-schema": {
+      "get": {
+        "operationId": "schemaDuPont",
+        "summary": "Le schéma OpenAPI du pont lui-même",
+        "description": "Rend le schéma OpenAPI en service sur le serveur. Utile uniquement pour vérifier quelle version du pont est déployée ou diagnostiquer un appel qui échoue. Sans aucun intérêt pour répondre à une question de gestion : n'appelle jamais cette opération pour chercher un chiffre.",
+        "responses": {
+          "200": {
+            "description": "Le schéma en service.",
+            "content": { "application/json": { "schema": { "type": "object", "additionalProperties": true } } }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "jetonDuPont": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Jeton du pont, à coller dans l'Action du GPT en type « API Key » / « Bearer ». Sa valeur est la variable d'environnement CHATGPT_BRIDGE_TOKEN définie sur Vercel. La changer dans Vercel coupe l'accès immédiatement."
+      }
+    }
+  }
+}

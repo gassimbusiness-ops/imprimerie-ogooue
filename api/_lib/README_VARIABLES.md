@@ -20,6 +20,21 @@
 | `AUTOPOST_CLE_APPROBATION` | vérifier la signature HMAC des `APPROBATION.json` | la signature n'est pas contrôlée ; l'empreinte du contenu l'est toujours |
 | `CRON_SECRET` | authentifier les tâches planifiées Vercel sur `/api/autopost-tick` | **toute tâche planifiée est refusée — voulu** |
 | `GOOGLE_SERVICE_ACCOUNT_EMAIL` · `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY` · `DRIVE_DOSSIER_PUBLICATIONS_ID` | lire le dossier `10_PUBLICATIONS/` du Drive en lecture seule | pas de lecture du Drive ; le dépôt se fait depuis l'application |
+| `CHATGPT_BRIDGE_TOKEN` | ouvrir le pont de lecture `/api/chatgpt-*` à un GPT personnalisé (`api/chatgpt.js`) | **503 sur toutes les voies — le pont ne sert rien, y compris son schéma. Voulu.** |
+
+## Le pont ChatGPT
+
+`CHATGPT_BRIDGE_TOKEN` est **l'accès entier** : qui l'a, lit les salaires, la
+trésorerie, le fichier clients et le journal d'audit. Il ne se partage pas.
+
+- **32 caractères minimum** (`openssl rand -hex 32`). Plus court ⇒ traité comme absent.
+- Comparé **à temps constant** (`empreintesEgales`), comme la signature de session.
+- 🔴 **Révocation en dix secondes** : changer la valeur dans Vercel → Redeploy.
+  Valeur changée ⇒ 401 à chaque appel ; variable supprimée ⇒ 503 et plus rien
+  n'est servi. Aucune modification de code.
+- Ce que le pont ne donnera **jamais**, quel que soit le jeton : les empreintes
+  de mots de passe et leurs sels. Un test échoue si l'une d'elles apparaît.
+- Mode d'emploi complet : `livrables_claude/PONT_CHATGPT.md`.
 
 ## Les variables de l'auto-poster
 
