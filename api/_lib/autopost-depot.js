@@ -34,6 +34,9 @@
  * venaient d'une conversion automatique que personne n'avait demandée.
  */
 
+import { ETATS_MODIFIABLES } from './autopost-alimentation.js';
+import { formaterInstantUtc } from '../../src/lib/dates.js';
+
 export const TABLE_FILE = 'autopost_file';
 export const TABLE_CONTROLE = 'autopost_controle';
 export const TABLE_JOURNAL = 'autopost_journal';
@@ -101,6 +104,97 @@ export function depotSupabaseAutopost(supabase) {
         .eq('date_locale', dateLocale);
       if (error) throw new Error(`comptage ${TABLE_FILE} : ${error.message}`);
       return count || 0;
+    },
+
+    /* ═══════════════════════════════════════════════════════════════════════
+       L'ALIMENTATION DEPUIS LE DRIVE — trois écritures, et pas une de plus
+       ═══════════════════════════════════════════════════════════════════════
+
+       `autopost-alimentation.js` lit le Drive et décide. Il a besoin de trois
+       gestes, et de rien d'autre : regarder ce qui existe pour une publication,
+       insérer, et — sous conditions strictes — réécrire ou annuler une ligne
+       qui n'est pas encore partie.
+
+       ⚠️ Les deux écritures conditionnelles le sont DANS L'INSTRUCTION SQL, pas
+       dans le code appelant. Entre la lecture et l'écriture d'un appelant il y
+       a toujours une fenêtre, et une autre exécution peut avoir pris la ligne
+       dedans. Seul un UPDATE qui porte ses propres conditions ferme la fenêtre. */
+
+    /**
+     * Toutes les lignes portant l'un de ces identifiants de publication —
+     * TOUTES versions, TOUS états, y compris `published`. C'est ce qui permet
+     * de répondre à « est-ce que ce couple (publication, canal) est déjà
+     * parti ? », question à laquelle la seule clé d'idempotence ne répond pas :
+     * elle change quand la version change.
+     */
+    async lireLignesDePublications(ids) {
+      const liste = [...new Set(ids || [])].filter(Boolean);
+      if (liste.length === 0) return [];
+      const { data, error } = await supabase
+        .from(TABLE_FILE)
+        .select(COLONNES)
+        .in('publication_id', liste);
+      if (error) throw new Error(`lecture ${TABLE_FILE} (par publication) : ${error.message}`);
+      return data || [];
+    },
+
+    /**
+     * Insère une ligne de file.
+     *
+     * Un refus pour clé déjà présente (`23505`) N'EST PAS UNE PANNE : c'est
+     * l'index unique de la migration 008 qui fait son travail parce qu'une
+     * autre exécution a inséré la même ligne entre-temps. On le dit, on ne lève
+     * pas — le passage doit continuer avec les publications suivantes.
+     */
+    async inserer(ligne) {
+      const { data, error } = await supabase
+        .from(TABLE_FILE)
+        .insert(ligne)
+        .select('cle_idempotence');
+      if (error) {
+        if (error.code === '23505') return { insere: false, conflit: true };
+        throw new Error(`insertion ${TABLE_FILE} : ${error.message}`);
+      }
+      return { insere: (data || []).length === 1, conflit: false };
+    },
+
+    /**
+     * Réécrit une ligne à partir du dépôt relu dans le Drive.
+     *
+     * ⛔ NE MORD QUE si la ligne est encore modifiable ET n'a pas de témoin.
+     * Réécrire une ligne en `executing`, c'est changer le contenu d'une
+     * publication pendant qu'elle part.
+     */
+    async mettreAJourDepuisDepot(cle, champs) {
+      const { data, error } = await supabase
+        .from(TABLE_FILE)
+        .update({ ...champs, updated_at: formaterInstantUtc(new Date()) })
+        .eq('cle_idempotence', cle)
+        .in('etat', [...ETATS_MODIFIABLES])
+        .is('id_distant', null)
+        .select('cle_idempotence');
+      if (error) throw new Error(`mise à jour ${TABLE_FILE} : ${error.message}`);
+      return (data || []).length === 1;
+    },
+
+    /**
+     * Annule une ligne remplacée par un dépôt plus récent. Mêmes conditions :
+     * on n'annule jamais ce qui est parti, ni ce qui est en train de partir.
+     */
+    async annulerLigne(cle, details) {
+      const { data, error } = await supabase
+        .from(TABLE_FILE)
+        .update({
+          etat: 'cancelled',
+          derniere_erreur: details ?? null,
+          updated_at: formaterInstantUtc(new Date()),
+        })
+        .eq('cle_idempotence', cle)
+        .in('etat', [...ETATS_MODIFIABLES])
+        .is('id_distant', null)
+        .select('cle_idempotence');
+      if (error) throw new Error(`annulation ${TABLE_FILE} : ${error.message}`);
+      return (data || []).length === 1;
     },
 
     /**
@@ -191,8 +285,13 @@ export function depotSupabaseAutopost(supabase) {
     async lireEtatComplet({ limite = 200 } = {}) {
       const { data, error } = await supabase
         .from(TABLE_FILE)
-        .select('cle_idempotence, publication_id, canal, surface, instant_utc, date_locale, '
-          + 'tolerance_minutes, etat, tentatives, tentatives_max, id_distant, resultat, derniere_erreur, approbation')
+        // ⚠️ `url_media` en fait partie DEPUIS le 18/09/2026 : sans elle, l'écran
+        //    affiche une file pleine sans pouvoir dire qu'aucune de ces lignes
+        //    ne peut partir, faute de média joignable par Meta. Une file qui a
+        //    l'air prête et qui ne l'est pas est un faux témoin de plus.
+        .select('cle_idempotence, publication_id, version_contenu, canal, surface, instant_utc, '
+          + 'date_locale, tolerance_minutes, etat, tentatives, tentatives_max, id_distant, '
+          + 'url_media, resultat, derniere_erreur, approbation')
         .order('instant_utc', { ascending: true })
         .limit(limite);
       if (error) throw new Error(`lecture ${TABLE_FILE} : ${error.message}`);

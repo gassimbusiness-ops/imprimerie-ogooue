@@ -59,6 +59,10 @@
       "destination": "/api/autopost?voie=tick"
     },
     {
+      "source": "/api/autopost-alimenter",
+      "destination": "/api/autopost?voie=alimenter"
+    },
+    {
       "source": "/api/autopost-etat",
       "destination": "/api/autopost?voie=etat"
     },

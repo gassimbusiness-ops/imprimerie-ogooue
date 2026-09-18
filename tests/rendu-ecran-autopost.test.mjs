@@ -353,3 +353,137 @@ test('⛔ 77 fichiers hors contrat : l ecran dit ce qui est LA, pas « rien »',
     await r.demonter();
   }
 });
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   LE DERNIER MAILLON, VU DE L'ECRAN — remplir la file depuis le Drive
+
+   Jusqu'au 18/09/2026, 14 publications attendaient dans le Drive et la file
+   etait vide : RIEN ne faisait le pont. L'ecran doit desormais offrir ce geste,
+   et surtout DIRE ce qu'il a donne — y compris ce qui a ete ecarte, avec son
+   motif. Une alimentation muette serait un troisieme faux temoin.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/** Doublure de `fetch` qui ROUTE par URL : on sait quelle voie a ete appelee. */
+function installerFetchRoutee(routes) {
+  const appels = [];
+  const ancien = globalThis.fetch;
+  globalThis.fetch = async (url, options = {}) => {
+    const u = String(url);
+    appels.push({ url: u, methode: options.method || 'GET' });
+    const cle = Object.keys(routes).find((r) => u.includes(r));
+    const reponse = cle ? routes[cle] : { charge: {}, ok: false, status: 404 };
+    return { ok: reponse.ok !== false, status: reponse.status || 200, json: async () => reponse.charge };
+  };
+  return { appels, restaurer() { globalThis.fetch = ancien; } };
+}
+
+async function cliquerSur(r, libelle) {
+  const bouton = [...r.conteneur.querySelectorAll('button')]
+    .find((b) => (b.textContent || '').includes(libelle));
+  assert.ok(bouton, `bouton « ${libelle} » introuvable`);
+  await r.act(async () => { bouton.click(); await new Promise((res) => setTimeout(res, 0)); });
+  for (let i = 0; i < 3; i += 1) {
+    await r.act(async () => { await new Promise((res) => setTimeout(res, 0)); });
+  }
+  return bouton;
+}
+
+test('l ecran offre de RELIRE LE DRIVE, et ce bouton appelle la voie alimenter', async () => {
+  const f = installerFetchRoutee({
+    '/api/autopost-etat': { charge: ETAT },
+    '/api/autopost-alimenter': {
+      charge: {
+        ok: true,
+        alimentation: {
+          diagnostic: 'ok', lues: 14, creees: 3, mises_a_jour: 1,
+          remplacees: 0, inchangees: 10, conflits: 0, ecartees: [], ecartees_par_le_lecteur: [],
+        },
+      },
+    },
+  });
+  const r = await rendreEcran({ ecran: 'src/features/autopost/page.jsx' });
+  try {
+    assert.equal(r.erreurs.length, 0, `exceptions au montage : ${r.erreurs.map((e) => e?.message).join(' · ')}`);
+    await cliquerSur(r, 'Relire le Drive');
+    const alimentations = f.appels.filter((a) => a.url.includes('/api/autopost-alimenter'));
+    assert.equal(alimentations.length, 1, 'le bouton doit appeler la voie alimenter, une fois');
+    assert.equal(alimentations[0].methode, 'POST', 'une ecriture se demande en POST');
+    // ⚠️ `r.texte` est l'instantane du MONTAGE : apres un clic, c'est le
+    //    conteneur qu'il faut relire, sinon on teste l'ecran d'avant.
+    const apres = r.conteneur.textContent || '';
+    assert.match(apres, /3 (?:publication|ligne)|3 créée/i, 'le resultat doit etre affiche, pas seulement obtenu');
+  } finally {
+    f.restaurer();
+    await r.demonter();
+  }
+});
+
+test('⛔ un depot ECARTE est affiche avec son motif — jamais « rien de neuf » en silence', async () => {
+  const f = installerFetchRoutee({
+    '/api/autopost-etat': { charge: ETAT },
+    '/api/autopost-alimenter': {
+      charge: {
+        ok: true,
+        alimentation: {
+          diagnostic: 'ok', lues: 2, creees: 0, mises_a_jour: 0, remplacees: 0,
+          inchangees: 0, conflits: 0,
+          ecartees: [
+            {
+              publication_id: 'PUB-2026-S39-2-01',
+              canal: 'facebook',
+              motif: 'manifeste_invalide',
+              detail: 'schema_version attendu "2.0", reçu "1.0"',
+            },
+          ],
+          ecartees_par_le_lecteur: [],
+        },
+      },
+    },
+  });
+  const r = await rendreEcran({ ecran: 'src/features/autopost/page.jsx' });
+  try {
+    await cliquerSur(r, 'Relire le Drive');
+    const apres = r.conteneur.textContent || '';
+    assert.match(apres, /PUB-2026-S39-2-01/, 'la publication ecartee doit etre nommee');
+    assert.match(apres, /schema_version attendu/, 'et le motif doit etre lisible tel quel');
+    assert.match(apres, /ne respecte pas le contrat/, 'et traduit en francais, pas seulement en code');
+  } finally {
+    f.restaurer();
+    await r.demonter();
+  }
+});
+
+test('🔴 une publication en file SANS MEDIA HEBERGE est signalee : elle ne partira pas', async () => {
+  // La verite du 18/09/2026 : la file peut se remplir, mais Instagram va
+  // CHERCHER l'image a une adresse publiquement joignable — un fichier de Drive
+  // prive n'en est pas une. Mieux vaut une file honnete qu'une file qui echoue
+  // au moment de publier.
+  const f = installerFetchRoutee({ '/api/autopost-etat': { charge: {
+    ...ETAT,
+    file: [{ ...ETAT.file[0], url_media: null }],
+  } } });
+  const r = await rendreEcran({ ecran: 'src/features/autopost/page.jsx' });
+  try {
+    assert.equal(r.erreurs.length, 0);
+    assert.match(r.texte, /média/i);
+    assert.match(r.texte, /ne partir|n'ira pas|n’ira pas/i,
+      'l ecran doit dire que cette publication ne partira pas en l etat');
+  } finally {
+    f.restaurer();
+    await r.demonter();
+  }
+});
+
+test('une ligne DONT le media est heberge ne porte PAS l avertissement', async () => {
+  const f = installerFetchRoutee({ '/api/autopost-etat': { charge: {
+    ...ETAT,
+    file: [{ ...ETAT.file[0], url_media: 'https://exemple.invalid/signee.jpg' }],
+  } } });
+  const r = await rendreEcran({ ecran: 'src/features/autopost/page.jsx' });
+  try {
+    assert.doesNotMatch(r.texte, /média pas encore hébergé/i);
+  } finally {
+    f.restaurer();
+    await r.demonter();
+  }
+});

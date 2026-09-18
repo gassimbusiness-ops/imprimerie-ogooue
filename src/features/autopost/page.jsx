@@ -34,7 +34,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
   CalendarClock, CheckCircle2, XCircle, AlertTriangle, RefreshCw,
-  PauseCircle, PlayCircle, Eye, EyeOff, HardDriveDownload,
+  PauseCircle, PlayCircle, Eye, EyeOff, HardDriveDownload, ImageOff,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -71,6 +71,23 @@ const RAISONS = {
   compte_cible_absent: 'Aucun compte Meta cible : impossible de vérifier qu\'on publie au bon endroit.',
   plafond_journalier: 'Plafond de publications du jour atteint.',
   pris_par_une_autre_execution: 'Une autre exécution s\'en occupait déjà.',
+};
+
+/**
+ * Pourquoi un dépôt du Drive n'est pas entré en file. Ces phrases sont lues par
+ * quelqu'un qui doit décider quoi faire — pas par un développeur.
+ * Voir `api/_lib/autopost-alimentation.js`.
+ */
+const MOTIFS_ALIMENTATION = {
+  manifeste_invalide: 'Le fichier publication.json ne respecte pas le contrat. Rien n\'est réparé en silence.',
+  cle_en_double_dans_le_depot: 'Deux entrées du même dépôt visent le même compte au même moment.',
+  deja_parti: 'Déjà publié : une affiche ne repart pas, même redéposée ou corrigée.',
+  ligne_en_vol: 'Une version précédente est en cours de traitement : on ne la remplace pas maintenant.',
+  ligne_annulee: 'Cette ligne a été annulée. Elle ne se remet pas en route toute seule.',
+  version_anterieure_a_la_file: 'Le dépôt propose une version plus ancienne que celle déjà en file.',
+  legende_absente: 'Aucune légende déclarée pour ce canal : une affiche ne part pas sans un mot.',
+  legende_introuvable: 'La légende annoncée n\'est pas dans le dossier de la publication.',
+  depot_illisible: 'Ce dossier du Drive n\'a pas pu être lu.',
 };
 
 const DETAILS_APPROBATION = {
@@ -155,6 +172,69 @@ function VoyantDrive({ drive, configure }) {
   );
 }
 
+/**
+ * Ce que la dernière relecture du Drive a donné — y compris ce qu'elle a
+ * ÉCARTÉ, avec le motif. Une alimentation qui ne rendrait qu'un nombre serait
+ * un troisième faux témoin : « 0 créée » ne dit pas s'il n'y avait rien à
+ * prendre ou si tout a été refusé, et ce ne sont pas les mêmes gestes.
+ */
+function PanneauAlimentation({ alimentation }) {
+  if (!alimentation) return null;
+  const a = alimentation;
+  const panne = a.diagnostic && !['ok', 'dossier_vide'].includes(a.diagnostic);
+  const ecartees = a.ecartees || [];
+  const parLecteur = a.ecartees_par_le_lecteur || [];
+
+  return (
+    <Card>
+      <CardContent className="space-y-2 p-4">
+        <h2 className="flex items-center gap-2 font-semibold">
+          <HardDriveDownload className="h-4 w-4" /> Dernière relecture du Drive
+        </h2>
+
+        {panne
+          ? (
+            <p className="text-sm text-orange-800">
+              Le Drive n&apos;a pas pu être lu : {a.message}
+            </p>
+          )
+          : (
+            <p className="text-sm text-slate-700">
+              {a.lues || 0} publication(s) lue(s) dans le Drive · <strong>{a.creees || 0} créée(s)</strong> dans
+              la file · {a.mises_a_jour || 0} mise(s) à jour · {a.remplacees || 0} remplacée(s) ·
+              {' '}{a.inchangees || 0} inchangée(s) · {ecartees.length} écartée(s).
+            </p>
+          )}
+
+        {ecartees.length > 0 && (
+          <div className="space-y-1">
+            {ecartees.map((e, i) => (
+              <div key={`${e.publication_id}-${e.canal}-${i}`} className="rounded border border-amber-200 bg-amber-50 p-2 text-sm">
+                <div className="flex flex-wrap items-center gap-2">
+                  <XCircle className="h-3.5 w-3.5 shrink-0 text-amber-700" />
+                  <span className="font-medium">{e.publication_id || 'dépôt sans identifiant'}</span>
+                  {e.canal && <Badge variant="outline">{e.canal}</Badge>}
+                </div>
+                <div className="mt-1 text-amber-900">{MOTIFS_ALIMENTATION[e.motif] || e.motif}</div>
+                {/* Le détail BRUT reste lisible à côté de la phrase : c'est lui
+                    qui dit quelle ligne du fichier corriger. */}
+                {e.detail && <div className="mt-1 font-mono text-xs text-amber-700">{e.detail}</div>}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {parLecteur.length > 0 && (
+          <p className="text-sm text-slate-600">
+            {parLecteur.length} dossier(s) du Drive n&apos;ont pas pu être lus ou ne contiennent pas
+            de publication.json.
+          </p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function Bandeau({ etat }) {
   const enMarche = etat?.controle?.actif === true;
   const reel = etat?.controle?.mode === 'live' && etat?.mode_global === 'live' && etat?.jeton_meta_present;
@@ -202,6 +282,12 @@ function Ligne({ l }) {
         <Badge variant="outline">{l.surface}</Badge>
         {!approuve && (
           <Badge className="bg-orange-100 text-orange-700">non approuvé</Badge>
+        )}
+        {/* 🔴 La vérité sur le média, à côté de la ligne qui la porte. Une file
+            qui a l'air prête alors qu'aucune image n'est joignable est un faux
+            témoin de plus — le troisième de la semaine si on le laissait. */}
+        {!l.id_distant && !l.url_media && (
+          <Badge className="bg-amber-100 text-amber-800">média non hébergé</Badge>
         )}
       </div>
 
@@ -264,6 +350,8 @@ export default function Autopost() {
   const [chargement, setChargement] = useState(true);
   const [panne, setPanne] = useState(null);
   const [passageEnCours, setPassageEnCours] = useState(false);
+  const [relectureEnCours, setRelectureEnCours] = useState(false);
+  const [alimentation, setAlimentation] = useState(null);
 
   const charger = useCallback(async () => {
     setChargement(true);
@@ -304,6 +392,38 @@ export default function Autopost() {
     }
   };
 
+  /**
+   * ⛔ LE DERNIER MAILLON, DÉCLENCHÉ À LA MAIN.
+   *
+   * Le passage horaire alimente déjà la file avant de la regarder. Ce bouton
+   * sert au cas qui arrive vraiment : ChatGPT vient de déposer, le gérant ne
+   * veut pas attendre l'heure suivante pour voir la publication apparaître.
+   *
+   * Il ne publie RIEN : il lit le Drive et écrit dans la file. Les deux gestes
+   * sont séparés, et celui-ci ne touche à aucun des cinq verrous.
+   */
+  const relireLeDrive = async () => {
+    setRelectureEnCours(true);
+    try {
+      const res = await apiFetch('/api/autopost-alimenter', { method: 'POST' });
+      const corps = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(corps.detail || corps.error || `Réponse ${res.status}`);
+      const a = corps.alimentation || {};
+      setAlimentation(a);
+      toast.success(
+        `Drive relu — ${a.creees || 0} créée(s), ${a.mises_a_jour || 0} mise(s) à jour, `
+        + `${a.inchangees || 0} inchangée(s), ${a.ecartees?.length || 0} écartée(s).`,
+      );
+      await charger();
+    } catch (e) {
+      // On DIT la panne : une alimentation muette serait un faux témoin de plus.
+      setAlimentation({ diagnostic: 'panne', message: e?.message || 'relecture impossible', ecartees: [] });
+      toast.error(e?.message || 'Relecture du Drive impossible');
+    } finally {
+      setRelectureEnCours(false);
+    }
+  };
+
   if (chargement && !etat) {
     return <div className="p-6 text-slate-500">Lecture de l&apos;état de la chaîne…</div>;
   }
@@ -340,6 +460,8 @@ export default function Autopost() {
   const partis = file.filter((l) => l.etat === 'published');
   const bloques = file.filter((l) => ['failed', 'expired', 'suspended', 'reconciling', 'cancelled'].includes(l.etat));
   const nonApprouves = prevus.filter((l) => !l.approbation?.approuve);
+  // 🔴 Le média : la file peut être pleine et rien ne peut partir.
+  const sansMedia = prevus.filter((l) => !l.url_media);
 
   return (
     <div className="space-y-4 p-4 sm:p-6">
@@ -356,6 +478,12 @@ export default function Autopost() {
           <Button variant="outline" onClick={() => void charger()} disabled={chargement}>
             <RefreshCw className={`mr-2 h-4 w-4 ${chargement ? 'animate-spin' : ''}`} /> Actualiser
           </Button>
+          {user?.role === 'admin' && (
+            <Button variant="outline" onClick={() => void relireLeDrive()} disabled={relectureEnCours}>
+              <HardDriveDownload className="mr-2 h-4 w-4" />
+              {relectureEnCours ? 'Lecture du Drive…' : 'Relire le Drive'}
+            </Button>
+          )}
           {user?.role === 'admin' && (
             <Button onClick={() => void lancerUnPassage()} disabled={passageEnCours}>
               {passageEnCours ? 'Passage en cours…' : 'Lancer un passage maintenant'}
@@ -375,6 +503,23 @@ export default function Autopost() {
           </p>
         </div>
       )}
+
+      {sansMedia.length > 0 && (
+        <div className="flex items-start gap-2 rounded border border-amber-200 bg-amber-50 p-3">
+          <ImageOff className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+          <p className="text-sm text-amber-900">
+            <strong>{sansMedia.length}</strong> publication(s) prévue(s) n&apos;ont pas de média hébergé.
+            Facebook et Instagram ne reçoivent pas de fichier : ils vont <strong>chercher</strong> l&apos;image
+            à une adresse publiquement joignable, et un fichier du Drive privé n&apos;en est pas une.
+            Ces publications entrent bien dans la file et y sont examinées, mais elles
+            <strong> ne partiront pas</strong> tant que l&apos;hébergement du média n&apos;existe pas.
+            C&apos;est un chantier à part : dépôt dans un stockage privé à l&apos;approbation, puis adresse
+            signée à durée courte.
+          </p>
+        </div>
+      )}
+
+      <PanneauAlimentation alimentation={alimentation} />
 
       <Card>
         <CardContent className="p-4">
@@ -437,4 +582,4 @@ export default function Autopost() {
 }
 
 /** Exporté pour les tests de rendu et pour réemploi dans un futur écran. */
-export { RAISONS, DETAILS_APPROBATION, ETATS };
+export { RAISONS, DETAILS_APPROBATION, ETATS, MOTIFS_ALIMENTATION };

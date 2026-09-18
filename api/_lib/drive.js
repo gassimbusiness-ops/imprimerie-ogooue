@@ -926,6 +926,7 @@ export function creerClientDrive({
        est faux, et la panne se découvrirait au moment de publier. */
     const parNom = new Map(entrees.map((x) => [x.name, x]));
     const medias = [];
+    const avertissementsLegendes = [];
     for (const media of publication.medias) {
       const fichier = parNom.get(media.chemin_relatif);
       if (!fichier) {
@@ -949,9 +950,34 @@ export function creerClientDrive({
       });
     }
 
+    /* ── Les légendes : REPÉRÉES ici, téléchargées ailleurs ───────────────
+       Le manifeste déclare un fichier de légende par canal (`captions`). On se
+       contente d'associer chaque déclaration au fichier réel du dossier, sans
+       le télécharger : ce parcours sert aussi au sondage d'écran, et une
+       lecture d'écran n'a pas à coûter le texte de 14 publications.
+       L'alimentation de la file (`autopost-alimentation.js`) télécharge ce
+       dont elle a besoin, au moment où elle en a besoin.
+
+       Un fichier annoncé mais absent donne `fichier_id: null` — un fait, pas
+       une réparation. C'est l'appelant qui décide ce qu'il en fait, et il
+       l'écarte avec un motif plutôt que de publier une affiche sans un mot. */
+    const captions = {};
+    for (const [canal, declaration] of Object.entries(publication.captions || {})) {
+      const nom = declaration?.chemin_relatif;
+      const fichier = nom ? parNom.get(nom) : null;
+      captions[canal] = {
+        chemin_relatif: nom ?? null,
+        fichier_id: fichier?.id ?? null,
+        taille: fichier?.size ? Number(fichier.size) : null,
+      };
+      if (nom && !fichier) {
+        avertissementsLegendes.push(`la légende « ${nom} » annoncée pour ${canal} n'est pas dans le dossier`);
+      }
+    }
+
     /* ── L'approbation : absente veut dire NULL, jamais « approuvé » ─────── */
     let approbation = null;
-    const avertissements = [];
+    const avertissements = [...avertissementsLegendes];
     const fichierApprobation = entrees.find((x) => x.name === NOM_APPROBATION);
     if (fichierApprobation) {
       const brutAppro = await telechargerFichier(fichierApprobation.id);
@@ -965,7 +991,7 @@ export function creerClientDrive({
       }
     }
 
-    return { publication: { ...base, publication, approbation, medias, avertissements } };
+    return { publication: { ...base, publication, approbation, medias, captions, avertissements } };
   }
 
   /**

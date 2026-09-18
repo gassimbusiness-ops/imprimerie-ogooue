@@ -1063,3 +1063,68 @@ test('recherche en panne : le parcours prend le relais sans faire echouer le son
   assert.equal(etat.diagnostic, 'ok', 'une recherche en panne ne doit pas casser le sondage');
   assert.equal(etat.publications_trouvees, 1, 'le parcours doit retrouver ce que la recherche a manque');
 });
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   H. LES LEGENDES — reperees ici, telechargees ailleurs
+
+   L'alimentation de la file (`autopost-alimentation.js`) a besoin du TEXTE de
+   la legende : une affiche publiee sans un mot serait pire que pas d'affiche.
+   Mais ce parcours sert aussi au sondage d'ecran, et ouvrir un ecran ne doit
+   pas couter le telechargement du texte de 14 publications. Ce lecteur se
+   contente donc d'ASSOCIER chaque legende declaree au fichier reel.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+function driveAvecLegende({ nomCaption = 'caption_facebook.txt', deposee = true } = {}) {
+  const fichiers = [
+    f('f-json', 'publication.json', 'application/json'),
+    f('f-media', MEDIA),
+  ];
+  if (deposee) fichiers.push(f('f-cap', nomCaption, 'text/plain'));
+  return fauxGoogle({
+    listes: {
+      [DOSSIER]: [d('w1', 'WEEK_21-27Sept')],
+      w1: [d('j1', 'Lundi_21_Sept')],
+      j1: [d('p1', '1_POST_09H00')],
+      p1: fichiers,
+    },
+    fichiers: {
+      'f-json': JSON.stringify(manifeste({
+        captions: { facebook: { chemin_relatif: 'caption_facebook.txt', caracteres: 612, hashtags: 3 } },
+      })),
+      'f-cap': 'Flocage textile a Moanda. 060 44 46 34 — OG-01-S39',
+    },
+  });
+}
+
+test('chaque legende declaree est associee au fichier reel du dossier', async () => {
+  viderCacheJeton();
+  const g = driveAvecLegende();
+  const lot = await creerClientDrive({ env: env(), fetchImpl: g.impl }).lirePublications();
+
+  assert.equal(lot.publications.length, 1, JSON.stringify(lot.ecartees));
+  assert.equal(lot.publications[0].captions.facebook.fichier_id, 'f-cap');
+  assert.equal(lot.publications[0].captions.facebook.chemin_relatif, 'caption_facebook.txt');
+});
+
+test('⛔ le parcours ne TELECHARGE pas les legendes : une lecture d ecran ne doit pas les couter', async () => {
+  viderCacheJeton();
+  const g = driveAvecLegende();
+  await creerClientDrive({ env: env(), fetchImpl: g.impl }).lirePublications();
+
+  const telechargements = g.appels.filter((a) => /alt=media/.test(a.url));
+  assert.equal(telechargements.some((a) => a.url.includes('f-cap')), false,
+    'le texte des legendes se telecharge au moment d alimenter la file, pas a chaque parcours');
+});
+
+test('une legende annoncee mais ABSENTE est dite — sans ecarter la publication ici', async () => {
+  // Le lecteur constate ; c'est l'alimentation qui decide d'ecarter le canal.
+  // Un lecteur qui trancherait a la place de l'appelant rendrait la meme
+  // publication invisible au sondage d'ecran, qui n'a rien demande.
+  viderCacheJeton();
+  const g = driveAvecLegende({ deposee: false });
+  const lot = await creerClientDrive({ env: env(), fetchImpl: g.impl }).lirePublications();
+
+  assert.equal(lot.publications.length, 1);
+  assert.equal(lot.publications[0].captions.facebook.fichier_id, null);
+  assert.match(lot.publications[0].avertissements.join(' '), /caption_facebook\.txt/);
+});

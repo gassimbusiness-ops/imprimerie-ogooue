@@ -1,13 +1,21 @@
 /**
  * Vercel Serverless Function — l'auto-posteur de l'IMPRIMERIE OGOOUÉ.
  *
- * Deux voies derrière un seul fichier (plafond de 12 fonctions du plan Hobby) :
- *   GET /api/autopost-tick  → un passage : publie ce qui est dû. Appelé par les
- *                             tâches planifiées de `vercel.json`.
- *   GET /api/autopost-etat  → ce que l'écran du gérant affiche : la file, le
- *                             journal, et pourquoi chaque chose n'est pas partie.
+ * Trois voies derrière un seul fichier (plafond de 12 fonctions du plan Hobby) :
+ *   GET  /api/autopost-tick      → un passage : alimente la file depuis le
+ *                                  Drive, puis publie ce qui est dû. Appelé par
+ *                                  les tâches planifiées de `vercel.json`.
+ *   GET  /api/autopost-etat      → ce que l'écran du gérant affiche : la file, le
+ *                                  journal, et pourquoi chaque chose n'est pas
+ *                                  partie.
+ *   POST /api/autopost-alimenter → relit le Drive et remplit la file, sans rien
+ *                                  publier. Le bouton de l'écran.
  *
- * Le décompte après ce fichier : **11 fonctions sur 12**. Il reste une place.
+ * ⚠️ `api/` compte **12 fonctions sur 12**. Il n'y a plus AUCUNE place : une
+ * voie de plus est une voie de plus DANS CE FICHIER, jamais un fichier de plus.
+ * Un 13e fichier fait échouer le déploiement à l'étape « Deploying outputs »,
+ * build vert compris — c'est arrivé le 17/09/2026, et plus rien ne se
+ * déployait, pas même le webhook Meta.
  *
  * ════════════════════════════════════════════════════════════════════════════
  * 🔴 LA VRAIE QUESTION D'ARCHITECTURE : COMMENT L'APPLICATION LIT LE DRIVE
@@ -100,15 +108,17 @@ import { supabaseAdmin } from './_lib/supabase-admin.js';
 import { depotSupabaseAutopost } from './_lib/autopost-depot.js';
 import { creerClientMeta } from './_lib/autopost-meta.js';
 import { executerPassage, modeGlobalDemande } from './_lib/autopost-executeur.js';
-import { sonderDrive, lireConfigurationDrive, DIAGNOSTICS, MESSAGES } from './_lib/drive.js';
+import { alimenterFile } from './_lib/autopost-alimentation.js';
+import { sonderDrive, lireConfigurationDrive, creerClientDrive, DIAGNOSTICS, MESSAGES } from './_lib/drive.js';
 
 /** Voies servies par ce point d'entrée. */
-export const VOIES_AUTOPOST = Object.freeze(['tick', 'etat']);
+export const VOIES_AUTOPOST = Object.freeze(['tick', 'etat', 'alimenter']);
 
 /** Chemins publics historiques → voie (voir `api/_lib/routage.js`). */
 export const CHEMINS_AUTOPOST = Object.freeze({
   '/api/autopost-tick': 'tick',
   '/api/autopost-etat': 'etat',
+  '/api/autopost-alimenter': 'alimenter',
 });
 
 /**
@@ -154,7 +164,44 @@ export function creerGestionnaireAutopost({
   client: clientFourni = null,
   maintenant = () => new Date(),
   sonde = sonderDrive,
+  alimente = null,
 } = {}) {
+  /**
+   * ⛔ LE MAILLON QUI MANQUAIT — le Drive devient des lignes de file.
+   *
+   * Il tourne AVANT la sélection à chaque passage, et à la demande depuis
+   * l'écran. Deux précautions qui comptent plus que le code :
+   *
+   *   1. il est enveloppé : une panne Google ne doit PAS empêcher de publier ce
+   *      qui est déjà en file. Alimenter et publier sont deux gestes, et le
+   *      second ne dépend pas du premier ;
+   *   2. il ne consulte aucun verrou. Alimenter n'est pas publier : la chaîne
+   *      est à l'arrêt et en simulation, et la file doit quand même se remplir,
+   *      sinon il n'y a rien à regarder avant d'ouvrir les verrous.
+   */
+  async function alimenter(depot, instantUtc) {
+    const faire = alimente || ((arg) => alimenterFile({ ...arg, client: creerClientDrive() }));
+    try {
+      return await faire({ depot, instant: instantUtc });
+    } catch (err) {
+      console.error('[autopost] alimentation impossible :', err?.message);
+      return {
+        instant_utc: instantUtc,
+        diagnostic: DIAGNOSTICS.PANNE,
+        message: MESSAGES.panne,
+        detail: `alimentation impossible : ${err?.message || err}`,
+        lues: 0,
+        creees: 0,
+        mises_a_jour: 0,
+        remplacees: 0,
+        inchangees: 0,
+        conflits: 0,
+        ecartees: [],
+        ecartees_par_le_lecteur: [],
+      };
+    }
+  }
+
   /**
    * ⛔ LE SONDAGE DU DRIVE, ET SON FILET.
    *
@@ -226,7 +273,10 @@ export function creerGestionnaireAutopost({
       }
     }
 
-    /* ── VOIE « tick » : le passage qui publie ───────────────────────────── */
+    /* ── VOIES « tick » et « alimenter » : les deux écrivent en base ──────
+       Même porte d'entrée pour les deux : la tâche planifiée avec son secret,
+       ou un administrateur connecté. Lire le Drive et remplir la file n'est pas
+       une lecture d'écran — c'est une écriture, et elle se protège comme telle. */
     const droit = autorisationTick(req);
     let session = null;
     if (!droit.autorise) {
@@ -237,15 +287,45 @@ export function creerGestionnaireAutopost({
       }
     }
 
+    const instant = maintenant();
+
+    if (voie === 'alimenter') {
+      // Chaque alimentation coûte des appels à Google : on borne le bouton.
+      if (limiteDepassee(req, { max: 10, fenetreMs: 60_000, portee: 'autopost-alimenter' })) {
+        return res.status(429).json({ error: 'Trop de requêtes' });
+      }
+      try {
+        const depot = depotFourni || depotSupabaseAutopost(supabaseAdmin());
+        const alimentation = await alimenter(depot, instant);
+        return res.status(200).json({
+          ok: true,
+          declenche_par: droit.autorise ? 'cron' : 'admin',
+          alimentation,
+        });
+      } catch (err) {
+        console.error('[autopost] alimentation en échec :', err?.message);
+        return res.status(500).json({ error: 'Alimentation en échec', detail: err?.message });
+      }
+    }
+
     try {
       const depot = depotFourni || depotSupabaseAutopost(supabaseAdmin());
       const client = clientFourni || creerClientMeta();
+
+      /* ⛔ L'ORDRE COMPTE : on remplit la file AVANT de la regarder. Sinon une
+         publication déposée il y a dix minutes attendrait le passage suivant,
+         c'est-à-dire une heure de plus — et à 17 h 30, sa tolérance aurait
+         expiré. L'alimentation ne lève pas : si le Drive est injoignable, le
+         passage publie quand même ce qui est déjà en file. */
+      const alimentation = await alimenter(depot, instant);
+
       const bilan = await executerPassage({
         depot,
         client,
-        instant: maintenant(),
+        instant,
         options: {},
       });
+      bilan.alimentation = alimentation;
       return res.status(200).json({ ok: true, declenche_par: droit.autorise ? 'cron' : 'admin', bilan });
     } catch (err) {
       console.error('[autopost] passage en échec :', err?.message);
