@@ -26,6 +26,7 @@ import {
   Plus,
   Trash2,
 } from 'lucide-react';
+import { todayISO } from '@/lib/dates';
 
 const ACTION_ICONS = {
   create: Plus,
@@ -70,7 +71,9 @@ export default function AuditLog() {
 
   // Stats
   const stats = useMemo(() => {
-    const today = new Date().toISOString().split('T')[0];
+    // `todayISO()` : sinon le compteur « aujourd'hui » comptait la veille
+    // pendant la premiere heure de la journee a Moanda.
+    const today = todayISO();
     const todayLogs = logs.filter((l) => (l.timestamp || l.created_at || '').startsWith(today));
     const cancellations = logs.filter((l) => l.action === 'cancel');
     const uniqueUsers = new Set(logs.map((l) => l.user_id)).size;

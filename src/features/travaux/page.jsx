@@ -15,6 +15,7 @@ import {
   LayoutGrid, List, User, AlertTriangle,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { todayISO } from '@/lib/dates';
 
 function fmt(n) { return new Intl.NumberFormat('fr-FR').format(Math.round(n || 0)); }
 
@@ -127,7 +128,9 @@ export default function Travaux() {
       description,
       source,
       compte_id: compte?.id || '',
-      date: date || new Date().toISOString().slice(0, 10),
+      // `todayISO()` : c'est la date d'un MOUVEMENT FINANCIER. L'ancienne
+      // forme le datait de la veille entre 00 h et 01 h heure de Moanda.
+      date: date || todayISO(),
       reference,
       categorie,
     };

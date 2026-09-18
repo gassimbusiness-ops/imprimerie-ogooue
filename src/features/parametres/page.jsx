@@ -20,6 +20,7 @@ import {
   Database, Download, Loader2,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { todayISO } from '@/lib/dates';
 
 const ROLE_OPTIONS = [
   { value: 'admin', label: 'Administrateur', color: 'bg-violet-100 text-violet-700' },
@@ -217,7 +218,9 @@ export default function Parametres() {
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `sauvegarde-ogooue-${new Date().toISOString().slice(0, 10)}.json`;
+      // `todayISO()` : une sauvegarde prise a 00 h 30 portait la date de la
+      // veille dans son nom — deux sauvegardes du meme nom en une journee.
+      a.download = `sauvegarde-ogooue-${todayISO()}.json`;
       a.click();
       URL.revokeObjectURL(url);
       await logAction('export', 'parametres', { details: 'Export complet des données (sauvegarde)' });

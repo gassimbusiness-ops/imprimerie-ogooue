@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { db } from '@/services/db';
-import { toISODate } from '@/lib/dates';
+import { toISODate, todayISO, addDaysISO } from '@/lib/dates';
 import { caRapports, CATEGORIES_RAPPORT } from '@/services/finance-calc';
 import { useAuth } from '@/services/auth';
 import { exportInventairePDF, exportRapportCompletPDF, exportCSV } from '@/services/export-pdf';
@@ -210,7 +210,9 @@ export default function RapportsAnalyses() {
   // ═══ CLIENTS data ═══
   const clientsData = useMemo(() => {
     const total = clients.length;
-    const thisMonth = new Date().toISOString().slice(0, 7);
+    // `todayISO().slice(0, 7)` : decouper une DATE METIER est licite ;
+    // decouper un instant UTC rend le mois precedent le 1er a 00 h 30.
+    const thisMonth = todayISO().slice(0, 7);
     const nouveaux = clients.filter((c) => (c.created_at || '').slice(0, 7) === thisMonth).length;
     const recurrents = clients.filter((c) => {
       const cmdCount = commandes.filter((cmd) => cmd.client_id === c.id).length;
@@ -227,7 +229,9 @@ export default function RapportsAnalyses() {
     }).sort((a, b) => b.caTotal - a.caTotal).slice(0, 10);
 
     // Inactifs > 30 jours
-    const thirtyDaysAgo = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+    // `addDaysISO(-30)` : 30 jours de CALENDRIER en heure locale, au lieu
+    // de 30 x 24 h ramenes en UTC. Regle du projet : src/lib/dates.js.
+    const thirtyDaysAgo = addDaysISO(-30);
     const inactifs = clients.filter((c) => {
       const cmds = commandes.filter((cmd) => cmd.client_id === c.id);
       if (cmds.length === 0) return true;
@@ -259,7 +263,7 @@ export default function RapportsAnalyses() {
   const financeData = useMemo(() => {
     const catKeys = CATEGORIES_RAPPORT;
 
-    const monthRapports = rapports.filter((r) => (r.date || '').slice(0, 7) === new Date().toISOString().slice(0, 7));
+    const monthRapports = rapports.filter((r) => (r.date || '').slice(0, 7) === todayISO().slice(0, 7));
     const recettes = monthRapports.reduce((s, r) => {
       const cats = r.categories || {};
       return s + catKeys.reduce((ss, k) => ss + (cats[k] || 0), 0);
@@ -278,7 +282,7 @@ export default function RapportsAnalyses() {
     for (let i = 11; i >= 0; i--) {
       const d = new Date();
       d.setMonth(d.getMonth() - i);
-      months.push(d.toISOString().slice(0, 7));
+      months.push(toISODate(d).slice(0, 7));
     }
     const recettesVsDepenses = months.map((m) => {
       const mRaps = rapports.filter((r) => (r.date || '').slice(0, 7) === m);
@@ -867,7 +871,8 @@ export default function RapportsAnalyses() {
       {tab === 'exports' && (
         <div className="grid sm:grid-cols-2 gap-4">
           <Card className="hover:shadow-md transition-shadow cursor-pointer" onClick={() => {
-            const mois = new Date().toISOString().slice(0, 7);
+            // `todayISO().slice(0, 7)` : mois imprime en tete du rapport PDF.
+            const mois = todayISO().slice(0, 7);
             exportRapportCompletPDF({
               mois,
               ventes: { ca: ventesData.ca, nbCommandes: ventesData.nbCommandes, panierMoyen: ventesData.panierMoyen },

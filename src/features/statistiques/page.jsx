@@ -46,6 +46,7 @@ import {
   MessageSquare,
   Send,
 } from 'lucide-react';
+import { toISODate, todayISO } from '@/lib/dates';
 
 function fmt(n) {
   return new Intl.NumberFormat('fr-FR').format(Math.round(n || 0));
@@ -83,7 +84,9 @@ function getPeriodStart(period) {
     case '1y': d.setFullYear(d.getFullYear() - 1); break;
     case 'all': return '2000-01-01';
   }
-  return d.toISOString().split('T')[0];
+  // `toISODate(d)` : cette borne filtre les rapports. En UTC elle glissait
+  // d'un jour et faisait entrer (ou sortir) une journee entiere de CA.
+  return toISODate(d);
 }
 
 function CustomTooltip({ active, payload, label }) {
@@ -153,7 +156,7 @@ export default function Statistiques() {
     const prevEnd = new Date();
     prevEnd.setDate(prevEnd.getDate() - days);
     const prevFiltered = rapports.filter(
-      (r) => r.date >= prevStart.toISOString().split('T')[0] && r.date < prevEnd.toISOString().split('T')[0]
+      (r) => r.date >= toISODate(prevStart) && r.date < toISODate(prevEnd)
     );
     const prevRec = prevFiltered.reduce(
       (s, r) => s + Object.values(r.categories || {}).reduce((a, v) => a + (v || 0), 0), 0
@@ -244,7 +247,7 @@ export default function Statistiques() {
   const historique6mois = useMemo(() => {
     const sixMonthsAgo = new Date();
     sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
-    const start = sixMonthsAgo.toISOString().split('T')[0];
+    const start = toISODate(sixMonthsAgo);
     const recent = rapports.filter((r) => r.date >= start);
     const byMonth = {};
     for (const r of recent) {
@@ -466,7 +469,7 @@ Parle en français, sans markdown, de manière directe et professionnelle. Max 1
                       const url = URL.createObjectURL(blob);
                       const a = document.createElement('a');
                       a.href = url;
-                      a.download = `analyse-ia-${new Date().toISOString().split('T')[0]}.txt`;
+                      a.download = `analyse-ia-${todayISO()}.txt`;
                       a.click();
                       URL.revokeObjectURL(url);
                     }}

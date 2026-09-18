@@ -62,7 +62,7 @@ import { syncClientFromCommande } from '@/services/sync-clients';
 import { syncCommandeToRapport } from '@/services/sync-commande-rapport';
 import { syncStockFromCommande } from '@/services/sync-stock-commande';
 import { exportBonTravail } from '@/services/export-pdf';
-import { todayISO, addDaysISO } from '@/lib/dates';
+import { todayISO, addDaysISO, startOfMonthISO } from '@/lib/dates';
 import SelecteurActivite from '@/features/partages/selecteur-activite';
 import {
   ACTIVITE_DEFAUT, TOUTES_ACTIVITES, activiteDe, avecActivite, filtrerParActivite,
@@ -129,7 +129,10 @@ function isCommandeEnRetard(cmd) {
   if (!cmd.date_echeance) return false;
   const statut = (cmd.statut || '').toLowerCase();
   if (statut.includes('livr') || statut.includes('annul')) return false;
-  const today = new Date().toISOString().slice(0, 10);
+  // `todayISO()` : `.toISOString().slice(0, 10)` rend la date UTC, donc LA
+  // VEILLE a Moanda entre 00 h et 01 h — une commande due ce jour-la
+  // apparaissait en retard des minuit.
+  const today = todayISO();
   return cmd.date_echeance < today;
 }
 
@@ -287,7 +290,10 @@ export default function Commandes() {
     });
     const thisMonth = commandes.filter((c) => {
       const d = c.created_at?.split('T')[0] || '';
-      const monthStart = new Date().toISOString().slice(0, 7) + '-01';
+      // `startOfMonthISO()` : le 1er du mois entre 00 h et 01 h, l'ancienne
+      // forme rendait le mois PRECEDENT et le CA du mois repartait a zero
+      // une heure trop tard.
+      const monthStart = startOfMonthISO();
       const norm = normalizeStatut(c.statut);
       return d >= monthStart && norm !== 'annulee';
     });

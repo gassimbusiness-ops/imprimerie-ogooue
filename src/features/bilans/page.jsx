@@ -13,6 +13,7 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend,
   ResponsiveContainer, PieChart, Pie, Cell,
 } from 'recharts';
+import { todayISO, toISODate } from '@/lib/dates';
 
 function fmt(n) { return new Intl.NumberFormat('fr-FR').format(Math.round(n || 0)); }
 
@@ -22,7 +23,9 @@ export default function Bilans() {
   const [rapports, setRapports] = useState([]);
   const [loading, setLoading] = useState(true);
   const [periode, setPeriode] = useState('mois');
-  const [mois, setMois] = useState(() => new Date().toISOString().slice(0, 7));
+  // `todayISO().slice(0, 7)` : le mois ouvert par defaut. L'ancienne forme
+  // ouvrait le mois PRECEDENT le 1er entre 00 h et 01 h a Moanda.
+  const [mois, setMois] = useState(() => todayISO().slice(0, 7));
 
   useEffect(() => {
     db.rapports.list().then((r) => {
@@ -48,7 +51,7 @@ export default function Bilans() {
       const now = new Date();
       const weekStart = new Date(now);
       weekStart.setDate(now.getDate() - now.getDay() + 1);
-      const ws = weekStart.toISOString().slice(0, 10);
+      const ws = toISODate(weekStart);
       filtered = rapports.filter((r) => (r.date || '') >= ws);
     }
 

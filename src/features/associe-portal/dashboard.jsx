@@ -11,6 +11,7 @@ import { Users, BookOpen,
   PieChart, BarChart3, Package, Eye, Building2,
   Hammer, Loader2, Sparkles, Calculator,
 } from 'lucide-react';
+import { todayISO } from '@/lib/dates';
 
 function fmt(n) { return new Intl.NumberFormat('fr-FR').format(Math.round(n || 0)); }
 
@@ -333,7 +334,9 @@ export default function AssocieDashboard() {
     const totalProduits = data.produits.length;
     const commandesMois = data.commandes.filter((c) => {
       const d = c.created_at || '';
-      return d.startsWith(new Date().toISOString().slice(0, 7));
+      // `todayISO().slice(0, 7)` : decouper une date metier, jamais un
+      // instant UTC — sinon le mois bascule une heure trop tard.
+      return d.startsWith(todayISO().slice(0, 7));
     });
     const projetsEnCours = data.projets.filter((p) => p.statut === 'en_cours').length;
 

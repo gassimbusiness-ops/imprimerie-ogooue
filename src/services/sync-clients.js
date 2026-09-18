@@ -1,4 +1,5 @@
 import { db } from './db';
+import { todayISO } from '@/lib/dates';
 
 /**
  * Sync client record from commande data.
@@ -24,7 +25,11 @@ export async function syncClientFromCommande({ client_id, client_nom, client_ema
     if (client_tel && !existing.telephone) updates.telephone = client_tel;
     if (client_email && !existing.email) updates.email = client_email;
     if (client_adresse && !existing.adresse) updates.adresse = client_adresse;
-    updates.derniere_commande = new Date().toISOString().slice(0, 10);
+    // ⚠️ `todayISO()` et jamais `.toISOString().slice(0, 10)` : Moanda est a
+    // UTC+1 toute l'annee, et la seconde forme rend LA VEILLE entre 00 h et
+    // 01 h heure locale. Une commande passee a 00 h 30 datait le client du
+    // jour precedent. Regle du projet : src/lib/dates.js.
+    updates.derniere_commande = todayISO();
     await db.clients.update(existing.id, updates);
     return { ...existing, ...updates };
   }
@@ -37,8 +42,8 @@ export async function syncClientFromCommande({ client_id, client_nom, client_ema
     adresse: client_adresse || '',
     type: 'particulier',
     source: source || 'commande',
-    date_creation: new Date().toISOString().slice(0, 10),
-    derniere_commande: new Date().toISOString().slice(0, 10),
+    date_creation: todayISO(),
+    derniere_commande: todayISO(),
     notes: `Client ajouté automatiquement depuis ${source || 'une commande'}`,
   });
   return newClient;

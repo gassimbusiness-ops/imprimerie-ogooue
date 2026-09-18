@@ -20,6 +20,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { creerVerrouExecution } from '@/services/execution-unique';
+import { todayISO } from '@/lib/dates';
 
 // ─── Defaults from seed-data (used as initial values if no DB overrides) ───
 const DEFAULT_VALUATION = {
@@ -139,8 +140,8 @@ export default function Gouvernance() {
   const [showAddInvestisseur, setShowAddInvestisseur] = useState(false);
   const [selectedInvestisseur, setSelectedInvestisseur] = useState(null);
   const [newInvForm, setNewInvForm] = useState({ nom: '', prenom: '', montant: '', role: 'associe', notes: '' });
-  const [apportForm, setApportForm] = useState({ associe: 'oumar', type: 'apport_capital', montant: '', description: '', date: new Date().toISOString().slice(0, 10) });
-  const [rembForm, setRembForm] = useState({ montant: '', date: new Date().toISOString().slice(0, 10), description: '' });
+  const [apportForm, setApportForm] = useState({ associe: 'oumar', type: 'apport_capital', montant: '', description: '', date: todayISO() });
+  const [rembForm, setRembForm] = useState({ montant: '', date: todayISO(), description: '' });
   const [editRembId, setEditRembId] = useState(null); // id du remboursement en cours d'edition (null = creation)
   const [modifForm, setModifForm] = useState({
     typeOperation: 'ajout_capital',
@@ -405,7 +406,7 @@ export default function Gouvernance() {
 
   const handleEditRemboursement = (r) => {
     setEditRembId(r.id);
-    setRembForm({ montant: String(r.montant || ''), date: r.date || new Date().toISOString().slice(0, 10), description: r.description || '' });
+    setRembForm({ montant: String(r.montant || ''), date: r.date || todayISO(), description: r.description || '' });
     setShowRemboursementForm(true);
   };
 
@@ -503,7 +504,7 @@ export default function Gouvernance() {
       montantInitial: montant,
       montantActuel: montant,
       devise: 'FCFA',
-      dateEntree: new Date().toISOString().slice(0, 10),
+      dateEntree: todayISO(),
       statut: 'actif',
       notes: newInvForm.notes,
       role: newInvForm.role,
@@ -908,7 +909,7 @@ export default function Gouvernance() {
                     Compte Courant d'Associé — Oumar
                   </CardTitle>
                   {isAdmin && (
-                    <Button size="sm" className="gap-1" onClick={() => { setEditRembId(null); setRembForm({ montant: '', date: new Date().toISOString().slice(0, 10), description: '' }); setShowRemboursementForm(true); }}>
+                    <Button size="sm" className="gap-1" onClick={() => { setEditRembId(null); setRembForm({ montant: '', date: todayISO(), description: '' }); setShowRemboursementForm(true); }}>
                       <ArrowDownCircle className="h-3.5 w-3.5" /> Remboursement
                     </Button>
                   )}
@@ -971,7 +972,7 @@ export default function Gouvernance() {
                     Historique des Apports
                   </CardTitle>
                   {isAdmin && (
-                    <Button size="sm" variant="outline" className="gap-1" onClick={() => { setApportForm({ associe: 'oumar', type: 'apport_capital', montant: '', description: '', date: new Date().toISOString().slice(0, 10) }); setShowApportForm(true); }}>
+                    <Button size="sm" variant="outline" className="gap-1" onClick={() => { setApportForm({ associe: 'oumar', type: 'apport_capital', montant: '', description: '', date: todayISO() }); setShowApportForm(true); }}>
                       <Plus className="h-3.5 w-3.5" /> Nouvel apport
                     </Button>
                   )}

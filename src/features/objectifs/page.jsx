@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Target, Plus, Trash2, CheckCircle2, Clock, AlertTriangle, BarChart3 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { toast } from 'sonner';
+import { todayISO } from '@/lib/dates';
 
 function fmt(n) { return new Intl.NumberFormat('fr-FR').format(Math.round(n || 0)); }
 
@@ -36,7 +37,10 @@ export default function Objectifs() {
   // Calculate real progress from rapports
   const enriched = useMemo(() => {
     return objectifs.map((obj) => {
-      const targetMonth = obj.mois || new Date().toISOString().slice(0, 7);
+      // `todayISO().slice(0, 7)` : decouper une DATE METIER est licite ;
+      // decouper `.toISOString()` rend le mois UTC, donc le mois precedent
+      // le 1er entre 00 h et 01 h a Moanda.
+      const targetMonth = obj.mois || todayISO().slice(0, 7);
       const moisRapports = rapports.filter((r) => obj.type === 'annuel' ? (r.date || '').startsWith(targetMonth.slice(0, 4)) : (r.date || '').startsWith(targetMonth));
       const rapportIds = new Set(moisRapports.map((r) => r.id));
       const moisLignes = lignes.filter((l) => rapportIds.has(l.rapport_id));
@@ -61,7 +65,7 @@ export default function Objectifs() {
     realise: o.realise || 0,
   }));
 
-  const openAdd = () => { setEditItem(null); setForm({ titre: '', type: 'mensuel', categorie: 'global', objectif_montant: '', mois: new Date().toISOString().slice(0, 7) }); setShowForm(true); };
+  const openAdd = () => { setEditItem(null); setForm({ titre: '', type: 'mensuel', categorie: 'global', objectif_montant: '', mois: todayISO().slice(0, 7) }); setShowForm(true); };
   const openEdit = (o) => { setEditItem(o); setForm({ ...o, objectif_montant: o.objectif_montant || '' }); setShowForm(true); };
 
   const handleSave = async () => {

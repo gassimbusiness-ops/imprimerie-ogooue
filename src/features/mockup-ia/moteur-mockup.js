@@ -59,6 +59,7 @@ import {
   SUPPORTS, ANGLES, TECHNIQUES,
   trouverSupport, trouverColoris, trouverZone, trouverAngle, trouverTechnique,
 } from './supports.js';
+import { todayISO } from '../../lib/dates.js';
 
 export {
   SUPPORTS, ANGLES, TECHNIQUES,
@@ -1601,7 +1602,10 @@ export function construireRecette(params) {
     document_numero: String(documentNumero || '').slice(0, 40),
     cout_fcfa: Math.round(Number(coutFcfa) || 0),
     statut: 'valide',
-    cree_le: creeLe || new Date().toISOString().slice(0, 10),
+    // `todayISO()` : date de creation de la recette de mockup. Import
+    // RELATIF et non `@/lib/dates` — ce module est charge tel quel par
+    // `node --test`, qui ne resout pas l'alias `@/`.
+    cree_le: creeLe || todayISO(),
   };
 
   const octets = tailleJsonOctets(recette);

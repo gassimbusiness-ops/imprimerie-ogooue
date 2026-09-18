@@ -17,6 +17,7 @@
  * en une seule passe). Il est idempotent : safe de l'appeler plusieurs fois.
  */
 import { db } from '@/services/db';
+import { dateMetierEnDateLocale, toISODate } from '@/lib/dates';
 
 function calcMensualite(montant_initial, taux_interet, duree_mois) {
   const m = Number(montant_initial) || 0;
@@ -26,12 +27,27 @@ function calcMensualite(montant_initial, taux_interet, duree_mois) {
   return Math.round((m * (1 + t / 100)) / d);
 }
 
+/**
+ * Echeance suivante : +1 mois, calee sur `jourPrelevement` (plafonne a 28).
+ *
+ * ⚠️ FUSEAU. L'ancienne forme etait `new Date(currentDateStr)` — soit MINUIT
+ * UTC — suivie de `.setMonth()` / `.setDate()` qui, eux, travaillent en heure
+ * LOCALE, puis de `.toISOString().slice(0, 10)` qui repasse en UTC. Trois
+ * fuseaux pour un seul calcul. Sur un poste en retard sur UTC, l'echeance
+ * sortait DECALEE D'UN JOUR : `2026-09-05` rendait `2026-10-06`. C'est la date
+ * a laquelle un compte bancaire est debite.
+ *
+ * `dateMetierEnDateLocale` construit minuit LOCAL, `toISODate` relit le jour
+ * LOCAL : le calcul reste entierement dans le meme fuseau, quel qu'il soit.
+ * Le report de mois (`setMonth` sur un 31) est conserve tel quel — c'est une
+ * regle metier, pas un bug de fuseau, et `setDate(<= 28)` le rattrape.
+ */
 function nextEcheance(currentDateStr, jourPrelevement = 5) {
-  const d = new Date(currentDateStr);
-  if (isNaN(d.getTime())) return '';
+  const d = dateMetierEnDateLocale(currentDateStr);
+  if (!d) return '';
   d.setMonth(d.getMonth() + 1);
   d.setDate(Math.min(Number(jourPrelevement) || 5, 28));
-  return d.toISOString().slice(0, 10);
+  return toISODate(d);
 }
 
 /**
@@ -41,7 +57,12 @@ function nextEcheance(currentDateStr, jourPrelevement = 5) {
  * @returns {Promise<{processed: Array, skipped: number, errors: Array}>}
  */
 export async function executerPrelevementsDus({ today = new Date() } = {}) {
-  const todayStr = today.toISOString().slice(0, 10);
+  // ⚠️ `toISODate` et jamais `.toISOString().slice(0, 10)` : Moanda est a UTC+1
+  // toute l'annee. Entre 00 h et 01 h heure locale, la seconde forme rend LA
+  // VEILLE — une mensualite due ce matin n'etait alors pas vue comme due.
+  // C'est ce `todayStr` qui decide si le compte est debite (cf. `currentEcheance
+  // <= todayStr` plus bas). Regle du projet : src/lib/dates.js.
+  const todayStr = toISODate(today);
   const [dettes, comptes, mouvements] = await Promise.all([
     db.dettes.list(),
     db.comptes_bancaires.list(),

@@ -8,7 +8,7 @@ import { executerPrelevementsDus } from '@/services/credit-mensualites';
 import { executerChargesDues } from '@/services/charges-fixes-prelevement';
 import { apercuMensualitesDues, apercuChargesDues } from '@/services/prelevements-apercu';
 import { verrouPrelevements, CLE_PRELEVEMENTS, creerVerrouExecution } from '@/services/execution-unique';
-import { todayISO } from '@/lib/dates';
+import { dateMetierEnDateLocale, toISODate, todayISO } from '@/lib/dates';
 import SelecteurActivite from '@/features/partages/selecteur-activite';
 import {
   ACTIVITE_DEFAUT, TOUTES_ACTIVITES, activiteDe, avecActivite,
@@ -49,12 +49,20 @@ function calcMensualite(montant_initial, taux_interet, duree_mois) {
   // Capital + interets simples sur la duree totale, divise en mensualites egales
   return Math.round((m * (1 + t / 100)) / d);
 }
+/**
+ * Date metier decalee de `n` mois.
+ *
+ * ⚠️ `dateMetierEnDateLocale` + `toISODate`, et jamais
+ * `new Date(dateStr)` + `.toISOString().slice(0, 10)` : la premiere forme lit
+ * MINUIT UTC, `setMonth` travaille en heure LOCALE, et le retour repasse en
+ * UTC. Trois fuseaux pour un calcul, donc un jour d ecart des que la machine
+ * n est pas sur UTC ou a l est. Regle du projet : src/lib/dates.js.
+ */
 function addMonths(dateStr, n = 1) {
-  if (!dateStr) return '';
-  const d = new Date(dateStr);
-  if (isNaN(d.getTime())) return '';
+  const d = dateMetierEnDateLocale(dateStr);
+  if (!d) return '';
   d.setMonth(d.getMonth() + n);
-  return d.toISOString().slice(0, 10);
+  return toISODate(d);
 }
 
 /**
@@ -372,11 +380,16 @@ export default function Finances() {
         }
       }
       if (!data.prochaine_echeance && data.date_debut && data.jour_prelevement) {
-        // Premiere echeance = date_debut + 1 mois, ajustee au jour_prelevement
-        const next = new Date(data.date_debut);
-        next.setMonth(next.getMonth() + 1);
-        next.setDate(Math.min(Number(data.jour_prelevement) || 5, 28));
-        data.prochaine_echeance = next.toISOString().slice(0, 10);
+        // Premiere echeance = date_debut + 1 mois, ajustee au jour_prelevement.
+        // ⚠️ Cette date declenche un DEBIT reel : elle se calcule entierement
+        // en heure locale (`dateMetierEnDateLocale` + `toISODate`), jamais via
+        // `.toISOString().slice(0, 10)` qui la rend en UTC.
+        const next = dateMetierEnDateLocale(data.date_debut);
+        if (next) {
+          next.setMonth(next.getMonth() + 1);
+          next.setDate(Math.min(Number(data.jour_prelevement) || 5, 28));
+          data.prochaine_echeance = toISODate(next);
+        }
       }
       if (!data.statut) data.statut = 'actif';
     }
@@ -384,11 +397,14 @@ export default function Finances() {
     // CHARGES FIXES : auto-renseigne prochaine_echeance si manquant
     if (activeTab === 'charges' && data.prelevement_auto) {
       if (!data.prochaine_echeance) {
-        // Premier prelevement = aujourd'hui + jour_prelevement du mois prochain
+        // Premier prelevement = aujourd'hui + jour_prelevement du mois prochain.
+        // ⚠️ `toISODate(next)` et non `.toISOString().slice(0, 10)` : entre
+        // 00 h et 01 h a Moanda (UTC+1), la seconde forme datait l echeance
+        // de la VEILLE. C est la date d un debit sur le compte.
         const next = new Date();
         next.setMonth(next.getMonth() + 1);
         next.setDate(Math.min(Number(data.jour_prelevement) || 5, 28));
-        data.prochaine_echeance = next.toISOString().slice(0, 10);
+        data.prochaine_echeance = toISODate(next);
       }
     }
 

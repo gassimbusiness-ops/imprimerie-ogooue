@@ -21,6 +21,7 @@ import {
 import { toast } from 'sonner';
 import { AIButton } from '@/components/ui/ai-button';
 import { askAI, AI_PROMPTS } from '@/services/ai';
+import { todayISO } from '@/lib/dates';
 
 /* ─── CONSTANTES ─── */
 
@@ -195,7 +196,9 @@ export default function Prospection() {
     perdus: prospects.filter((p) => p.statut === 'perdu').length,
     relancesAujourdhui: prospects.filter((p) => {
       if (!p.dateProchainContact) return false;
-      const today = new Date().toISOString().slice(0, 10);
+      // `todayISO()` : une relance prevue ce jour n'etait pas comptee
+      // comme due entre 00 h et 01 h heure de Moanda.
+      const today = todayISO();
       return p.dateProchainContact <= today && p.statut !== 'converti' && p.statut !== 'perdu';
     }).length,
   }), [prospects]);
@@ -633,7 +636,7 @@ export default function Prospection() {
               {filtered.map((p) => {
                 const st = STATUTS[p.statut] || STATUTS.nouveau;
                 const resp = employes.find((e) => e.id === p.responsableInterne);
-                const isRelance = p.dateProchainContact && p.dateProchainContact <= new Date().toISOString().slice(0, 10) && p.statut !== 'converti' && p.statut !== 'perdu';
+                const isRelance = p.dateProchainContact && p.dateProchainContact <= todayISO() && p.statut !== 'converti' && p.statut !== 'perdu';
                 return (
                   <tr key={p.id} className={`border-b hover:bg-muted/30 ${isRelance ? 'bg-red-50/50' : ''}`}>
                     <td className="px-4 py-3">
@@ -689,7 +692,7 @@ export default function Prospection() {
         {filtered.map((p) => {
           const st = STATUTS[p.statut] || STATUTS.nouveau;
           const interactions = p.historiqueInteractions || [];
-          const isRelance = p.dateProchainContact && p.dateProchainContact <= new Date().toISOString().slice(0, 10) && p.statut !== 'converti' && p.statut !== 'perdu';
+          const isRelance = p.dateProchainContact && p.dateProchainContact <= todayISO() && p.statut !== 'converti' && p.statut !== 'perdu';
           return (
             <Card key={p.id} className={`cursor-pointer transition-shadow hover:shadow-md ${isRelance ? 'border-red-300 bg-red-50/30' : ''}`}
               onClick={() => setShowDetail(p)}>

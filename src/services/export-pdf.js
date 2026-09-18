@@ -6,6 +6,7 @@
 // Le grand livre doit lire un dépôt hebdomadaire comme le reste de
 // l'application : un transfert interne, pas une recette (Q3, arbitrage n°13).
 import { estTransfertInterne } from '@/services/mouvements-financiers';
+import { todayISO } from '@/lib/dates';
 
 /**
  * Génère un PDF à partir de HTML (via impression du navigateur).
@@ -282,7 +283,13 @@ export function exportDocument(doc, lignes, type = 'facture') {
   const numero = doc.numero || doc.id?.slice(0, 8) || '';
   const title = type === 'facture' ? `Facture ${numero}` : type === 'bon_livraison' ? `Bon de livraison ${numero}` : `Devis ${numero}`;
   const total = lignes.reduce((s, l) => s + ((l.quantite || 1) * (l.prix_unitaire || 0)), 0);
-  const dateDoc = doc.date || doc.created_at?.slice(0, 10) || new Date().toISOString().slice(0, 10);
+  // ⚠️ `todayISO()` et jamais `.toISOString().slice(0, 10)` : c'est la date
+  // imprimee sur une facture remise au client. A Moanda (UTC+1), la seconde
+  // forme datait de la VEILLE toute facture editee entre 00 h et 01 h.
+  // (`doc.created_at?.slice(0, 10)` reste un decoupage d'horodatage UTC : il
+  //  releve d'un autre chantier, cf. rapport — `created_at` finit par « +00 »
+  //  et non par « Z », que `msDepuisInstantUtc` exige.)
+  const dateDoc = doc.date || doc.created_at?.slice(0, 10) || todayISO();
   const dateFr = (() => { try { return new Date(dateDoc + 'T00:00:00').toLocaleDateString('fr-FR'); } catch { return dateDoc; } })();
   const docLabelGauche = type === 'facture' ? 'BON DE LIVRAISON' : type === 'devis' ? 'DEVIS' : 'BON DE LIVRAISON';
   const numFacture = `FACTURE N°${numero}/GA/${new Date(dateDoc).getFullYear() || new Date().getFullYear()}`;
@@ -427,7 +434,7 @@ export function exportRecuPaiement(info = {}) {
       ${info.commande_numero ? `<tr><td style="border:none;padding:3px 16px 3px 0;font-weight:600;">Commande:</td><td style="border:none;padding:3px 0;">${esc(info.commande_numero)}</td></tr>` : ''}
       <tr><td style="border:none;padding:3px 16px 3px 0;font-weight:600;">Moyen:</td><td style="border:none;padding:3px 0;">${esc(info.operateur || 'Mobile Money')}</td></tr>
       ${info.telephone ? `<tr><td style="border:none;padding:3px 16px 3px 0;font-weight:600;">Téléphone:</td><td style="border:none;padding:3px 0;">${esc(info.telephone)}</td></tr>` : ''}
-      <tr><td style="border:none;padding:3px 16px 3px 0;font-weight:600;">Date:</td><td style="border:none;padding:3px 0;">${info.date || new Date().toISOString().slice(0, 10)}</td></tr>
+      <tr><td style="border:none;padding:3px 16px 3px 0;font-weight:600;">Date:</td><td style="border:none;padding:3px 0;">${info.date || todayISO()}</td></tr>
     </table>
     <div style="text-align:center;border:2px solid #16a34a;border-radius:8px;padding:16px;margin:0 auto;max-width:300px;">
       <p style="font-size:11px;color:#6b7280;margin-bottom:4px;">Montant payé</p>

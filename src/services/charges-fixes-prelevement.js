@@ -18,6 +18,7 @@
  */
 import { db } from '@/services/db';
 import { activiteDe, avecActivite } from '@/services/activites';
+import { dateMetierEnDateLocale, toISODate } from '@/lib/dates';
 
 const PERIODICITE_MOIS = {
   mensuelle: 1,
@@ -25,13 +26,24 @@ const PERIODICITE_MOIS = {
   annuelle: 12,
 };
 
+/**
+ * Echeance suivante : +N mois selon la periodicite, calee sur
+ * `jourPrelevement` (plafonne a 28).
+ *
+ * ⚠️ FUSEAU. Meme correction que `nextEcheance` de credit-mensualites.js, et
+ * pour la meme raison : l'ancienne forme melangeait minuit UTC
+ * (`new Date('2026-09-05')`), des `setMonth`/`setDate` en heure LOCALE et un
+ * retour en UTC (`.toISOString().slice(0, 10)`). Sur un poste en retard sur
+ * UTC, l'echeance sortait decalee d'un jour — la date a laquelle le loyer,
+ * les salaires ou l'electricite sont debites.
+ */
 function avanceEcheance(currentDateStr, periodicite = 'mensuelle', jourPrelevement = 5) {
-  const d = new Date(currentDateStr);
-  if (isNaN(d.getTime())) return '';
+  const d = dateMetierEnDateLocale(currentDateStr);
+  if (!d) return '';
   const incMois = PERIODICITE_MOIS[periodicite] || 1;
   d.setMonth(d.getMonth() + incMois);
   d.setDate(Math.min(Number(jourPrelevement) || 5, 28));
-  return d.toISOString().slice(0, 10);
+  return toISODate(d);
 }
 
 /**
@@ -41,7 +53,12 @@ function avanceEcheance(currentDateStr, periodicite = 'mensuelle', jourPreleveme
  * @returns {Promise<{processed: Array, skipped: number, errors: Array}>}
  */
 export async function executerChargesDues({ today = new Date() } = {}) {
-  const todayStr = today.toISOString().slice(0, 10);
+  // ⚠️ `toISODate` et jamais `.toISOString().slice(0, 10)` : Moanda est a UTC+1
+  // toute l'annee. Entre 00 h et 01 h heure locale, la seconde forme rend LA
+  // VEILLE — une charge due ce matin n'etait alors pas vue comme due.
+  // C'est ce `todayStr` qui decide si le compte est debite (cf. `currentEcheance
+  // <= todayStr` plus bas). Regle du projet : src/lib/dates.js.
+  const todayStr = toISODate(today);
   const [charges, comptes, mouvements] = await Promise.all([
     db.charges_fixes.list(),
     db.comptes_bancaires.list(),

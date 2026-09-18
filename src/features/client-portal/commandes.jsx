@@ -11,6 +11,7 @@ import { useNavigate } from 'react-router-dom';
 import { notifyNouvelleCommande } from '@/services/notifications';
 import { exportDocument, exportRecuPaiement } from '@/services/export-pdf';
 import { toast } from 'sonner';
+import { todayISO } from '@/lib/dates';
 
 function fmt(n) { return new Intl.NumberFormat('fr-FR').format(Math.round(n || 0)); }
 
@@ -219,7 +220,8 @@ export default function ClientCommandes() {
               client_nom: cmd.client_nom || `${user?.prenom || ''} ${user?.nom || ''}`.trim(),
               montant,
               operateur: operateur === 'airtel' ? 'Airtel Money' : 'Moov Money',
-              date: new Date().toISOString().slice(0, 10),
+              // `todayISO()` : date imprimee sur le recu remis au client.
+              date: todayISO(),
               commande_numero: cmd.numero,
               telephone,
             });
