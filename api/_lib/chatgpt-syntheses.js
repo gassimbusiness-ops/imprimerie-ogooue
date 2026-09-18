@@ -34,9 +34,8 @@
  * Testé par `tests/chatgpt-pont.test.mjs`.
  */
 import {
-  FUSEAU_METIER,
-  formaterInstantUtc,
-  formaterInstantLocal,
+  OFFSET_MOANDA as OFFSET_DES_DATES,
+  contexteMoanda,
   dateLocaleDepuisInstantUtc,
 } from '../../src/lib/dates.js';
 import { ACTIVITES, activiteDe, libelleActivite } from '../../src/services/activites.js';
@@ -52,7 +51,7 @@ import {
 } from '../../src/services/stocks-seuils.js';
 
 /** Africa/Libreville est à UTC+1 toute l'année, sans heure d'été. */
-export const OFFSET_MOANDA = '+01:00';
+export const OFFSET_MOANDA = OFFSET_DES_DATES;
 
 /**
  * Où en est l'horloge, vue de Moanda.
@@ -61,23 +60,17 @@ export const OFFSET_MOANDA = '+01:00';
  * pour que ChatGPT puisse dire « au 18/09 à 18 h » plutôt que de laisser croire
  * que le chiffre est de l'instant où on le lit.
  *
+ * ⚠️ Le calcul lui-même vit dans `src/lib/dates.js` (`contexteMoanda`), et pas
+ * ici : l'écran « Ce que ChatGPT a écrit » date ses annulations avec la MÊME
+ * fonction. Deux copies de cette règle, c'est une écriture et son annulation
+ * qui finissent par tomber des jours différents.
+ *
  * @param {Date} [maintenant]
  * @returns {{instant_utc: string, date_locale: string, heure_locale: string,
  *            mois_local: string, fuseau: string, offset_utc: string, lisible: string}}
  */
 export function contexteTemporel(maintenant = new Date()) {
-  const instantUtc = formaterInstantUtc(maintenant);
-  const lisible = formaterInstantLocal(instantUtc, OFFSET_MOANDA, FUSEAU_METIER);
-  const dateLocale = dateLocaleDepuisInstantUtc(instantUtc, OFFSET_MOANDA) || '';
-  return {
-    instant_utc: instantUtc,
-    date_locale: dateLocale,
-    heure_locale: lisible.slice(11, 19),
-    mois_local: dateLocale.slice(0, 7),
-    fuseau: FUSEAU_METIER,
-    offset_utc: OFFSET_MOANDA,
-    lisible,
-  };
+  return contexteMoanda(maintenant);
 }
 
 /** Vrai si une date métier `YYYY-MM-DD` appartient au mois `YYYY-MM`. */

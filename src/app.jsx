@@ -38,6 +38,7 @@ import Marketing from '@/features/marketing/page';
 import Autopost from '@/features/autopost/page';
 import MockupIA from '@/features/mockup-ia/page';
 import AdminImport from '@/features/admin-import/page';
+import ChatGPTEcritures from '@/features/chatgpt-ecritures/page';
 // Client portal
 import ClientDashboard from '@/features/client-portal/dashboard';
 import ClientCatalogue from '@/features/client-portal/catalogue';
@@ -190,6 +191,7 @@ export default function App() {
           <Route path="autopost" element={<RequirePermission module="marketing"><Autopost /></RequirePermission>} />
           <Route path="mockup-ia" element={<RequirePermission module="catalogue"><MockupIA /></RequirePermission>} />
           <Route path="admin-import" element={<RequirePermission module="parametres"><AdminImport /></RequirePermission>} />
+          <Route path="chatgpt-ecritures" element={<RequirePermission module="parametres"><ChatGPTEcritures /></RequirePermission>} />
           <Route path="zakat" element={<RequirePermission module="gouvernance"><ZakatPage /></RequirePermission>} />
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />

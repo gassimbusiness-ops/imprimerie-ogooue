@@ -36,6 +36,7 @@ import {
   Paintbrush,
   Moon,
   Send,
+  Bot,
 } from 'lucide-react';
 
 const NAV_GROUPS = [
@@ -103,6 +104,7 @@ const NAV_GROUPS = [
     label: 'Système',
     items: [
       { name: 'Journal d\'audit', href: '/audit', icon: Shield, module: 'parametres' },
+      { name: 'Écritures ChatGPT', href: '/chatgpt-ecritures', icon: Bot, module: 'parametres' },
       { name: 'Paramètres', href: '/parametres', icon: Settings, module: 'parametres' },
     ],
   },

@@ -1,9 +1,9 @@
 {
   "openapi": "3.1.0",
   "info": {
-    "title": "IMPRIMERIE OGOOUÉ — pont de lecture",
-    "version": "1.0.0",
-    "description": "Accès en LECTURE SEULE aux données de gestion de l'IMPRIMERIE OGOOUÉ (Moanda, Gabon) : chiffre d'affaires, caisse, commandes, stock, clients, factures, employés, trésorerie. Aucune écriture n'est possible : toute requête autre que GET est refusée par le serveur. Tous les montants sont en francs CFA (XAF). Toutes les dates et heures sont celles de Moanda (fuseau Africa/Libreville, UTC+1 toute l'année) — jamais celles du serveur. Chaque réponse porte un champ `calcule_le` : cite-le quand tu donnes un chiffre, par exemple « au 18/09 à 18 h ». Si une information n'est pas dans une réponse, dis-le plutôt que de l'estimer : ces chiffres servent à décider, pas à illustrer."
+    "title": "IMPRIMERIE OGOOUÉ — pont de gestion",
+    "version": "3.0.0",
+    "description": "Acces aux donnees de gestion de l'IMPRIMERIE OGOOUE (Moanda, Gabon). Les operations GET LISENT ; les operations POST ECRIVENT dans l'application : depense, recette, caisse, travaux, tache, catalogue, stock, rapport journalier, commande, client, evenement, prospect, objectif, cloture de caisse, devis, facture — plus l'annulation. Le dirigeant a demande qu'elles s'executent SANS CONFIRMATION : n'en demande pas, ecris directement, puis redis a voix haute ce qui a ete enregistre et l'identifiant rendu, pour qu'on puisse revenir dessus. Chaque ecriture exige une `cle` d'idempotence que TU choisis et que tu reprends a l'identique si tu relances le meme appel. Ce que le pont NE FAIT PAS, et qu'il faut renvoyer a l'ecran : passer une commande a livree ou annulee, convertir un devis en facture, la paie, les pointages, les avances, les associes, les comptes bancaires eux-memes et les utilisateurs. Montants en francs CFA entiers. Dates et heures de Moanda (Africa/Libreville, UTC+1) — jamais celles du serveur. Chaque reponse porte `calcule_le` : cite-le quand tu donnes un chiffre. Si une information n'est pas dans une reponse, dis-le plutot que de l'estimer : ces chiffres servent a decider, pas a illustrer."
   },
   "servers": [
     {
@@ -207,6 +207,1041 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/SchemaDuPont"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/chatgpt-depense": {
+      "post": {
+        "operationId": "enregistrerDepense",
+        "summary": "Enregistrer une depense (sortie d'argent)",
+        "description": "Argent SORTI : « j'ai paye X francs pour… », une facture reglee, un achat, une sortie de caisse. Debite le compte indique. Pour une depense de TRAVAUX sur un chantier, utilise plutot enregistrerEtapeDeTravaux. Ecris sans demander confirmation, puis redis le montant, la date et l'identifiant.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Depense"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Deja enregistre : la meme cle avait deja ete envoyee. Rien n'a ete ecrit une seconde fois.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EcritureFaite"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Enregistre. L'identifiant rendu permet d'annuler.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EcritureFaite"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Demande refusee : un champ manque ou une valeur n'est pas acceptee. Le detail dit quoi corriger.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Erreur"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/chatgpt-recette": {
+      "post": {
+        "operationId": "enregistrerRecette",
+        "summary": "Enregistrer une recette (entree d'argent)",
+        "description": "Argent ENTRE : une vente encaissee, un client qui a paye, une rentree exceptionnelle. Credite le compte indique. N'en fais pas un dépôt bancaire : deplacer de l'argent d'un compte a l'autre se fait avec enregistrerMouvementDeCaisse. Ecris sans demander confirmation.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Recette"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Deja enregistre : la meme cle avait deja ete envoyee. Rien n'a ete ecrit une seconde fois.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EcritureFaite"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Enregistre. L'identifiant rendu permet d'annuler.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EcritureFaite"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Demande refusee : un champ manque ou une valeur n'est pas acceptee. Le detail dit quoi corriger.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Erreur"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/chatgpt-caisse-mouvement": {
+      "post": {
+        "operationId": "enregistrerMouvementDeCaisse",
+        "summary": "Depot en banque, ou argent garde en caisse",
+        "description": "Deux cas. `depot_banque` : l'argent est alle de la caisse a la banque — la caisse baisse d'autant que la banque monte, donc compte_source ET compte_destination sont obligatoires. `garde_en_cash` : le depot n'a PAS eu lieu, l'argent reste en especes — aucun solde ne bouge, on note le constat.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MouvementDeCaisse"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Deja enregistre : la meme cle avait deja ete envoyee. Rien n'a ete ecrit une seconde fois.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EcritureFaite"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Enregistre. L'identifiant rendu permet d'annuler.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EcritureFaite"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Demande refusee : un champ manque ou une valeur n'est pas acceptee. Le detail dit quoi corriger.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Erreur"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/chatgpt-travaux": {
+      "post": {
+        "operationId": "enregistrerEtapeDeTravaux",
+        "summary": "Enregistrer une etape de travaux et son cout",
+        "description": "Une etape d'un projet de travaux : « j'ai paye 100 000 francs de travaux ». Si `paye` vaut true, le compte est debite du cout ; sinon rien n'est debite (prevoir n'est pas payer). Le `projet` doit deja exister : s'il est inconnu, la demande est refusee et le detail liste les projets.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EtapeDeTravaux"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Deja enregistre : la meme cle avait deja ete envoyee. Rien n'a ete ecrit une seconde fois.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EcritureFaite"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Enregistre. L'identifiant rendu permet d'annuler.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EcritureFaite"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Demande refusee : un champ manque ou une valeur n'est pas acceptee. Le detail dit quoi corriger.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Erreur"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/chatgpt-tache": {
+      "post": {
+        "operationId": "creerTache",
+        "summary": "Creer une tache a faire",
+        "description": "Une chose a faire : « rappelle-moi de commander du papier », « il faut rappeler ce client ». Ne touche a aucun compte. La tache est creee en attente, a 0 % d'avancement. Priorite et categorie doivent venir des listes du schema : une valeur inventee est refusee.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/NouvelleTache"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Deja enregistre : la meme cle avait deja ete envoyee. Rien n'a ete ecrit une seconde fois.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EcritureFaite"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Enregistre. L'identifiant rendu permet d'annuler.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EcritureFaite"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Demande refusee : un champ manque ou une valeur n'est pas acceptee. Le detail dit quoi corriger.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Erreur"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/chatgpt-annuler": {
+      "post": {
+        "operationId": "annulerEcritureChatGPT",
+        "summary": "Annuler une ecriture faite par ChatGPT",
+        "description": "Defait une ecriture a partir de son `identifiant` (rendu a l'ecriture, ou liste par journalDesEcrituresChatGPT). L'annulation COMPENSE : un mouvement inverse est ajoute et les soldes reviennent, mais la ligne d'origine reste, marquee annulee. Annuler deux fois ne rembourse pas deux fois.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnnulationDemande"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Annule, ou deja annule. Le resume dit ce qui a ete contre-passe.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnnulationFaite"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Demande refusee : identifiant ou phrase manquants.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Erreur"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Aucune ecriture ChatGPT ne porte cet identifiant.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Erreur"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/chatgpt-journal": {
+      "get": {
+        "operationId": "journalDesEcrituresChatGPT",
+        "summary": "Ce que ChatGPT a ecrit dans l'application",
+        "description": "Liste les ecritures faites par ce pont, de la plus recente a la plus ancienne, avec pour chacune sa phrase d'origine, son heure de Moanda, et l'identifiant qui permet de l'annuler. A appeler pour « qu'as-tu enregistre ? », ou avant d'annuler une ecriture dont l'identifiant est perdu.",
+        "parameters": [
+          {
+            "name": "limite",
+            "in": "query",
+            "required": false,
+            "description": "Nombre d'ecritures a rendre, de 1 a 300. Defaut 100.",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 300,
+              "default": 100
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Les ecritures ChatGPT, de la plus recente a la plus ancienne.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JournalDesEcritures"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/chatgpt-projet-travaux": {
+      "post": {
+        "operationId": "creerProjetDeTravaux",
+        "summary": "Creer un projet de travaux",
+        "description": "Ouvre un chantier : « on lance les travaux de l'atelier ». Ne touche a aucun compte. Les etapes et leurs couts s'ajoutent ensuite avec enregistrerEtapeDeTravaux, qui exige que le projet existe deja.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjetDeTravaux"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Deja enregistre : la meme cle avait deja ete envoyee. Rien n'a ete ecrit une seconde fois.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EcritureFaite"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Enregistre. L'identifiant rendu permet d'annuler.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EcritureFaite"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Demande refusee : un champ manque ou une valeur n'est pas acceptee. Le detail dit quoi corriger.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Erreur"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Refuse : l'ecriture existe deja, ou la regle metier s'y oppose. Le detail dit quoi faire.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Erreur"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/chatgpt-catalogue": {
+      "post": {
+        "operationId": "gererCatalogue",
+        "summary": "Ajouter un produit au catalogue, ou corriger son prix",
+        "description": "Deux cas. `creer` : ajouter un produit (sans photo — elle s'ajoute a l'ecran). `corriger_prix` : changer les prix d'un produit existant sans toucher au reste de sa fiche. Les prix sont des paliers par quantite ; un prix unique = un seul palier a qte_min 1.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProduitCatalogue"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Deja enregistre : la meme cle avait deja ete envoyee. Rien n'a ete ecrit une seconde fois.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EcritureFaite"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Enregistre. L'identifiant rendu permet d'annuler.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EcritureFaite"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Demande refusee : un champ manque ou une valeur n'est pas acceptee. Le detail dit quoi corriger.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Erreur"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Refuse : l'ecriture existe deja, ou la regle metier s'y oppose. Le detail dit quoi faire.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Erreur"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/chatgpt-stock-mouvement": {
+      "post": {
+        "operationId": "enregistrerMouvementDeStock",
+        "summary": "Entree, sortie ou seuil d'alerte au stock",
+        "description": "`entree` : du stock arrive. `sortie` : du stock part — refusee si le stock ne suffit pas. `seuil` : regler la quantite a partir de laquelle alerter (zero = plus d'alerte). Ne touche a aucun compte : un mouvement de stock n'est pas un mouvement d'argent.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MouvementDeStock"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Deja enregistre : la meme cle avait deja ete envoyee. Rien n'a ete ecrit une seconde fois.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EcritureFaite"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Enregistre. L'identifiant rendu permet d'annuler.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EcritureFaite"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Demande refusee : un champ manque ou une valeur n'est pas acceptee. Le detail dit quoi corriger.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Erreur"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Refuse : l'ecriture existe deja, ou la regle metier s'y oppose. Le detail dit quoi faire.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Erreur"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/chatgpt-rapport": {
+      "post": {
+        "operationId": "enregistrerRapportJournalier",
+        "summary": "Rapport journalier : l'ouvrir, ou y ajouter une ligne",
+        "description": "`creer` ouvre le rapport du jour en BROUILLON, a relire et soumettre a l'ecran. `ajouter_ligne` ajoute une ligne a celui qui existe deja. Les totaux ne sont jamais ecrits : ils se recalculent sur le detail. Un rapport valide ou cloture n'est plus modifiable.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RapportJournalier"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Deja enregistre : la meme cle avait deja ete envoyee. Rien n'a ete ecrit une seconde fois.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EcritureFaite"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Enregistre. L'identifiant rendu permet d'annuler.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EcritureFaite"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Demande refusee : un champ manque ou une valeur n'est pas acceptee. Le detail dit quoi corriger.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Erreur"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Refuse : l'ecriture existe deja, ou la regle metier s'y oppose. Le detail dit quoi faire.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Erreur"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/chatgpt-commande": {
+      "post": {
+        "operationId": "gererCommande",
+        "summary": "Creer une commande, ou la faire avancer",
+        "description": "`creer` enregistre une commande en attente de validation. `changer_statut` la fait avancer jusqu'a « prete ». ATTENTION : « livree » et « annulee » ne passent PAS par ici — ils declenchent facture, encaissement et stock, et se font a l'ecran Commandes.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CommandeClient"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Deja enregistre : la meme cle avait deja ete envoyee. Rien n'a ete ecrit une seconde fois.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EcritureFaite"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Enregistre. L'identifiant rendu permet d'annuler.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EcritureFaite"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Demande refusee : un champ manque ou une valeur n'est pas acceptee. Le detail dit quoi corriger.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Erreur"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Refuse : l'ecriture existe deja, ou la regle metier s'y oppose. Le detail dit quoi faire.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Erreur"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/chatgpt-client": {
+      "post": {
+        "operationId": "creerFicheClient",
+        "summary": "Creer une fiche client dans l'annuaire",
+        "description": "Ajoute un client au fichier : « note ce nouveau client ». Refuse si une fiche porte deja ce nom, accents et majuscules mis a part — un doublon d'annuaire ne se rattrape pas. Ne cree AUCUN compte d'acces au portail : ca se fait a la main.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FicheClient"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Deja enregistre : la meme cle avait deja ete envoyee. Rien n'a ete ecrit une seconde fois.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EcritureFaite"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Enregistre. L'identifiant rendu permet d'annuler.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EcritureFaite"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Demande refusee : un champ manque ou une valeur n'est pas acceptee. Le detail dit quoi corriger.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Erreur"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Refuse : l'ecriture existe deja, ou la regle metier s'y oppose. Le detail dit quoi faire.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Erreur"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/chatgpt-evenement": {
+      "post": {
+        "operationId": "creerEvenement",
+        "summary": "Ajouter un evenement au calendrier commercial",
+        "description": "Une date commerciale a preparer : rentree, fete, evenement local. La DATE est obligatoire et doit exister vraiment : un evenement sans date ne peut ni etre classe, ni remonter dans « Prochains evenements ».",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EvenementCalendrier"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Deja enregistre : la meme cle avait deja ete envoyee. Rien n'a ete ecrit une seconde fois.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EcritureFaite"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Enregistre. L'identifiant rendu permet d'annuler.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EcritureFaite"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Demande refusee : un champ manque ou une valeur n'est pas acceptee. Le detail dit quoi corriger.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Erreur"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Refuse : l'ecriture existe deja, ou la regle metier s'y oppose. Le detail dit quoi faire.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Erreur"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/chatgpt-prospect": {
+      "post": {
+        "operationId": "gererProspect",
+        "summary": "Ajouter un prospect, ou noter un echange",
+        "description": "`creer` ajoute une piste commerciale — le telephone est obligatoire, sans numero un prospect ne se rappelle pas. `ajouter_interaction` note un appel, une visite ou un message dans son historique.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Prospect"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Deja enregistre : la meme cle avait deja ete envoyee. Rien n'a ete ecrit une seconde fois.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EcritureFaite"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Enregistre. L'identifiant rendu permet d'annuler.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EcritureFaite"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Demande refusee : un champ manque ou une valeur n'est pas acceptee. Le detail dit quoi corriger.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Erreur"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Refuse : l'ecriture existe deja, ou la regle metier s'y oppose. Le detail dit quoi faire.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Erreur"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/chatgpt-objectif": {
+      "post": {
+        "operationId": "creerObjectif",
+        "summary": "Poser un objectif chiffre",
+        "description": "« On vise 2 millions ce mois-ci ». Le montant doit etre strictement positif : un objectif a zero serait affiche comme atteint des le premier franc encaisse. La progression est recalculee a la lecture, jamais stockee.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ObjectifCommercial"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Deja enregistre : la meme cle avait deja ete envoyee. Rien n'a ete ecrit une seconde fois.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EcritureFaite"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Enregistre. L'identifiant rendu permet d'annuler.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EcritureFaite"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Demande refusee : un champ manque ou une valeur n'est pas acceptee. Le detail dit quoi corriger.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Erreur"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Refuse : l'ecriture existe deja, ou la regle metier s'y oppose. Le detail dit quoi faire.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Erreur"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/chatgpt-cloture-caisse": {
+      "post": {
+        "operationId": "enregistrerClotureDeCaisse",
+        "summary": "Saisir la cloture de caisse du soir",
+        "description": "Le comptage du tiroir, coupure par coupure. Le montant ATTENDU est recalcule ici sur les rapports du jour et de cette caisse — ne le dicte pas. Une seule cloture par jour ET par activite : les deux commerces ont deux tiroirs.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ClotureDeCaisse"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Deja enregistre : la meme cle avait deja ete envoyee. Rien n'a ete ecrit une seconde fois.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EcritureFaite"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Enregistre. L'identifiant rendu permet d'annuler.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EcritureFaite"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Demande refusee : un champ manque ou une valeur n'est pas acceptee. Le detail dit quoi corriger.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Erreur"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Refuse : l'ecriture existe deja, ou la regle metier s'y oppose. Le detail dit quoi faire.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Erreur"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/chatgpt-devis": {
+      "post": {
+        "operationId": "creerDevis",
+        "summary": "Creer un devis",
+        "description": "Un devis en brouillon, a relire et envoyer a l'ecran. Il n'y a pas de TVA : le total vaut le sous-total moins la remise. Un devis ne cree aucune fiche client. Le convertir en facture se fait a l'ecran Devis & Factures.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DevisCommercial"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Deja enregistre : la meme cle avait deja ete envoyee. Rien n'a ete ecrit une seconde fois.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EcritureFaite"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Enregistre. L'identifiant rendu permet d'annuler.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EcritureFaite"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Demande refusee : un champ manque ou une valeur n'est pas acceptee. Le detail dit quoi corriger.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Erreur"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Refuse : l'ecriture existe deja, ou la regle metier s'y oppose. Le detail dit quoi faire.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Erreur"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/chatgpt-facture": {
+      "post": {
+        "operationId": "gererFacture",
+        "summary": "Creer une facture, ou la marquer payee",
+        "description": "`creer` ecrit une facture en brouillon. `marquer_payee` change son statut. ATTENTION : comme a l'ecran, marquer payee ne credite AUCUN compte — la tresorerie ne bouge pas. Dis-le a l'utilisateur pour qu'il ne croie pas l'argent encaisse.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FactureCommerciale"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Deja enregistre : la meme cle avait deja ete envoyee. Rien n'a ete ecrit une seconde fois.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EcritureFaite"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Enregistre. L'identifiant rendu permet d'annuler.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EcritureFaite"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Demande refusee : un champ manque ou une valeur n'est pas acceptee. Le detail dit quoi corriger.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Erreur"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Refuse : l'ecriture existe deja, ou la regle metier s'y oppose. Le detail dit quoi faire.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Erreur"
                 }
               }
             }
@@ -465,6 +1500,1198 @@
             "description": "Le schema OpenAPI en service sur le serveur."
           }
         }
+      },
+      "Depense": {
+        "type": "object",
+        "properties": {
+          "cle": {
+            "type": "string",
+            "description": "Cle d'idempotence que TU choisis, 4 a 80 caracteres. La MEME cle renvoyee deux fois n'ecrit qu'une seule fois : reprends-la a l'identique si tu relances le meme appel apres une erreur reseau."
+          },
+          "phrase": {
+            "type": "string",
+            "description": "La demande de l'utilisateur, mot pour mot. Obligatoire : comme l'ecriture part sans confirmation, c'est la seule trace de ce qui a ete voulu."
+          },
+          "montant": {
+            "type": "integer",
+            "description": "Montant en francs CFA, nombre entier strictement positif. Pas de decimale : le franc CFA n'a pas de centime."
+          },
+          "motif": {
+            "type": "string",
+            "description": "A quoi l'argent a servi, en clair. Obligatoire : une sortie de caisse sans raison ecrite ne se retrouve plus."
+          },
+          "compte": {
+            "type": "string",
+            "description": "Compte concerne.",
+            "enum": [
+              "caisse",
+              "finam",
+              "bgfi",
+              "airtel",
+              "moov"
+            ]
+          },
+          "date": {
+            "type": "string",
+            "description": "Date de l'operation, AAAA-MM-JJ. Omettre pour aujourd'hui, heure de Moanda."
+          },
+          "activite": {
+            "type": "string",
+            "description": "A quelle caisse la ligne appartient. Defaut imprimerie.",
+            "enum": [
+              "imprimerie",
+              "papeterie"
+            ]
+          }
+        },
+        "required": [
+          "cle",
+          "phrase",
+          "montant",
+          "motif"
+        ]
+      },
+      "Recette": {
+        "type": "object",
+        "properties": {
+          "cle": {
+            "type": "string",
+            "description": "Cle d'idempotence que TU choisis, 4 a 80 caracteres. La MEME cle renvoyee deux fois n'ecrit qu'une seule fois : reprends-la a l'identique si tu relances le meme appel apres une erreur reseau."
+          },
+          "phrase": {
+            "type": "string",
+            "description": "La demande de l'utilisateur, mot pour mot. Obligatoire : comme l'ecriture part sans confirmation, c'est la seule trace de ce qui a ete voulu."
+          },
+          "montant": {
+            "type": "integer",
+            "description": "Montant en francs CFA, nombre entier strictement positif. Pas de decimale : le franc CFA n'a pas de centime."
+          },
+          "motif": {
+            "type": "string",
+            "description": "D'ou vient cet argent, en clair. Obligatoire."
+          },
+          "compte": {
+            "type": "string",
+            "description": "Compte concerne.",
+            "enum": [
+              "caisse",
+              "finam",
+              "bgfi",
+              "airtel",
+              "moov"
+            ]
+          },
+          "date": {
+            "type": "string",
+            "description": "Date de l'operation, AAAA-MM-JJ. Omettre pour aujourd'hui, heure de Moanda."
+          },
+          "activite": {
+            "type": "string",
+            "description": "A quelle caisse la ligne appartient. Defaut imprimerie.",
+            "enum": [
+              "imprimerie",
+              "papeterie"
+            ]
+          }
+        },
+        "required": [
+          "cle",
+          "phrase",
+          "montant",
+          "motif"
+        ]
+      },
+      "MouvementDeCaisse": {
+        "type": "object",
+        "properties": {
+          "cle": {
+            "type": "string",
+            "description": "Cle d'idempotence que TU choisis, 4 a 80 caracteres. La MEME cle renvoyee deux fois n'ecrit qu'une seule fois : reprends-la a l'identique si tu relances le meme appel apres une erreur reseau."
+          },
+          "phrase": {
+            "type": "string",
+            "description": "La demande de l'utilisateur, mot pour mot. Obligatoire : comme l'ecriture part sans confirmation, c'est la seule trace de ce qui a ete voulu."
+          },
+          "geste": {
+            "type": "string",
+            "description": "depot_banque : l'argent est alle en banque. garde_en_cash : le depot n'a PAS eu lieu, l'argent est reste en especes.",
+            "enum": [
+              "depot_banque",
+              "garde_en_cash"
+            ]
+          },
+          "montant": {
+            "type": "integer",
+            "description": "Montant en francs CFA, nombre entier strictement positif. Pas de decimale : le franc CFA n'a pas de centime."
+          },
+          "compte_source": {
+            "type": "string",
+            "description": "Compte d'ou l'argent part, pour depot_banque. Defaut caisse.",
+            "enum": [
+              "caisse",
+              "finam",
+              "bgfi",
+              "airtel",
+              "moov"
+            ]
+          },
+          "compte_destination": {
+            "type": "string",
+            "description": "Compte ou l'argent arrive. OBLIGATOIRE pour depot_banque : sans lui rien n'est debite et la somme disparaitrait des totaux.",
+            "enum": [
+              "caisse",
+              "finam",
+              "bgfi",
+              "airtel",
+              "moov"
+            ]
+          },
+          "motif": {
+            "type": "string",
+            "description": "Precision libre, par exemple pourquoi le depot n'a pas pu etre fait."
+          },
+          "semaine": {
+            "type": "string",
+            "description": "Semaine concernee, telle que dite. Facultatif."
+          },
+          "date": {
+            "type": "string",
+            "description": "Date de l'operation, AAAA-MM-JJ. Omettre pour aujourd'hui, heure de Moanda."
+          },
+          "activite": {
+            "type": "string",
+            "description": "A quelle caisse la ligne appartient. Defaut imprimerie.",
+            "enum": [
+              "imprimerie",
+              "papeterie"
+            ]
+          }
+        },
+        "required": [
+          "cle",
+          "phrase",
+          "geste",
+          "montant"
+        ]
+      },
+      "EtapeDeTravaux": {
+        "type": "object",
+        "properties": {
+          "cle": {
+            "type": "string",
+            "description": "Cle d'idempotence que TU choisis, 4 a 80 caracteres. La MEME cle renvoyee deux fois n'ecrit qu'une seule fois : reprends-la a l'identique si tu relances le meme appel apres une erreur reseau."
+          },
+          "phrase": {
+            "type": "string",
+            "description": "La demande de l'utilisateur, mot pour mot. Obligatoire : comme l'ecriture part sans confirmation, c'est la seule trace de ce qui a ete voulu."
+          },
+          "projet": {
+            "type": "string",
+            "description": "Nom exact d'un projet de travaux qui existe deja. Un nom inconnu est refuse : le detail de l'erreur liste les projets."
+          },
+          "etape": {
+            "type": "string",
+            "description": "Ce qui a ete fait, en quelques mots. Par exemple Peinture."
+          },
+          "cout": {
+            "type": "integer",
+            "description": "Cout en francs CFA, entier positif. Omettre s'il n'y a pas de cout."
+          },
+          "paye": {
+            "type": "boolean",
+            "description": "true si l'argent est deja sorti : le compte est alors debite. false pour un cout seulement prevu, qui ne debite rien."
+          },
+          "compte": {
+            "type": "string",
+            "description": "Compte concerne.",
+            "enum": [
+              "caisse",
+              "finam",
+              "bgfi",
+              "airtel",
+              "moov"
+            ]
+          },
+          "budget": {
+            "type": "integer",
+            "description": "Budget prevu pour l'etape, en francs CFA. Defaut : le cout."
+          },
+          "description": {
+            "type": "string",
+            "description": "Precisions libres sur l'etape."
+          },
+          "date": {
+            "type": "string",
+            "description": "Date de l'operation, AAAA-MM-JJ. Omettre pour aujourd'hui, heure de Moanda."
+          },
+          "activite": {
+            "type": "string",
+            "description": "A quelle caisse la ligne appartient. Defaut imprimerie.",
+            "enum": [
+              "imprimerie",
+              "papeterie"
+            ]
+          }
+        },
+        "required": [
+          "cle",
+          "phrase",
+          "projet",
+          "etape"
+        ]
+      },
+      "NouvelleTache": {
+        "type": "object",
+        "properties": {
+          "cle": {
+            "type": "string",
+            "description": "Cle d'idempotence que TU choisis, 4 a 80 caracteres. La MEME cle renvoyee deux fois n'ecrit qu'une seule fois : reprends-la a l'identique si tu relances le meme appel apres une erreur reseau."
+          },
+          "phrase": {
+            "type": "string",
+            "description": "La demande de l'utilisateur, mot pour mot. Obligatoire : comme l'ecriture part sans confirmation, c'est la seule trace de ce qui a ete voulu."
+          },
+          "titre": {
+            "type": "string",
+            "description": "Ce qu'il y a a faire, en quelques mots."
+          },
+          "description": {
+            "type": "string",
+            "description": "Precisions libres."
+          },
+          "priorite": {
+            "type": "string",
+            "description": "Defaut normale.",
+            "enum": [
+              "urgente",
+              "haute",
+              "normale",
+              "basse"
+            ]
+          },
+          "categorie": {
+            "type": "string",
+            "description": "Defaut Autre.",
+            "enum": [
+              "Commande",
+              "Impression",
+              "Reliure",
+              "Design",
+              "Livraison",
+              "Administratif",
+              "Maintenance",
+              "Autre"
+            ]
+          },
+          "echeance": {
+            "type": "string",
+            "description": "Date limite, AAAA-MM-JJ. Facultative."
+          },
+          "assigne_nom": {
+            "type": "string",
+            "description": "Nom de la personne chargee, en clair. Facultatif."
+          }
+        },
+        "required": [
+          "cle",
+          "phrase",
+          "titre"
+        ]
+      },
+      "AnnulationDemande": {
+        "type": "object",
+        "properties": {
+          "identifiant": {
+            "type": "string",
+            "description": "L'identifiant rendu au moment de l'ecriture, commencant par chatgpt:. journalDesEcrituresChatGPT les liste tous."
+          },
+          "phrase": {
+            "type": "string",
+            "description": "Pourquoi on annule, mot pour mot. Cela reste au journal."
+          }
+        },
+        "required": [
+          "identifiant",
+          "phrase"
+        ]
+      },
+      "EcritureFaite": {
+        "type": "object",
+        "properties": {
+          "enregistre": {
+            "type": "boolean",
+            "description": "Vrai quand la ligne existe dans l'application."
+          },
+          "deja_fait": {
+            "type": "boolean",
+            "description": "Vrai si cette cle avait deja ete envoyee : rien n'a ete ecrit une seconde fois. Dis-le plutot que d'annoncer une nouvelle ecriture."
+          },
+          "identifiant": {
+            "type": "string",
+            "description": "A citer a l'utilisateur et a garder : c'est lui qui permet d'annuler."
+          },
+          "geste": {
+            "type": "string",
+            "description": "Le geste enregistre."
+          },
+          "resume": {
+            "type": "string",
+            "description": "Ce qui a ete ecrit, en une phrase. A reprendre tel quel dans ta reponse."
+          },
+          "pour_annuler": {
+            "type": "string",
+            "description": "Comment defaire cette ecriture."
+          },
+          "a_dire": {
+            "type": "string",
+            "description": "Ce qu'il faut redire a l'utilisateur, puisque personne n'a confirme avant."
+          },
+          "calcule_le": {
+            "type": "object",
+            "description": "Date et heure de l'ecriture, en heure de Moanda."
+          }
+        }
+      },
+      "AnnulationFaite": {
+        "type": "object",
+        "properties": {
+          "annule": {
+            "type": "boolean",
+            "description": "Vrai quand l'ecriture est defaite."
+          },
+          "deja_fait": {
+            "type": "boolean",
+            "description": "Vrai si elle etait deja annulee : rien n'a ete rembourse une seconde fois."
+          },
+          "identifiant": {
+            "type": "string",
+            "description": "L'ecriture concernee."
+          },
+          "resume": {
+            "type": "string",
+            "description": "Ce qui a ete contre-passe, en une phrase."
+          },
+          "contre_passees": {
+            "type": "array",
+            "description": "References des mouvements d'argent contre-passes. Vide si aucun argent n'etait en jeu.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "calcule_le": {
+            "type": "object",
+            "description": "Date et heure de l'annulation, en heure de Moanda."
+          }
+        }
+      },
+      "JournalDesEcritures": {
+        "type": "object",
+        "properties": {
+          "total": {
+            "type": "number",
+            "description": "Nombre total d'ecritures ChatGPT en base."
+          },
+          "ecritures": {
+            "type": "array",
+            "description": "Une entree par ecriture : identifiant, geste, intitule, montant, date, phrase d'origine, heure de Moanda, et si elle est deja annulee.",
+            "items": {
+              "type": "object"
+            }
+          },
+          "comment_annuler": {
+            "type": "string",
+            "description": "La marche a suivre pour defaire une de ces ecritures."
+          },
+          "calcule_le": {
+            "type": "object",
+            "description": "Date et heure de la lecture, en heure de Moanda."
+          }
+        }
+      },
+      "LigneDocument": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": "string",
+            "description": "Ce qui est vendu ou fait."
+          },
+          "quantite": {
+            "type": "integer",
+            "description": "Quantite, entier strictement positif. Defaut 1."
+          },
+          "prix_unitaire": {
+            "type": "integer",
+            "description": "Prix unitaire en francs CFA, entier positif ou zero."
+          }
+        }
+      },
+      "PalierDePrix": {
+        "type": "object",
+        "properties": {
+          "qte_min": {
+            "type": "integer",
+            "description": "Quantite a partir de laquelle ce prix s'applique. 1 pour un prix unique."
+          },
+          "qte_max": {
+            "type": "integer",
+            "description": "Quantite maximale du palier, ou null s'il n'y a pas de plafond.",
+            "nullable": true
+          },
+          "prix": {
+            "type": "integer",
+            "description": "Prix en francs CFA, entier positif ou zero."
+          }
+        }
+      },
+      "LigneDeRapport": {
+        "type": "object",
+        "properties": {
+          "copies": {
+            "type": "integer",
+            "description": "Recette copies, en francs CFA."
+          },
+          "marchandises": {
+            "type": "integer",
+            "description": "Recette marchandises."
+          },
+          "scan": {
+            "type": "integer",
+            "description": "Recette scan."
+          },
+          "tirage_saisies": {
+            "type": "integer",
+            "description": "Recette tirage et saisies."
+          },
+          "badges_plastification": {
+            "type": "integer",
+            "description": "Recette badges et plastification."
+          },
+          "demi_photos": {
+            "type": "integer",
+            "description": "Recette demi-photos."
+          },
+          "maintenance": {
+            "type": "integer",
+            "description": "Recette maintenance."
+          },
+          "imprimerie": {
+            "type": "integer",
+            "description": "Recette de la PRESTATION imprimerie. Ce n'est PAS l'activite : un rapport de la papeterie peut en porter."
+          },
+          "sorties": {
+            "type": "integer",
+            "description": "Depense sortie de la caisse ce jour-la. Exige une description."
+          },
+          "description": {
+            "type": "string",
+            "description": "A quoi correspond la ligne. Obligatoire des qu'il y a une sortie."
+          }
+        }
+      },
+      "ProjetDeTravaux": {
+        "type": "object",
+        "properties": {
+          "cle": {
+            "type": "string",
+            "description": "Cle d'idempotence que TU choisis, 4 a 80 caracteres. La MEME cle renvoyee deux fois n'ecrit qu'une seule fois : reprends-la a l'identique si tu relances le meme appel apres une erreur reseau."
+          },
+          "phrase": {
+            "type": "string",
+            "description": "La demande de l'utilisateur, mot pour mot. Obligatoire : comme l'ecriture part sans confirmation, c'est la seule trace de ce qui a ete voulu."
+          },
+          "nom": {
+            "type": "string",
+            "description": "Nom du chantier."
+          },
+          "description": {
+            "type": "string",
+            "description": "Precisions libres."
+          },
+          "statut": {
+            "type": "string",
+            "description": "Defaut planifie.",
+            "enum": [
+              "planifie",
+              "en_cours",
+              "termine",
+              "suspendu"
+            ]
+          },
+          "priorite": {
+            "type": "string",
+            "description": "Defaut moyenne.",
+            "enum": [
+              "haute",
+              "moyenne",
+              "basse"
+            ]
+          },
+          "budget_prevu": {
+            "type": "integer",
+            "description": "Budget prevu en francs CFA, entier positif ou zero."
+          },
+          "date_debut": {
+            "type": "string",
+            "description": "AAAA-MM-JJ, facultative."
+          },
+          "date_fin": {
+            "type": "string",
+            "description": "AAAA-MM-JJ, facultative."
+          },
+          "responsable": {
+            "type": "string",
+            "description": "Qui s'en occupe, en clair."
+          }
+        },
+        "required": [
+          "cle",
+          "phrase",
+          "nom"
+        ]
+      },
+      "ProduitCatalogue": {
+        "type": "object",
+        "properties": {
+          "cle": {
+            "type": "string",
+            "description": "Cle d'idempotence que TU choisis, 4 a 80 caracteres. La MEME cle renvoyee deux fois n'ecrit qu'une seule fois : reprends-la a l'identique si tu relances le meme appel apres une erreur reseau."
+          },
+          "phrase": {
+            "type": "string",
+            "description": "La demande de l'utilisateur, mot pour mot. Obligatoire : comme l'ecriture part sans confirmation, c'est la seule trace de ce qui a ete voulu."
+          },
+          "geste": {
+            "type": "string",
+            "description": "creer : ajouter un produit. corriger_prix : changer les prix d'un produit existant.",
+            "enum": [
+              "creer",
+              "corriger_prix"
+            ]
+          },
+          "produit": {
+            "type": "string",
+            "description": "Pour corriger_prix : nom exact du produit existant."
+          },
+          "nom": {
+            "type": "string",
+            "description": "Pour creer : nom du produit."
+          },
+          "categorie": {
+            "type": "string",
+            "description": "Pour creer.",
+            "enum": [
+              "Textile",
+              "Accessoire",
+              "Papeterie",
+              "Impression",
+              "Marketing",
+              "Signalétique",
+              "Autre"
+            ]
+          },
+          "prix": {
+            "type": "array",
+            "description": "Paliers de prix, du plus petit au plus grand. Prix unique : un seul palier a qte_min 1.",
+            "items": {
+              "$ref": "#/components/schemas/PalierDePrix"
+            }
+          },
+          "unite": {
+            "type": "string",
+            "description": "Defaut piece.",
+            "enum": [
+              "pièce",
+              "lot",
+              "page",
+              "mètre",
+              "unité"
+            ]
+          },
+          "description": {
+            "type": "string",
+            "description": "Description commerciale."
+          },
+          "details_techniques": {
+            "type": "string",
+            "description": "Details techniques."
+          },
+          "delai_jours": {
+            "type": "integer",
+            "description": "Delai de fabrication en jours."
+          },
+          "sku": {
+            "type": "string",
+            "description": "Reference interne, facultative."
+          },
+          "actif": {
+            "type": "boolean",
+            "description": "Produit visible au catalogue. Defaut vrai."
+          },
+          "vedette": {
+            "type": "boolean",
+            "description": "Mis en avant. Defaut faux."
+          }
+        },
+        "required": [
+          "cle",
+          "phrase",
+          "geste"
+        ]
+      },
+      "MouvementDeStock": {
+        "type": "object",
+        "properties": {
+          "cle": {
+            "type": "string",
+            "description": "Cle d'idempotence que TU choisis, 4 a 80 caracteres. La MEME cle renvoyee deux fois n'ecrit qu'une seule fois : reprends-la a l'identique si tu relances le meme appel apres une erreur reseau."
+          },
+          "phrase": {
+            "type": "string",
+            "description": "La demande de l'utilisateur, mot pour mot. Obligatoire : comme l'ecriture part sans confirmation, c'est la seule trace de ce qui a ete voulu."
+          },
+          "geste": {
+            "type": "string",
+            "description": "entree : du stock arrive. sortie : du stock part. seuil : regler l'alerte de reappro.",
+            "enum": [
+              "entree",
+              "sortie",
+              "seuil"
+            ]
+          },
+          "article": {
+            "type": "string",
+            "description": "Nom exact de l'article au stock."
+          },
+          "quantite": {
+            "type": "integer",
+            "description": "Pour entree ou sortie : nombre d'unites, entier strictement positif."
+          },
+          "seuil": {
+            "type": "integer",
+            "description": "Pour seuil : quantite a partir de laquelle alerter. Zero desactive l'alerte."
+          },
+          "motif": {
+            "type": "string",
+            "description": "Pourquoi ce mouvement."
+          },
+          "date": {
+            "type": "string",
+            "description": "Date de l'operation, AAAA-MM-JJ. Omettre pour aujourd'hui, heure de Moanda."
+          }
+        },
+        "required": [
+          "cle",
+          "phrase",
+          "geste",
+          "article"
+        ]
+      },
+      "RapportJournalier": {
+        "type": "object",
+        "properties": {
+          "cle": {
+            "type": "string",
+            "description": "Cle d'idempotence que TU choisis, 4 a 80 caracteres. La MEME cle renvoyee deux fois n'ecrit qu'une seule fois : reprends-la a l'identique si tu relances le meme appel apres une erreur reseau."
+          },
+          "phrase": {
+            "type": "string",
+            "description": "La demande de l'utilisateur, mot pour mot. Obligatoire : comme l'ecriture part sans confirmation, c'est la seule trace de ce qui a ete voulu."
+          },
+          "geste": {
+            "type": "string",
+            "description": "creer : ouvrir le rapport du jour. ajouter_ligne : ajouter une ligne a celui qui existe deja.",
+            "enum": [
+              "creer",
+              "ajouter_ligne"
+            ]
+          },
+          "operateur_nom": {
+            "type": "string",
+            "description": "Pour creer : qui a tenu la caisse, en clair."
+          },
+          "ligne": {
+            "$ref": "#/components/schemas/LigneDeRapport"
+          },
+          "date": {
+            "type": "string",
+            "description": "Date de l'operation, AAAA-MM-JJ. Omettre pour aujourd'hui, heure de Moanda."
+          },
+          "activite": {
+            "type": "string",
+            "description": "A quelle caisse la ligne appartient. Defaut imprimerie.",
+            "enum": [
+              "imprimerie",
+              "papeterie"
+            ]
+          }
+        },
+        "required": [
+          "cle",
+          "phrase",
+          "geste",
+          "ligne"
+        ]
+      },
+      "CommandeClient": {
+        "type": "object",
+        "properties": {
+          "cle": {
+            "type": "string",
+            "description": "Cle d'idempotence que TU choisis, 4 a 80 caracteres. La MEME cle renvoyee deux fois n'ecrit qu'une seule fois : reprends-la a l'identique si tu relances le meme appel apres une erreur reseau."
+          },
+          "phrase": {
+            "type": "string",
+            "description": "La demande de l'utilisateur, mot pour mot. Obligatoire : comme l'ecriture part sans confirmation, c'est la seule trace de ce qui a ete voulu."
+          },
+          "geste": {
+            "type": "string",
+            "description": "creer : nouvelle commande. changer_statut : la faire avancer.",
+            "enum": [
+              "creer",
+              "changer_statut"
+            ]
+          },
+          "commande": {
+            "type": "string",
+            "description": "Pour changer_statut : numero exact de la commande."
+          },
+          "statut": {
+            "type": "string",
+            "description": "Pour changer_statut. « livree » et « annulee » ne sont PAS servis ici : ils declenchent des effets d'argent, a faire a l'ecran.",
+            "enum": [
+              "en_attente_validation",
+              "validee_attente_paiement",
+              "en_production",
+              "prete"
+            ]
+          },
+          "client_nom": {
+            "type": "string",
+            "description": "Pour creer : nom du client."
+          },
+          "client_tel": {
+            "type": "string",
+            "description": "Telephone du client."
+          },
+          "description": {
+            "type": "string",
+            "description": "Ce qui est commande, en clair."
+          },
+          "lignes": {
+            "type": "array",
+            "description": "Le detail de la commande. Au moins une ligne avec une description.",
+            "items": {
+              "$ref": "#/components/schemas/LigneDocument"
+            }
+          },
+          "echeance": {
+            "type": "string",
+            "description": "Date de livraison prevue, AAAA-MM-JJ. Defaut : dans 3 jours."
+          },
+          "activite": {
+            "type": "string",
+            "description": "A quelle caisse la ligne appartient. Defaut imprimerie.",
+            "enum": [
+              "imprimerie",
+              "papeterie"
+            ]
+          }
+        },
+        "required": [
+          "cle",
+          "phrase",
+          "geste"
+        ]
+      },
+      "FicheClient": {
+        "type": "object",
+        "properties": {
+          "cle": {
+            "type": "string",
+            "description": "Cle d'idempotence que TU choisis, 4 a 80 caracteres. La MEME cle renvoyee deux fois n'ecrit qu'une seule fois : reprends-la a l'identique si tu relances le meme appel apres une erreur reseau."
+          },
+          "phrase": {
+            "type": "string",
+            "description": "La demande de l'utilisateur, mot pour mot. Obligatoire : comme l'ecriture part sans confirmation, c'est la seule trace de ce qui a ete voulu."
+          },
+          "nom": {
+            "type": "string",
+            "description": "Nom du client ou de l'entreprise."
+          },
+          "type": {
+            "type": "string",
+            "description": "Defaut particulier.",
+            "enum": [
+              "particulier",
+              "entreprise"
+            ]
+          },
+          "telephone": {
+            "type": "string",
+            "description": "Numero de telephone."
+          },
+          "email": {
+            "type": "string",
+            "description": "Adresse e-mail."
+          },
+          "adresse": {
+            "type": "string",
+            "description": "Adresse postale."
+          },
+          "notes": {
+            "type": "string",
+            "description": "Precisions libres."
+          }
+        },
+        "required": [
+          "cle",
+          "phrase",
+          "nom"
+        ]
+      },
+      "EvenementCalendrier": {
+        "type": "object",
+        "properties": {
+          "cle": {
+            "type": "string",
+            "description": "Cle d'idempotence que TU choisis, 4 a 80 caracteres. La MEME cle renvoyee deux fois n'ecrit qu'une seule fois : reprends-la a l'identique si tu relances le meme appel apres une erreur reseau."
+          },
+          "phrase": {
+            "type": "string",
+            "description": "La demande de l'utilisateur, mot pour mot. Obligatoire : comme l'ecriture part sans confirmation, c'est la seule trace de ce qui a ete voulu."
+          },
+          "nom": {
+            "type": "string",
+            "description": "Nom de l'evenement."
+          },
+          "date": {
+            "type": "string",
+            "description": "Date de l'evenement, AAAA-MM-JJ. OBLIGATOIRE : un evenement sans date ne peut ni etre classe ni remonter dans les prochains evenements."
+          },
+          "type": {
+            "type": "string",
+            "description": "Defaut autre.",
+            "enum": [
+              "fete_nationale",
+              "fete_religieuse",
+              "rentree_scolaire",
+              "commercial",
+              "culturel",
+              "autre"
+            ]
+          },
+          "opportunites": {
+            "type": "string",
+            "description": "Ce qu'on peut vendre a cette occasion."
+          },
+          "description": {
+            "type": "string",
+            "description": "Precisions libres."
+          },
+          "recurrent": {
+            "type": "boolean",
+            "description": "Revient chaque annee. Defaut vrai."
+          }
+        },
+        "required": [
+          "cle",
+          "phrase",
+          "nom",
+          "date"
+        ]
+      },
+      "Prospect": {
+        "type": "object",
+        "properties": {
+          "cle": {
+            "type": "string",
+            "description": "Cle d'idempotence que TU choisis, 4 a 80 caracteres. La MEME cle renvoyee deux fois n'ecrit qu'une seule fois : reprends-la a l'identique si tu relances le meme appel apres une erreur reseau."
+          },
+          "phrase": {
+            "type": "string",
+            "description": "La demande de l'utilisateur, mot pour mot. Obligatoire : comme l'ecriture part sans confirmation, c'est la seule trace de ce qui a ete voulu."
+          },
+          "geste": {
+            "type": "string",
+            "description": "creer : nouveau prospect. ajouter_interaction : noter un echange. Defaut creer.",
+            "enum": [
+              "creer",
+              "ajouter_interaction"
+            ]
+          },
+          "prospect": {
+            "type": "string",
+            "description": "Pour ajouter_interaction : nom exact du prospect."
+          },
+          "resume": {
+            "type": "string",
+            "description": "Pour ajouter_interaction : ce qui s'est dit."
+          },
+          "type": {
+            "type": "string",
+            "description": "Pour creer : nature du prospect. Pour ajouter_interaction : canal de l'echange."
+          },
+          "nom": {
+            "type": "string",
+            "description": "Pour creer : nom ou entreprise."
+          },
+          "telephone": {
+            "type": "string",
+            "description": "Pour creer : obligatoire. Sans numero, un prospect ne se rappelle pas."
+          },
+          "email": {
+            "type": "string",
+            "description": "Adresse e-mail."
+          },
+          "secteur": {
+            "type": "string",
+            "description": "Secteur d'activite. Defaut Commerce."
+          },
+          "contact_nom": {
+            "type": "string",
+            "description": "Nom de la personne a contacter."
+          },
+          "adresse": {
+            "type": "string",
+            "description": "Adresse."
+          },
+          "localisation": {
+            "type": "string",
+            "description": "Quartier, ville."
+          },
+          "statut": {
+            "type": "string",
+            "description": "Defaut nouveau.",
+            "enum": [
+              "nouveau",
+              "contacte",
+              "interesse",
+              "devis_envoye",
+              "negoce",
+              "converti",
+              "perdu"
+            ]
+          },
+          "source": {
+            "type": "string",
+            "description": "Defaut passage.",
+            "enum": [
+              "recommandation",
+              "passage",
+              "reseaux_sociaux",
+              "prospection_active",
+              "evenement",
+              "autre"
+            ]
+          },
+          "besoins": {
+            "type": "array",
+            "description": "Ce dont il a besoin, en clair.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "budget_estime": {
+            "type": "integer",
+            "description": "Budget estime en francs CFA."
+          },
+          "date_prochain_contact": {
+            "type": "string",
+            "description": "Quand le relancer, AAAA-MM-JJ."
+          },
+          "notes": {
+            "type": "string",
+            "description": "Precisions libres."
+          }
+        },
+        "required": [
+          "cle",
+          "phrase"
+        ]
+      },
+      "ObjectifCommercial": {
+        "type": "object",
+        "properties": {
+          "cle": {
+            "type": "string",
+            "description": "Cle d'idempotence que TU choisis, 4 a 80 caracteres. La MEME cle renvoyee deux fois n'ecrit qu'une seule fois : reprends-la a l'identique si tu relances le meme appel apres une erreur reseau."
+          },
+          "phrase": {
+            "type": "string",
+            "description": "La demande de l'utilisateur, mot pour mot. Obligatoire : comme l'ecriture part sans confirmation, c'est la seule trace de ce qui a ete voulu."
+          },
+          "titre": {
+            "type": "string",
+            "description": "Ce qu'on vise, en clair."
+          },
+          "montant": {
+            "type": "integer",
+            "description": "Montant vise en francs CFA, entier strictement positif. Un objectif a zero serait atteint des le premier franc."
+          },
+          "type": {
+            "type": "string",
+            "description": "Defaut mensuel.",
+            "enum": [
+              "mensuel",
+              "annuel"
+            ]
+          },
+          "categorie": {
+            "type": "string",
+            "description": "Defaut global.",
+            "enum": [
+              "global",
+              "equipe",
+              "individuel"
+            ]
+          },
+          "mois": {
+            "type": "string",
+            "description": "Periode visee, AAAA-MM. Defaut : le mois en cours a Moanda."
+          }
+        },
+        "required": [
+          "cle",
+          "phrase",
+          "titre",
+          "montant"
+        ]
+      },
+      "ClotureDeCaisse": {
+        "type": "object",
+        "properties": {
+          "cle": {
+            "type": "string",
+            "description": "Cle d'idempotence que TU choisis, 4 a 80 caracteres. La MEME cle renvoyee deux fois n'ecrit qu'une seule fois : reprends-la a l'identique si tu relances le meme appel apres une erreur reseau."
+          },
+          "phrase": {
+            "type": "string",
+            "description": "La demande de l'utilisateur, mot pour mot. Obligatoire : comme l'ecriture part sans confirmation, c'est la seule trace de ce qui a ete voulu."
+          },
+          "denominations": {
+            "type": "object",
+            "description": "Le comptage du tiroir : pour chaque coupure (10000, 5000, 2000, 1000, 500, 100, 50, 25, 10, 5), le NOMBRE de billets ou pieces comptes."
+          },
+          "activite": {
+            "type": "string",
+            "description": "A quelle caisse la ligne appartient. Defaut imprimerie.",
+            "enum": [
+              "imprimerie",
+              "papeterie"
+            ]
+          },
+          "date": {
+            "type": "string",
+            "description": "Date de l'operation, AAAA-MM-JJ. Omettre pour aujourd'hui, heure de Moanda."
+          },
+          "employe_nom": {
+            "type": "string",
+            "description": "Qui a compte le tiroir."
+          },
+          "commentaire": {
+            "type": "string",
+            "description": "Explication de l'ecart, s'il y en a un."
+          }
+        },
+        "required": [
+          "cle",
+          "phrase",
+          "denominations"
+        ]
+      },
+      "DevisCommercial": {
+        "type": "object",
+        "properties": {
+          "cle": {
+            "type": "string",
+            "description": "Cle d'idempotence que TU choisis, 4 a 80 caracteres. La MEME cle renvoyee deux fois n'ecrit qu'une seule fois : reprends-la a l'identique si tu relances le meme appel apres une erreur reseau."
+          },
+          "phrase": {
+            "type": "string",
+            "description": "La demande de l'utilisateur, mot pour mot. Obligatoire : comme l'ecriture part sans confirmation, c'est la seule trace de ce qui a ete voulu."
+          },
+          "client_nom": {
+            "type": "string",
+            "description": "Pour qui est le devis."
+          },
+          "client_adresse": {
+            "type": "string",
+            "description": "Adresse du client."
+          },
+          "objet": {
+            "type": "string",
+            "description": "Objet du devis."
+          },
+          "lignes": {
+            "type": "array",
+            "description": "Le detail chiffre. Au moins une ligne avec une description.",
+            "items": {
+              "$ref": "#/components/schemas/LigneDocument"
+            }
+          },
+          "remise": {
+            "type": "integer",
+            "description": "Remise en francs CFA, retiree du sous-total. Il n'y a pas de TVA."
+          }
+        },
+        "required": [
+          "cle",
+          "phrase",
+          "client_nom",
+          "lignes"
+        ]
+      },
+      "FactureCommerciale": {
+        "type": "object",
+        "properties": {
+          "cle": {
+            "type": "string",
+            "description": "Cle d'idempotence que TU choisis, 4 a 80 caracteres. La MEME cle renvoyee deux fois n'ecrit qu'une seule fois : reprends-la a l'identique si tu relances le meme appel apres une erreur reseau."
+          },
+          "phrase": {
+            "type": "string",
+            "description": "La demande de l'utilisateur, mot pour mot. Obligatoire : comme l'ecriture part sans confirmation, c'est la seule trace de ce qui a ete voulu."
+          },
+          "geste": {
+            "type": "string",
+            "description": "creer : nouvelle facture. marquer_payee : changer le statut d'une facture existante. Defaut creer.",
+            "enum": [
+              "creer",
+              "marquer_payee"
+            ]
+          },
+          "facture": {
+            "type": "string",
+            "description": "Pour marquer_payee : numero exact de la facture."
+          },
+          "client_nom": {
+            "type": "string",
+            "description": "Pour creer : pour qui est la facture."
+          },
+          "client_adresse": {
+            "type": "string",
+            "description": "Adresse du client."
+          },
+          "objet": {
+            "type": "string",
+            "description": "Objet de la facture."
+          },
+          "lignes": {
+            "type": "array",
+            "description": "Le detail chiffre. Au moins une ligne avec une description.",
+            "items": {
+              "$ref": "#/components/schemas/LigneDocument"
+            }
+          },
+          "remise": {
+            "type": "integer",
+            "description": "Remise en francs CFA, retiree du sous-total. Il n'y a pas de TVA."
+          }
+        },
+        "required": [
+          "cle",
+          "phrase"
+        ]
       }
     }
   }

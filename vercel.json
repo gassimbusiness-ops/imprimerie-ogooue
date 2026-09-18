@@ -91,6 +91,82 @@
       "destination": "/api/chatgpt?voie=schema"
     },
     {
+      "source": "/api/chatgpt-journal",
+      "destination": "/api/chatgpt?voie=journal"
+    },
+    {
+      "source": "/api/chatgpt-depense",
+      "destination": "/api/chatgpt?voie=depense"
+    },
+    {
+      "source": "/api/chatgpt-recette",
+      "destination": "/api/chatgpt?voie=recette"
+    },
+    {
+      "source": "/api/chatgpt-caisse-mouvement",
+      "destination": "/api/chatgpt?voie=caisse-mouvement"
+    },
+    {
+      "source": "/api/chatgpt-travaux",
+      "destination": "/api/chatgpt?voie=travaux"
+    },
+    {
+      "source": "/api/chatgpt-tache",
+      "destination": "/api/chatgpt?voie=tache"
+    },
+    {
+      "source": "/api/chatgpt-annuler",
+      "destination": "/api/chatgpt?voie=annuler"
+    },
+    {
+      "source": "/api/chatgpt-projet-travaux",
+      "destination": "/api/chatgpt?voie=projet-travaux"
+    },
+    {
+      "source": "/api/chatgpt-catalogue",
+      "destination": "/api/chatgpt?voie=catalogue"
+    },
+    {
+      "source": "/api/chatgpt-stock-mouvement",
+      "destination": "/api/chatgpt?voie=stock-mouvement"
+    },
+    {
+      "source": "/api/chatgpt-rapport",
+      "destination": "/api/chatgpt?voie=rapport"
+    },
+    {
+      "source": "/api/chatgpt-commande",
+      "destination": "/api/chatgpt?voie=commande"
+    },
+    {
+      "source": "/api/chatgpt-client",
+      "destination": "/api/chatgpt?voie=client"
+    },
+    {
+      "source": "/api/chatgpt-evenement",
+      "destination": "/api/chatgpt?voie=evenement"
+    },
+    {
+      "source": "/api/chatgpt-prospect",
+      "destination": "/api/chatgpt?voie=prospect"
+    },
+    {
+      "source": "/api/chatgpt-objectif",
+      "destination": "/api/chatgpt?voie=objectif"
+    },
+    {
+      "source": "/api/chatgpt-cloture-caisse",
+      "destination": "/api/chatgpt?voie=cloture-caisse"
+    },
+    {
+      "source": "/api/chatgpt-devis",
+      "destination": "/api/chatgpt?voie=devis"
+    },
+    {
+      "source": "/api/chatgpt-facture",
+      "destination": "/api/chatgpt?voie=facture"
+    },
+    {
       "source": "/confidentialite.html",
       "destination": "/confidentialite.html"
     },

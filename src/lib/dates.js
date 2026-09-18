@@ -218,6 +218,51 @@ export function formaterInstantLocal(instantUtc, offset = '+01:00', fuseau = FUS
 }
 
 /**
+ * Africa/Libreville est à UTC+1 toute l'année, sans heure d'été.
+ * Écrit ici, et pas dans chaque appelant : une constante recopiée finit par
+ * diverger, et un fuseau qui diverge, c'est un chiffre d'un autre jour.
+ */
+export const OFFSET_MOANDA = '+01:00';
+
+/**
+ * Où en est l'horloge, VUE DE MOANDA — jamais vue du serveur.
+ *
+ * ⚠️ La raison d'être de cette fonction. Les fonctions serverless de Vercel
+ * tournent en UTC, et le navigateur du gérant peut être réglé n'importe où.
+ * `toISODate(new Date())` y rend donc la date de la MACHINE : le 31 août à
+ * 23 h 30 UTC, il est déjà le 1er septembre à Moanda, et un « aujourd'hui »
+ * calculé sur l'horloge du processus compterait encore août. C'est le
+ * mécanisme de l'écart de 55 300 F documenté en tête de ce fichier, transposé
+ * au serveur.
+ *
+ * Le calcul passe par `Date.UTC` et un offset retiré à la main : le résultat
+ * est identique que le processus tourne à Libreville, en UTC ou à Los Angeles,
+ * ce que les tests vérifient sous les trois fuseaux.
+ *
+ * Utilisée par le pont ChatGPT (lecture ET écriture) et par l'écran
+ * « Ce que ChatGPT a écrit » : les deux doivent dater pareil, sans quoi une
+ * écriture et son annulation tomberaient des jours différents.
+ *
+ * @param {Date} [maintenant]
+ * @returns {{instant_utc: string, date_locale: string, heure_locale: string,
+ *            mois_local: string, fuseau: string, offset_utc: string, lisible: string}}
+ */
+export function contexteMoanda(maintenant = new Date()) {
+  const instantUtc = formaterInstantUtc(maintenant);
+  const lisible = formaterInstantLocal(instantUtc, OFFSET_MOANDA, FUSEAU_METIER);
+  const dateLocale = dateLocaleDepuisInstantUtc(instantUtc, OFFSET_MOANDA) || '';
+  return {
+    instant_utc: instantUtc,
+    date_locale: dateLocale,
+    heure_locale: lisible.slice(11, 19),
+    mois_local: dateLocale.slice(0, 7),
+    fuseau: FUSEAU_METIER,
+    offset_utc: OFFSET_MOANDA,
+    lisible,
+  };
+}
+
+/**
  * Date métier locale (`YYYY-MM-DD`) d'un instant UTC, dans le fuseau donné.
  * Sert à comparer une échéance d'offre (`valide_jusqu_au_local`) à la date du
  * créneau : la comparaison se fait EN DATE LOCALE, jamais en UTC.

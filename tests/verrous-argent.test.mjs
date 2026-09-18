@@ -50,6 +50,10 @@ const BOUTONS_ARGENT = [
   { quoi: 'enregistrement d’un projet de travaux', fichier: 'src/features/travaux/page.jsx', verrou: 'verrouProjet', handler: 'handleSaveProjet', etat: 'projetEnCours' },
   { quoi: 'étape de travaux payée (sortie de caisse)', fichier: 'src/features/travaux/page.jsx', verrou: 'verrouEtape', handler: 'handleSaveEtape', etat: 'etapeEnCours' },
   { quoi: 'récompense de fidélité réclamée', fichier: 'src/features/client-portal/fidelite.jsx', verrou: 'verrouFidelite', handler: 'handleReclamer', etat: 'reclamationEnCours' },
+  // Ajouté avec le pont d'écriture ChatGPT : le bouton « Confirmer » de
+  // l'écran « Ce que ChatGPT a écrit » contre-passe de vrais mouvements et
+  // bouge de vrais soldes. Deux clics rembourseraient deux fois.
+  { quoi: 'annulation d’une écriture ChatGPT', fichier: 'src/features/chatgpt-ecritures/page.jsx', verrou: 'verrouAnnulation', handler: 'handleAnnuler', etat: 'annulationEnCours' },
 ];
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -106,10 +110,13 @@ for (const b of BOUTONS_ARGENT) {
   });
 }
 
-test('les huit boutons d’argent sont bien huit, et tous couverts', () => {
-  assert.equal(BOUTONS_ARGENT.length, 8);
+test('les boutons d’argent sont tous recensés, et tous couverts', () => {
+  assert.equal(
+    BOUTONS_ARGENT.length, 9,
+    'huit au recensement du document 33, plus l’annulation d’une écriture ChatGPT',
+  );
   const fichiers = new Set(BOUTONS_ARGENT.map((b) => b.fichier));
-  assert.equal(fichiers.size, 7, 'travaux porte deux boutons, les six autres écrans un chacun');
+  assert.equal(fichiers.size, 8, 'travaux porte deux boutons, les sept autres écrans un chacun');
 });
 
 /* ═══════════════════════════════════════════════════════════════════════════

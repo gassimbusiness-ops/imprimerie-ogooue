@@ -355,6 +355,72 @@ export const db = {
   gouvernance_parametres: new Collection('gouvernance_parametres'),
 };
 
+/**
+ * Lecture PROJETEE des lignes portant un marqueur, sur plusieurs collections.
+ *
+ * ── Pourquoi elle existe ──────────────────────────────────────────────────
+ *
+ * L'ecran « Ce que ChatGPT a ecrit » doit lister les ecritures du pont, qui
+ * peuvent vivre dans dix-sept collections. `list()` rapatrie le `data` COMPLET
+ * de chaque ligne : sur `produits_catalogue`, c'est 20 Mo pour 195 lignes, dont
+ * une seule a 3,2 Mo d'images en base64. Depuis que le pont sait corriger un
+ * prix, une de ces lignes peut porter le marqueur — et ouvrir l'ecran ferait
+ * telecharger ces megaoctets sur la connexion de Moanda, pour afficher un
+ * libelle et un montant.
+ *
+ * On ne demande donc que les champs necessaires. `id` vient de la COLONNE, pas
+ * de `data.id` : c'est lui qui sert ensuite a relire la ligne entiere au moment
+ * d'annuler.
+ *
+ * LEVE en cas d'echec, comme `listOuLeve()` : une liste vide apres une lecture
+ * ratee dirait « ChatGPT n'a rien ecrit », et le gerant conclurait qu'il n'y a
+ * rien a verifier.
+ *
+ * @param {object} arg
+ * @param {string[]} arg.collections
+ * @param {string} arg.marqueur  nom du champ booleen a plat (ex. `via_chatgpt`)
+ * @param {string[]} arg.champs  champs de `data` a rapatrier
+ * @returns {Promise<Array<{collection: string, data: object}>>}
+ */
+export async function lireLignesMarquees({ collections, marqueur, champs }) {
+  const sortie = [];
+
+  if (!USE_SUPABASE) {
+    for (const collection of collections) {
+      let lignes = [];
+      try { lignes = JSON.parse(localStorage.getItem(`io_${collection}`) || '[]'); } catch { lignes = []; }
+      for (const l of lignes) {
+        if (!l?.[marqueur]) continue;
+        const projete = { id: l.id };
+        for (const c of champs) projete[c] = l[c];
+        sortie.push({ collection, data: projete });
+      }
+    }
+    return sortie;
+  }
+
+  const projection = ['id', ...champs.map((c) => `${c}:data->${c}`)].join(', ');
+  for (const collection of collections) {
+    const { data, error } = await supabase
+      .from('app_data')
+      .select(projection)
+      .eq('collection', collection)
+      .eq(`data->>${marqueur}`, 'true')
+      .order('created_at', { ascending: false })
+      .limit(500);
+    if (error) {
+      throw new ErreurLecture({
+        collection,
+        operation: 'list',
+        libelle: LIBELLES_COLLECTION[collection],
+        cause: error,
+      });
+    }
+    for (const r of data || []) sortie.push({ collection, data: r });
+  }
+  return sortie;
+}
+
 // ── Settings helpers (shared across the app) ──
 
 let _settingsCache = null;

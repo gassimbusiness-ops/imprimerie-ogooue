@@ -145,6 +145,25 @@ function collection(nom) {
 }
 export const db = {};
 ${COLLECTIONS.map((c) => `db[${JSON.stringify(c)}] = collection(${JSON.stringify(c)});`).join('\n')}
+/**
+ * Doublure de la lecture PROJETEE. Elle projette pour de vrai : un ecran qui
+ * lirait un champ non demande le trouverait absent ici comme en production,
+ * au lieu de passer parce que la doublure est plus genereuse.
+ */
+export async function lireLignesMarquees({ collections, marqueur, champs }) {
+  const sortie = [];
+  for (const collection of collections) {
+    journal.lectures.push(collection);
+    if (ECHECS_LECTURE.has(collection)) throw new ErreurLectureSimulee(collection);
+    for (const l of tables[collection] || []) {
+      if (!l || !l[marqueur]) continue;
+      const projete = { id: l.id };
+      for (const c of champs) projete[c] = l[c];
+      sortie.push({ collection, data: projete });
+    }
+  }
+  return sortie;
+}
 export async function getSettings() { journal.lectures.push('_settings'); return {}; }
 export async function saveSettings() { journal.ecritures.push({ collection: '_settings', operation: 'update' }); }
 export function clearSettingsCache() {}

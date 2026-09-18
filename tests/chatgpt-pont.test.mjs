@@ -52,6 +52,8 @@ const lire = (chemin) => readFileSync(new URL(chemin, racine), 'utf8');
 const {
   creerGestionnairePont,
   VOIES_CHATGPT,
+  VOIES_LECTURE,
+  VOIES_ECRITURE,
   CHEMINS_CHATGPT,
   voieChatGPT,
 } = await import('../api/chatgpt.js');
@@ -211,6 +213,16 @@ function faussDepot(donnees = donneesDeTest()) {
       lectures.push(`lireTout:${collection}`);
       return donnees[collection] || [];
     },
+    /**
+     * La voie `journal` lit ce que ChatGPT a écrit. Le jeu d'essai de ce
+     * fichier n'en contient aucune : la liste est vide, et c'est exactement ce
+     * qu'on veut y vérifier — cette voie ne laisse rien sortir d'autre.
+     * Les écritures elles-mêmes sont couvertes par tests/chatgpt-ecriture.test.mjs.
+     */
+    async listerEcritures() {
+      lectures.push('listerEcritures');
+      return [];
+    },
   };
 }
 
@@ -219,6 +231,7 @@ async function appeler(options = {}, { donnees, maintenant } = {}) {
   const depot = faussDepot(donnees);
   const handler = creerGestionnairePont({
     depot,
+    depotEcriture: depot,
     maintenant: () => maintenant || new Date(Date.UTC(2026, 8, 18, 17, 12, 5)),
   });
   const res = fausseReponse();
@@ -326,13 +339,29 @@ test('JETON : la comparaison est à temps constant (empreintesEgales réutilisé
   );
 });
 
-test('JETON : le bon jeton ouvre toutes les voies', async () => {
+test('JETON : le bon jeton ouvre toutes les voies de lecture', async () => {
   await avecJeton(JETON, async () => {
-    for (const voie of VOIES_CHATGPT) {
+    for (const voie of VOIES_LECTURE) {
       // `collection` exige de dire QUELLE collection : on la lui donne, sinon on
       // testerait son 400 de paramètre manquant au lieu de son ouverture.
       const { code } = await appeler({ voie, query: { voie, collection: 'clients' } });
       assert.equal(code, 200, `voie ${voie} doit répondre 200 avec le bon jeton`);
+    }
+  });
+});
+
+/**
+ * Les voies d'ÉCRITURE ne s'ouvrent pas en GET — c'est tout l'objet du contrôle
+ * de méthode. Ce qu'on vérifie ici, c'est qu'elles ne répondent PAS 401 : le
+ * jeton a bien été accepté, et c'est le VERBE qui est refusé ensuite. Sans
+ * cette nuance, un 401 déguisé en 405 passerait inaperçu.
+ * Les écritures elles-mêmes sont couvertes par tests/chatgpt-ecriture.test.mjs.
+ */
+test('JETON : le bon jeton est accepté aussi sur les voies d\'écriture', async () => {
+  await avecJeton(JETON, async () => {
+    for (const voie of VOIES_ECRITURE) {
+      const { code } = await appeler({ voie });
+      assert.equal(code, 405, `voie ${voie} : c'est le VERBE qui doit être refusé, pas le jeton`);
     }
   });
 });
@@ -406,9 +435,9 @@ test('DATE : le 31 à 23 h 30 UTC, le MOIS de Moanda a déjà changé', () => {
   assert.equal(ctx.mois_local, '2026-09', 'un CA « ce mois » calculé en UTC compterait août');
 });
 
-test('DATE : chaque réponse porte sa date de calcul', async () => {
+test('DATE : chaque réponse de lecture porte sa date de calcul', async () => {
   await avecJeton(JETON, async () => {
-    for (const voie of VOIES_CHATGPT) {
+    for (const voie of VOIES_LECTURE) {
       const { corps } = await appeler({ voie, query: { voie, collection: 'clients' } });
       assert.ok(corps?.calcule_le, `voie ${voie} : la réponse doit être datée`);
       assert.equal(corps.calcule_le.fuseau, 'Africa/Libreville');
@@ -659,14 +688,24 @@ test('SCHÉMA : OpenAPI 3.1, en français, avec une opération par voie', async 
   assert.match(schema.openapi, /^3\.1/);
   assert.ok(schema.info?.description, 'le schéma doit dire à quoi il sert');
 
+  // Une opération par chemin, et UN SEUL verbe : GET pour lire, POST pour
+  // écrire. Un chemin qui proposerait les deux effacerait la frontière que le
+  // contrôle de méthode du pont existe pour tenir.
   for (const [chemin, def] of Object.entries(schema.paths)) {
-    assert.ok(def.get, `${chemin} : seule la lecture est exposée`);
-    for (const verbe of ['post', 'put', 'patch', 'delete']) {
-      assert.ok(!def[verbe], `${chemin} : le schéma ne doit proposer aucun ${verbe.toUpperCase()}`);
+    const verbes = Object.keys(def).filter((v) => ['get', 'post', 'put', 'patch', 'delete'].includes(v));
+    assert.deepEqual(
+      verbes.length, 1,
+      `${chemin} : un chemin, un verbe — trouvé ${verbes.join(', ')}`,
+    );
+    const [verbe] = verbes;
+    assert.ok(['get', 'post'].includes(verbe), `${chemin} : ni PUT, ni PATCH, ni DELETE`);
+    for (const interdit of ['put', 'patch', 'delete']) {
+      assert.ok(!def[interdit], `${chemin} : le schéma ne doit proposer aucun ${interdit.toUpperCase()}`);
     }
-    assert.ok(def.get.operationId, `${chemin} : operationId manquant`);
+    const op = def[verbe];
+    assert.ok(op.operationId, `${chemin} : operationId manquant`);
     assert.ok(
-      (def.get.description || '').length > 40,
+      (op.description || '').length > 40,
       `${chemin} : la description doit dire à ChatGPT QUAND s'en servir`,
     );
   }

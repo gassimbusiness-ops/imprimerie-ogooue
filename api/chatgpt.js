@@ -1,18 +1,38 @@
 /**
- * Vercel Serverless Function — LE PONT CHATGPT. Un seul fichier, sept voies.
+ * Vercel Serverless Function — LE PONT CHATGPT. Un seul fichier, deux moitiés.
  *
  * ════════════════════════════════════════════════════════════════════════════
  * CE QUE LE DIRIGEANT A DEMANDÉ, ET CE QUI A ÉTÉ CONSTRUIT
  * ════════════════════════════════════════════════════════════════════════════
  *
+ * D'abord, la lecture :
+ *
  * « On veut directement connecter l'application avec ChatGPT. Comme ça il sait
  * tout et ça ne nous dérange pas… il donne accès à tous, pas juste un sujet
  * mais vraiment tous. »
  *
+ * Puis l'écriture :
+ *
+ * « On aimerait, depuis ChatGPT, demander de changer quelque chose dans
+ * l'application. Par exemple : "Aujourd'hui j'ai payé 100 000 francs de
+ * travaux, donc tu mets dans la partie Travaux." Ou : "Cette semaine on n'a pas
+ * pu faire le dépôt sur la banque, on a gardé en cash." » — et, sur la
+ * confirmation : « sans confirmation, il écrit direct, mais qu'on puisse quand
+ * même modifier si c'est mal fait. »
+ *
  * Il veut écrire « ce mois on a fait combien ? » dans ChatGPT et obtenir LE
  * vrai chiffre. Il a été averti du risque et a tranché. Ce fichier construit ce
  * qu'il a demandé, sans le rediscuter : salaires, trésorerie, fichier clients,
- * journal d'audit — tout est lisible par ce pont.
+ * journal d'audit — tout est lisible par ce pont, et cinq gestes nommés y sont
+ * écrivables sans confirmation.
+ *
+ * ⚠️ L'OBJECTION, POSÉE UNE FOIS : un assistant conversationnel se trompe de
+ * montant, de compte et de date sans jamais hésiter, et ici personne ne relit
+ * avant que ça tombe dans une caisse réelle. Le travail est fait comme demandé.
+ * Ce qui remplace la confirmation — provenance, journal préalable, annulation,
+ * idempotence — vit dans `api/_lib/chatgpt-ecriture.js` et
+ * `src/services/chatgpt-gestes.js`, et l'écran « Ce que ChatGPT a écrit »
+ * (`/chatgpt-ecritures`) donne au gérant le bouton pour défaire.
  *
  * Une seule chose ne sort jamais : les EMPREINTES DE MOTS DE PASSE et leurs
  * sels. Ce n'est pas une donnée de l'entreprise, c'est le matériel qui protège
@@ -48,8 +68,12 @@
  * LE CONTRAT, DANS L'ORDRE OÙ IL EST APPLIQUÉ
  * ════════════════════════════════════════════════════════════════════════════
  *
- *  1. LECTURE SEULE. Toute méthode autre que GET est refusée AVANT la moindre
- *     lecture. Un assistant qui se trompe de verbe ne supprime pas une facture.
+ *  1. LE VERBE DIT LA MOITIÉ DU PONT. Toute méthode autre que GET ou POST est
+ *     refusée AVANT tout le reste. Ensuite, GET ne sert QUE les voies de
+ *     lecture et POST QUE les voies d'écriture — jamais l'inverse. Un
+ *     assistant qui se trompe de verbe ne tombe pas par hasard sur la bonne
+ *     porte, et une voie de lecture ne peut pas devenir une voie d'écriture
+ *     par distraction.
  *
  *  2. UNE PORTE SANS SERRURE RESTE FERMÉE. Si `CHATGPT_BRIDGE_TOKEN` est absent
  *     ou trop court, le pont répond 503 et ne sert RIEN — pas même le schéma.
@@ -95,6 +119,13 @@ import {
   commandesParStatut,
   alertesStock,
 } from './_lib/chatgpt-syntheses.js';
+import {
+  VOIES_ECRITURE,
+  depotEcriture as creerDepotEcriture,
+  executerGeste,
+  annulerEcriture,
+  journalDesEcritures,
+} from './_lib/chatgpt-ecriture.js';
 
 /**
  * Longueur minimale du jeton. 32 caractères, comme `SESSION_SECRET` : un secret
@@ -109,8 +140,14 @@ const LONGUEUR_MINI_JETON = 32;
  */
 const LIMITE_REPONSE_OCTETS = 4 * 1024 * 1024;
 
-/** Liste blanche des voies servies. Une valeur hors liste n'est jamais routée. */
-export const VOIES_CHATGPT = Object.freeze([
+/**
+ * Les voies servies en LECTURE. GET, et rien d'autre.
+ *
+ * `journal` est ici, et pas du côté écriture, bien qu'elle parle des écritures :
+ * elle ne fait que LIRE ce que ChatGPT a déjà écrit. C'est par elle qu'il
+ * retrouve l'identifiant d'une écriture à défaire.
+ */
+export const VOIES_LECTURE = Object.freeze([
   'inventaire',
   'collection',
   'ca-mois',
@@ -118,7 +155,24 @@ export const VOIES_CHATGPT = Object.freeze([
   'commandes',
   'stock',
   'schema',
+  'journal',
 ]);
+
+/**
+ * Les voies servies en ÉCRITURE. POST, et rien d'autre.
+ * La liste vient de `api/_lib/chatgpt-ecriture.js` : les cinq gestes fermés du
+ * dirigeant, plus l'annulation qui les défait.
+ */
+export { VOIES_ECRITURE };
+
+/**
+ * Liste blanche des voies servies. Une valeur hors liste n'est jamais routée.
+ *
+ * ⚠️ Les deux moitiés ne se recouvrent JAMAIS : une voie est soit en lecture,
+ * soit en écriture. Une voie qui serait dans les deux accepterait les deux
+ * verbes, et le contrôle de méthode ne voudrait plus rien dire.
+ */
+export const VOIES_CHATGPT = Object.freeze([...VOIES_LECTURE, ...VOIES_ECRITURE]);
 
 /**
  * URL publique → voie. Chaque voie a la sienne pour que le schéma OpenAPI
@@ -136,6 +190,25 @@ export const CHEMINS_CHATGPT = Object.freeze({
   '/api/chatgpt-commandes': 'commandes',
   '/api/chatgpt-stock': 'stock',
   '/api/chatgpt-schema': 'schema',
+  '/api/chatgpt-journal': 'journal',
+  '/api/chatgpt-depense': 'depense',
+  '/api/chatgpt-recette': 'recette',
+  '/api/chatgpt-caisse-mouvement': 'caisse-mouvement',
+  '/api/chatgpt-travaux': 'travaux',
+  '/api/chatgpt-tache': 'tache',
+  '/api/chatgpt-annuler': 'annuler',
+  '/api/chatgpt-projet-travaux': 'projet-travaux',
+  '/api/chatgpt-catalogue': 'catalogue',
+  '/api/chatgpt-stock-mouvement': 'stock-mouvement',
+  '/api/chatgpt-rapport': 'rapport',
+  '/api/chatgpt-commande': 'commande',
+  '/api/chatgpt-client': 'client',
+  '/api/chatgpt-evenement': 'evenement',
+  '/api/chatgpt-prospect': 'prospect',
+  '/api/chatgpt-objectif': 'objectif',
+  '/api/chatgpt-cloture-caisse': 'cloture-caisse',
+  '/api/chatgpt-devis': 'devis',
+  '/api/chatgpt-facture': 'facture',
 });
 
 /**
@@ -194,17 +267,41 @@ function entier(valeur, { defaut, min, max }) {
 
 const RE_MOIS = /^\d{4}-\d{2}$/;
 
+/**
+ * Le corps JSON d'une requête d'écriture.
+ *
+ * Vercel analyse déjà `application/json` et pose l'objet sur `req.body` ; les
+ * tests le posent directement. On tolère la chaîne pour les exécutions locales
+ * où l'analyse n'a pas eu lieu — et un JSON illisible rend `null`, ce que la
+ * couche d'écriture refuse avec un message qui dit quoi envoyer.
+ */
+function corpsJson(req) {
+  const brut = req?.body;
+  if (brut === undefined || brut === null || brut === '') return null;
+  if (typeof brut === 'string') {
+    try { return JSON.parse(brut); } catch { return null; }
+  }
+  if (typeof brut === 'object') return brut;
+  return null;
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
    Les voies
    ═══════════════════════════════════════════════════════════════════════════ */
 
 /**
- * Sert une voie. Rend `{ statut, corps }` — jamais de réponse HTTP directement,
- * pour que l'enveloppe (date de calcul, assainissement) soit posée à UN SEUL
- * endroit, celui qui ne peut pas être oublié.
+ * Sert une voie de LECTURE. Rend `{ statut, corps }` — jamais de réponse HTTP
+ * directement, pour que l'enveloppe (date de calcul, assainissement) soit posée
+ * à UN SEUL endroit, celui qui ne peut pas être oublié.
  */
-async function servir(voie, req, depot, ctx) {
+async function servir(voie, req, depot, ctx, depotE) {
   switch (voie) {
+    case 'journal':
+      return journalDesEcritures({
+        depot: depotE,
+        limite: entier(param(req, 'limite'), { defaut: 100, min: 1, max: 300 }),
+      });
+
     case 'schema':
       return { statut: 200, corps: { schema: schemaOpenApi() } };
 
@@ -308,6 +405,17 @@ async function servir(voie, req, depot, ctx) {
   }
 }
 
+/**
+ * Sert une voie d'ÉCRITURE. Même contrat de retour que `servir()` : la décision
+ * et l'exécution vivent dans `api/_lib/chatgpt-ecriture.js`, ce fichier ne fait
+ * que router et poser l'enveloppe.
+ */
+async function servirEcriture(voie, req, depotE, ctx) {
+  const corps = corpsJson(req);
+  if (voie === 'annuler') return annulerEcriture({ corps, depot: depotE, ctx });
+  return executerGeste({ geste: voie, corps, depot: depotE, ctx });
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
    Le gestionnaire
    ═══════════════════════════════════════════════════════════════════════════ */
@@ -315,18 +423,27 @@ async function servir(voie, req, depot, ctx) {
 /**
  * Fabrique le gestionnaire.
  *
- * `depot` et `maintenant` sont injectables : c'est la seule façon de prouver
- * sans base de données qu'une requête POST n'atteint AUCUNE lecture, et qu'un
- * « aujourd'hui » du serveur en UTC ne devient pas la date de Moanda par
- * accident.
+ * `depot`, `depotEcriture` et `maintenant` sont injectables : c'est la seule
+ * façon de prouver sans base de données qu'un GET n'atteint AUCUNE écriture,
+ * qu'une même clé d'idempotence n'écrit qu'une fois, et qu'un « aujourd'hui »
+ * du serveur en UTC ne devient pas la date de Moanda par accident.
  */
-export function creerGestionnairePont({ depot = null, maintenant = () => new Date() } = {}) {
+export function creerGestionnairePont({
+  depot = null, depotEcriture = null, maintenant = () => new Date(),
+} = {}) {
   return async function handler(req, res) {
-    /* 1. LECTURE SEULE — avant tout le reste, y compris avant de savoir qui appelle. */
-    if (req.method !== 'GET') {
+    /* 1. LE VERBE, avant tout le reste — y compris avant de savoir qui appelle.
+     *
+     * Le pont n'accepte que deux verbes en tout. PUT, PATCH, DELETE, OPTIONS et
+     * HEAD sont refusés ici, sans jamais atteindre ni une lecture ni une
+     * écriture. Le contrôle FIN (GET pour la lecture, POST pour l'écriture) a
+     * lieu une fois la voie connue, à l'étape 5 : il exige de savoir laquelle,
+     * et savoir laquelle après s'être authentifié évite d'apprendre à un
+     * inconnu quelles voies existent. */
+    if (req.method !== 'GET' && req.method !== 'POST') {
       return res.status(405).json({
         error: 'Méthode non autorisée',
-        detail: 'Ce pont est en lecture seule : seul GET est accepté.',
+        detail: 'Ce pont accepte GET pour lire et POST pour écrire, rien d\'autre.',
       });
     }
 
@@ -341,8 +458,18 @@ export function creerGestionnairePont({ depot = null, maintenant = () => new Dat
       });
     }
 
-    /* 3. Limite de débit, avec une portée à soi. */
-    if (limiteDepassee(req, { max: 60, fenetreMs: 60_000, portee: 'chatgpt' })) {
+    /* 3. Limite de débit, avec une portée à soi — et deux plafonds.
+     *
+     * L'écriture a le sien, plus serré : une boucle d'appels en lecture coûte
+     * du temps de fonction, une boucle d'appels en écriture coûte des lignes
+     * dans une caisse. Les deux portées sont distinctes pour que l'une ne
+     * consomme jamais le plafond de l'autre — c'est la raison d'être du
+     * paramètre `portee` de `api/_lib/limite.js`. */
+    const enEcriture = req.method === 'POST';
+    const plafond = enEcriture
+      ? { max: 20, fenetreMs: 60_000, portee: 'chatgpt-ecriture' }
+      : { max: 60, fenetreMs: 60_000, portee: 'chatgpt' };
+    if (limiteDepassee(req, plafond)) {
       return res.status(429).json({ error: 'Trop de requêtes' });
     }
 
@@ -374,7 +501,12 @@ export function creerGestionnairePont({ depot = null, maintenant = () => new Dat
       });
     }
 
-    /* 5. La voie. */
+    /* 5. La voie, puis LE VERBE QUI LUI CORRESPOND.
+     *
+     * C'est le contrôle qui empêche les deux moitiés du pont de se recouvrir :
+     * une voie de lecture refuse POST, une voie d'écriture refuse GET. Sans
+     * lui, un GET sur `/api/chatgpt-depense` tomberait dans la branche
+     * d'écriture avec un corps vide — et un jour, avec un corps. */
     const voie = voieChatGPT(req);
     if (!voie) {
       return res.status(404).json({
@@ -383,13 +515,34 @@ export function creerGestionnairePont({ depot = null, maintenant = () => new Dat
       });
     }
 
+    const voieEcriture = VOIES_ECRITURE.includes(voie);
+    if (voieEcriture !== enEcriture) {
+      return res.status(405).json({
+        error: 'Méthode non autorisée pour cette voie',
+        detail: voieEcriture
+          ? `« ${voie} » écrit dans l'application : elle s'appelle en POST, avec un corps JSON.`
+          : `« ${voie} » est une voie de lecture : elle s'appelle en GET.`,
+      });
+    }
+
     const ctx = contexteTemporel(maintenant());
 
     let resultat;
     try {
-      resultat = await servir(voie, req, depot || depotLecture(), ctx);
+      resultat = voieEcriture
+        ? await servirEcriture(voie, req, depotEcriture || creerDepotEcriture(), ctx)
+        : await servir(voie, req, depot || depotLecture(), ctx, depotEcriture || creerDepotEcriture());
     } catch (e) {
       console.error('[pont ChatGPT] %s :', voie, e?.message);
+      if (voieEcriture) {
+        return res.status(500).json({
+          error: 'Écriture impossible',
+          detail: "La base n'a pas répondu. RIEN n'a peut-être été écrit — ou une partie seulement : "
+            + "consulte le journal des écritures ChatGPT avant de réessayer, et si tu réessaies, "
+            + 'reprends LA MÊME clé d\'idempotence pour ne pas écrire deux fois.',
+          calcule_le: ctx,
+        });
+      }
       return res.status(500).json({
         error: 'Lecture impossible',
         detail: "La base n'a pas répondu. Le chiffre n'est PAS zéro : il est inconnu.",
