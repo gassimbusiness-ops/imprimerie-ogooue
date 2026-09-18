@@ -84,7 +84,22 @@ export function creerGestionnaireEmployes({ depot } = {}) {
       // ── LECTURE ──
       if (req.method === 'GET') {
         const employes = await d.lireEmployes();
-        return res.status(200).json({ employes: employes.map((e) => filtrer(e, session.role)) });
+        // `a_mot_de_passe` est une REPONSE, pas une empreinte : l'ecran a besoin de
+        // savoir si le compte peut se connecter, jamais de savoir avec quoi.
+        // `null` = la question n'a pas pu etre posee : l'ecran n'affiche alors aucun
+        // badge plutot que d'en inventer un.
+        // Un depot injecte qui ne sait pas repondre rend `null` : on n'affiche alors
+        // aucun badge. Mieux vaut ne rien dire que dire faux — c'etait tout le defaut
+        // de la version precedente.
+        const avecIdentifiants = typeof d.identifiantsExistants === 'function'
+          ? await d.identifiantsExistants()
+          : null;
+        return res.status(200).json({
+          employes: employes.map((e) => ({
+            ...filtrer(e, session.role),
+            a_mot_de_passe: avecIdentifiants ? avecIdentifiants.has(e.id) : null,
+          })),
+        });
       }
 
       // ── ECRITURES : administrateur uniquement ──

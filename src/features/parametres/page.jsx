@@ -407,9 +407,15 @@ export default function Parametres() {
                       </div>
                     </div>
                     <Badge variant="outline" className={`text-[10px] shrink-0 ${roleOpt.color}`}>{roleOpt.label}</Badge>
-                    {emp.password_hash ? (
+                    {/* `a_mot_de_passe` vient du serveur (api/employes.js). On ne teste PAS
+                        `emp.password_hash` : le serveur retire ce champ avant l'envoi, donc
+                        le test rendait « Sans mdp » pour tout le monde, y compris les comptes
+                        qui avaient un mot de passe. `null` = question sans reponse : aucun
+                        badge, plutot qu'un badge faux. */}
+                    {emp.a_mot_de_passe === true && (
                       <Badge variant="outline" className="text-[9px] bg-emerald-50 text-emerald-600 shrink-0"><Lock className="mr-1 h-2.5 w-2.5" /> Actif</Badge>
-                    ) : (
+                    )}
+                    {emp.a_mot_de_passe === false && (
                       <Badge variant="outline" className="text-[9px] bg-orange-50 text-orange-600 shrink-0"><AlertTriangle className="mr-1 h-2.5 w-2.5" /> Sans mdp</Badge>
                     )}
                     <div className="flex gap-1 shrink-0">

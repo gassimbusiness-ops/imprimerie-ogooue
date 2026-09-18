@@ -105,6 +105,12 @@ function depotMemoire({ employes = [], identifiantsDisponibles = true } = {}) {
       if (!d.identifiantsDisponibles) return;
       d.identifiants.delete(employeId);
     },
+    // Rend la QUESTION (« qui a un mot de passe ? »), jamais l'empreinte.
+    // `null` quand la table est indisponible : l'ecran n'affiche alors aucun badge.
+    async identifiantsExistants() {
+      if (!d.identifiantsDisponibles) return null;
+      return new Set(d.identifiants.keys());
+    },
     async ecrireJournal(entree) { d.journal.push(entree); },
   };
   return d;

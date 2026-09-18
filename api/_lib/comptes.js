@@ -223,6 +223,30 @@ export function depotSupabase() {
       if (error && !tableIdentifiantsAbsente(error)) throw new Error(error.message);
     },
 
+    /**
+     * Quels employés possèdent un mot de passe — la QUESTION, pas l'empreinte.
+     *
+     * Pourquoi cette fonction existe. L'écran Paramètres affichait un badge
+     * « Sans mdp » en testant `employe.password_hash`. Or `filtrer()` retire
+     * volontairement ce champ avant l'envoi (CHAMPS_IDENTIFIANTS) : le badge
+     * était donc TOUJOURS « Sans mdp », y compris pour les sept comptes qui
+     * avaient bel et bien un mot de passe. Un indicateur de sécurité qui se
+     * trompe dans le sens alarmiste finit par être ignoré — et le jour où un
+     * compte est vraiment sans mot de passe, plus personne ne le voit.
+     *
+     * On ne renvoie donc jamais l'empreinte : seulement la liste des identifiants
+     * qui en ont une. Le navigateur apprend « oui » ou « non », rien de plus.
+     */
+    async identifiantsExistants() {
+      const { data, error } = await sb().from('auth_credentials').select('employe_id');
+      if (error) {
+        // Table absente : on ne sait pas. Mieux vaut ne rien affirmer que mentir.
+        if (tableIdentifiantsAbsente(error)) return null;
+        throw new Error(error.message);
+      }
+      return new Set((data || []).map((l) => l.employe_id));
+    },
+
     async ecrireJournal(entree) {
       const id = crypto.randomUUID();
       await sb().from('app_data').insert({
