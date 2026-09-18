@@ -51,7 +51,13 @@ export default function SelecteurActivite({
     <div
       role="group"
       aria-label="Activité"
-      className={`inline-flex shrink-0 rounded-lg border bg-muted/40 p-0.5 ${className}`}
+      /* `flex-wrap` + `max-w-full` : les libelles « IMPRIMERIE OGOOUE » et
+         « PAPETERIE OGOOUE » font trois fois la largeur des anciens. Avec
+         `shrink-0` et sans retour a la ligne, la barre debordait de l'ecran
+         sur le telephone du gerant (375 px) : le troisieme bouton devenait
+         inatteignable. On laisse donc le groupe passer a la ligne plutot que
+         de raccourcir les libelles, qui ont ete demandes explicitement. */
+      className={`inline-flex max-w-full flex-wrap rounded-lg border bg-muted/40 p-0.5 ${className}`}
     >
       {options.map((opt) => {
         const actif = valeur === opt;

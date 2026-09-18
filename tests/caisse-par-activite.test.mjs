@@ -34,6 +34,18 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { rendreEcran, texteVivant } from './outils/rendu-ecran.mjs';
 import { todayISO } from '../src/lib/dates.js';
+import { ACTIVITE_PAPETERIE, libelleActivite } from '../src/services/activites.js';
+
+/**
+ * Le texte du bouton, lu a la source.
+ *
+ * Ces tests verifient la SEPARATION DES CAISSES, pas l'orthographe du libelle.
+ * Ecrit en dur, « Papeterie » a casse quatre tests le 18/09/2026 quand le
+ * dirigeant a demande « PAPETERIE OGOOUE » — un renommage d'affichage ne doit
+ * pas faire rougir une garantie d'argent. Le libelle exact, lui, est verifie
+ * une fois pour toutes dans tests/activites.test.mjs.
+ */
+const LIB_PAPETERIE = libelleActivite(ACTIVITE_PAPETERIE);
 
 /**
  * L'ecran de cloture ne travaille que sur AUJOURD'HUI, et il lit cette date par
@@ -150,7 +162,7 @@ test('cloture — basculer sur la papeterie change le montant attendu', async ()
     utilisateur: ADMIN,
   });
   try {
-    const bPapeterie = bouton(v.conteneur, 'Papeterie');
+    const bPapeterie = bouton(v.conteneur, LIB_PAPETERIE);
     assert.ok(bPapeterie, 'aucun selecteur d’activite sur l’ecran d’encaissement');
 
     await cliquer(v, bPapeterie);
@@ -193,7 +205,7 @@ test('cloture — l’imprimerie deja cloturee laisse la papeterie a cloturer', 
       'l’imprimerie est deja cloturee : le bouton ne devrait plus s’afficher',
     );
 
-    const bPapeterie = bouton(v.conteneur, 'Papeterie');
+    const bPapeterie = bouton(v.conteneur, LIB_PAPETERIE);
     assert.ok(bPapeterie, 'aucun selecteur d’activite sur l’ecran d’encaissement');
     await cliquer(v, bPapeterie);
 
@@ -215,7 +227,7 @@ test('cloture — la piece comptable ecrite porte l’activite comptee', async (
     utilisateur: ADMIN,
   });
   try {
-    await cliquer(v, bouton(v.conteneur, 'Papeterie'));
+    await cliquer(v, bouton(v.conteneur, LIB_PAPETERIE));
 
     const ouvrir = bouton(v.conteneur, 'Clôturer aujourd\'hui');
     assert.ok(ouvrir, 'bouton de cloture introuvable');

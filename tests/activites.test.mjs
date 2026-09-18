@@ -58,11 +58,21 @@ test('deux activites, pas trois — et l’imprimerie est celle par defaut', () 
 });
 
 test('les libelles sont ecrits pour le gerant, pas pour la base', () => {
-  assert.equal(libelleActivite(ACTIVITE_IMPRIMERIE), 'Imprimerie');
-  assert.equal(libelleActivite(ACTIVITE_PAPETERIE), 'Papeterie');
+  // Consigne du dirigeant (18/09/2026) : « pour la papeterie l'activite mets
+  // PAPETERIE OGOOUE pour faire la difference » — a l'ecran, « Papeterie »
+  // tout court se confond avec la CATEGORIE de prestation du meme nom. Les
+  // deux activites portent le nom du commerce, sinon leurs deux chiffres ne
+  // se lisent plus comme etant de meme nature.
+  assert.equal(libelleActivite(ACTIVITE_IMPRIMERIE), 'IMPRIMERIE OGOOUÉ');
+  assert.equal(libelleActivite(ACTIVITE_PAPETERIE), 'PAPETERIE OGOOUÉ');
   assert.equal(libelleActivite(TOUTES_ACTIVITES), 'Les deux');
   // Une valeur inconnue ne doit pas afficher « undefined » dans un ecran d'argent.
-  assert.equal(libelleActivite('zzz'), 'Imprimerie');
+  assert.equal(libelleActivite('zzz'), 'IMPRIMERIE OGOOUÉ');
+  // Le libelle est un habillage : la valeur STOCKEE reste en minuscules.
+  // Si ces deux assertions tombaient ensemble, une renommage d'affichage
+  // aurait silencieusement change ce qui part en base.
+  assert.equal(ACTIVITE_IMPRIMERIE, 'imprimerie');
+  assert.equal(ACTIVITE_PAPETERIE, 'papeterie');
 });
 
 /* ═══════════════════════════════════════════════════════════════════════════

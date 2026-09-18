@@ -30,8 +30,19 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { rendreEcran, texteVivant } from './outils/rendu-ecran.mjs';
 import { todayISO } from '../src/lib/dates.js';
+import { ACTIVITE_PAPETERIE, libelleActivite } from '../src/services/activites.js';
 
 const ADMIN = { id: 'u-admin', prenom: 'Gassim', nom: 'Admin', role: 'admin' };
+
+/**
+ * Le texte du bouton « papeterie », lu a la source.
+ *
+ * Ce fichier verifie que l'activite CHOISIE A L'ECRAN part bien en base, pas
+ * l'orthographe du libelle. Ecrit en dur, « Papeterie » a casse ces tests le
+ * 18/09/2026 quand le dirigeant a demande « PAPETERIE OGOOUE ». Le libelle
+ * exact est verifie une fois pour toutes dans tests/activites.test.mjs.
+ */
+const LIB_PAPETERIE = libelleActivite(ACTIVITE_PAPETERIE);
 
 /* ═══════════════════════════════════════════════════════════════════════════
    Outils
@@ -172,7 +183,7 @@ test('saisie des ventes comptoir — le rapport transmis porte l’activite choi
   try {
     assert.ok(v.texte.length > 30, 'écran blanc : le formulaire de saisie ne se monte pas');
 
-    const bPapeterie = bouton(v, 'Papeterie');
+    const bPapeterie = bouton(v, LIB_PAPETERIE);
     assert.ok(bPapeterie, 'aucun sélecteur d’activité là où l’on encaisse');
     await cliquer(v, bPapeterie);
 
@@ -194,7 +205,7 @@ test('mouvement financier — l’écriture part avec son activité', async () =
     await cliquer(v, bouton(v, 'Mouvements'), 'onglet Mouvements');
     await cliquer(v, bouton(v, 'Ajouter'), '« Ajouter »');
 
-    const bPapeterie = boutonDialogue(v, 'Papeterie');
+    const bPapeterie = boutonDialogue(v, LIB_PAPETERIE);
     assert.ok(bPapeterie, 'aucun sélecteur d’activité sur la saisie d’un mouvement');
     await cliquer(v, bPapeterie);
 
@@ -220,7 +231,7 @@ test('article de stock — l’article créé porte son activité', async () => 
   try {
     await cliquer(v, bouton(v, 'Nouvel article'), '« Nouvel article »');
 
-    const bPapeterie = boutonDialogue(v, 'Papeterie');
+    const bPapeterie = boutonDialogue(v, LIB_PAPETERIE);
     assert.ok(bPapeterie, 'aucun sélecteur d’activité sur la fiche article');
     await cliquer(v, bPapeterie);
 
@@ -252,7 +263,7 @@ test('commande — la commande créée porte son activité', async () => {
   try {
     await cliquer(v, bouton(v, 'Nouvelle commande'), '« Nouvelle commande »');
 
-    const bPapeterie = boutonDialogue(v, 'Papeterie');
+    const bPapeterie = boutonDialogue(v, LIB_PAPETERIE);
     assert.ok(bPapeterie, 'aucun sélecteur d’activité sur la saisie d’une commande');
     await cliquer(v, bPapeterie);
 
@@ -299,7 +310,7 @@ test('rapports — filtrer sur la papeterie retire les rapports de l’imprimeri
     ecran: 'src/features/rapports/page.jsx', donnees: BASE, utilisateur: ADMIN,
   });
   try {
-    const bPapeterie = bouton(v, 'Papeterie');
+    const bPapeterie = bouton(v, LIB_PAPETERIE);
     assert.ok(bPapeterie, 'aucun sélecteur d’activité sur l’écran des rapports');
     await cliquer(v, bPapeterie);
 

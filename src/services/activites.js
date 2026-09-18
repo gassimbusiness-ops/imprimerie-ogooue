@@ -92,10 +92,28 @@ export const ACTIVITE_DEFAUT = ACTIVITE_IMPRIMERIE;
  */
 export const TOUTES_ACTIVITES = '__toutes__';
 
-/** Libelles destines au gerant, pas a la base. */
+/**
+ * Libelles destines au gerant, pas a la base.
+ *
+ * ⚠️ NE PAS CONFONDRE AVEC LA VALEUR STOCKEE. La base contient toujours
+ * `imprimerie` / `papeterie` en minuscules ; ces chaines-ci ne servent QU'A
+ * L'AFFICHAGE. Changer un libelle ne doit jamais toucher une ligne existante.
+ *
+ * Pourquoi « OGOOUE » en majuscules dans les deux libelles (consigne du
+ * dirigeant, 18/09/2026 : « pour la papeterie l'activite mets PAPETERIE OGOOUE
+ * pour faire la difference ») : a l'ecran, « Papeterie » tout court se lit
+ * exactement comme la CATEGORIE de prestation `papeterie`/`imprimerie` des
+ * rapports (CATEGORIES_RAPPORT, src/services/finance-calc.js). Un gerant qui
+ * lit « Imprimerie 120 000 F » ne sait pas s'il regarde une caisse ou une
+ * ligne de prestation. Le nom du commerce leve l'ambiguite, et les deux
+ * activites le portent : n'en mettre qu'une en majuscules laisserait croire
+ * que les deux chiffres ne sont pas de meme nature.
+ *
+ * « Les deux » reste tel quel : ce n'est pas un commerce, c'est une vue.
+ */
 const LIBELLES = {
-  [ACTIVITE_IMPRIMERIE]: 'Imprimerie',
-  [ACTIVITE_PAPETERIE]: 'Papeterie',
+  [ACTIVITE_IMPRIMERIE]: 'IMPRIMERIE OGOOUÉ',
+  [ACTIVITE_PAPETERIE]: 'PAPETERIE OGOOUÉ',
   [TOUTES_ACTIVITES]: 'Les deux',
 };
 
