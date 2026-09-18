@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { db } from '@/services/db';
 import { useAuth } from '@/services/auth';
 import { NIVEAUX, RECOMPENSES } from '@/services/fidelite';
+import { creerVerrouExecution } from '@/services/execution-unique';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -10,10 +11,28 @@ import { toast } from 'sonner';
 
 function fmt(n) { return new Intl.NumberFormat('fr-FR').format(Math.round(n || 0)); }
 
+/**
+ * Verrou d'execution — une seule reclamation a la fois PAR CLIENT.
+ *
+ * Le `disabled` du bouton protege l'utilisateur ; ce verrou protege les points.
+ * Il couvre ce que `disabled` ne voit pas : deux clics dans la meme fraction de
+ * seconde (le second part avant que React ait re-rendu), le double montage de
+ * React.StrictMode, et deux recompenses cliquees ensemble — qui liraient toutes
+ * deux le MEME solde de points et le debiteraient chacune de leur cote.
+ *
+ * La cle porte sur la fiche de fidelite, pas sur la recompense : le solde de
+ * points est unique, deux debits simultanes le rendraient faux meme s'ils
+ * portent sur deux cadeaux differents.
+ *
+ * Declare hors du composant : un remontage ne le perd pas.
+ */
+const verrouFidelite = creerVerrouExecution();
+
 export default function ClientFidelite() {
   const { user } = useAuth();
   const [fidelite, setFidelite] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [reclamationEnCours, setReclamationEnCours] = useState(false);
 
   useEffect(() => {
     db.fidelite_clients.list().then((all) => {
@@ -23,25 +42,38 @@ export default function ClientFidelite() {
     });
   }, [user]);
 
-  const handleReclamer = async (recompense) => {
-    if (!fidelite) return;
-    if ((fidelite.points_actuels || 0) < recompense.points) {
-      toast.error('Points insuffisants');
-      return;
-    }
-    const newPoints = fidelite.points_actuels - recompense.points;
-    const hist = [...(fidelite.historique || []), {
-      type: 'recompense',
-      points: -recompense.points,
-      description: `Récompense : ${recompense.label}`,
-      date: new Date().toISOString(),
-    }];
-    await db.fidelite_clients.update(fidelite.id, {
-      points_actuels: newPoints,
-      historique: hist,
+  const handleReclamer = (recompense) => {
+    if (!fidelite) return Promise.resolve();
+    // ⚠️ La garde est DANS la fonction, pas seulement dans l'affichage : un
+    // bouton grise n'arrete pas un second appel deja parti.
+    return verrouFidelite.executerUneSeuleFois(`reclamer:${fidelite.id}`, async () => {
+      setReclamationEnCours(true);
+      try {
+        // Relecture EN BASE avant de debiter : l'objet du rendu peut dater
+        // d'avant une reclamation faite depuis un autre appareil.
+        const enBase = (await db.fidelite_clients.getById(fidelite.id)) || fidelite;
+        const pointsDisponibles = enBase.points_actuels || 0;
+        if (pointsDisponibles < recompense.points) {
+          toast.error('Points insuffisants');
+          return;
+        }
+        const newPoints = pointsDisponibles - recompense.points;
+        const hist = [...(enBase.historique || []), {
+          type: 'recompense',
+          points: -recompense.points,
+          description: `Récompense : ${recompense.label}`,
+          date: new Date().toISOString(),
+        }];
+        await db.fidelite_clients.update(fidelite.id, {
+          points_actuels: newPoints,
+          historique: hist,
+        });
+        setFidelite({ ...enBase, points_actuels: newPoints, historique: hist });
+        toast.success(`${recompense.label} réclamée ! Un conseiller vous contactera.`);
+      } finally {
+        setReclamationEnCours(false);
+      }
     });
-    setFidelite({ ...fidelite, points_actuels: newPoints, historique: hist });
-    toast.success(`${recompense.label} réclamée ! Un conseiller vous contactera.`);
   };
 
   const copyCode = () => {
@@ -207,7 +239,7 @@ export default function ClientFidelite() {
                   <Button
                     size="sm"
                     variant={canClaim ? 'default' : 'outline'}
-                    disabled={!canClaim}
+                    disabled={!canClaim || reclamationEnCours}
                     onClick={() => handleReclamer(r)}
                     className="text-xs shrink-0"
                   >

@@ -5,6 +5,7 @@ import { useChargeur, executerAction } from '@/services/chargement';
 import { EnChargement, EchecChargement } from '@/features/partages/etat-chargement';
 import { valeurStockTotal, valeurMachines } from '@/services/finance-calc';
 import { logAction } from '@/services/audit';
+import { creerVerrouExecution } from '@/services/execution-unique';
 import { notifyStockAlerte } from '@/services/notifications';
 import { preparerArticlesPourAffichage, seuilArticle, niveauStock } from '@/services/stocks-seuils';
 import { exportInventairePDF, exportCSV } from '@/services/export-pdf';
@@ -222,6 +223,20 @@ function StockDetail({ article, mouvements, open, onClose, canWrite, onEdit, onD
 /* ══════════════════════════════════════════════
    MAIN STOCKS PAGE
    ══════════════════════════════════════════════ */
+/**
+ * Verrou d'execution — un seul mouvement a la fois PAR ARTICLE.
+ *
+ * Le `disabled` du bouton protege l'utilisateur ; ce verrou protege
+ * l'inventaire. `handleMouvement` calcule le nouveau stock a partir de la
+ * quantite lue au rendu : deux appels concurrents partent du MEME stock avant,
+ * ecrivent la meme valeur apres, et enregistrent DEUX lignes de mouvement. Le
+ * stock physique et le stock affiche divergent d'une quantite entiere, et la
+ * divergence ne se decouvre qu'au comptage suivant.
+ *
+ * Declare hors du composant : un remontage ne le perd pas.
+ */
+const verrouStock = creerVerrouExecution();
+
 export default function Stocks() {
   const { hasPermission, user } = useAuth();
   const canWrite = hasPermission('stocks', 'write');
@@ -242,6 +257,7 @@ export default function Stocks() {
   const [showDetail, setShowDetail] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [mvtForm, setMvtForm] = useState({ type: 'entree', quantite: '', motif: '' });
+  const [mouvementEnCours, setMouvementEnCours] = useState(false);
 
   // `listOuLeve()` : sur une coupure, `list()` rendait `[]` et l'ecran affichait
   // un stock vide — pas « je n'ai pas pu lire le stock », mais « il n'y a plus
@@ -393,7 +409,19 @@ export default function Stocks() {
     if (ok) recharger();
   };
 
-  const handleMouvement = async () => {
+  const handleMouvement = () => verrouStock.executerUneSeuleFois(
+    `mouvement:${mouvementItem?.id || 'aucun'}`,
+    async () => {
+      setMouvementEnCours(true);
+      try {
+        await enregistrerMouvement();
+      } finally {
+        setMouvementEnCours(false);
+      }
+    },
+  );
+
+  const enregistrerMouvement = async () => {
     const qty = Number(mvtForm.quantite);
     if (!qty || qty <= 0) { toast.error('Quantité invalide'); return; }
 
@@ -878,6 +906,7 @@ export default function Stocks() {
             <Button
               className="w-full"
               variant={mvtForm.type === 'entree' ? 'default' : 'destructive'}
+              disabled={mouvementEnCours}
               onClick={handleMouvement}
             >
               {mvtForm.type === 'entree' ? 'Confirmer l\'entrée' : 'Confirmer la sortie'}

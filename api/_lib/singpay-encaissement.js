@@ -76,6 +76,9 @@ import { getSingPayHeaders, SINGPAY_BASE_URL } from '../../src/lib/singpayAuth.j
 // il est importable ici, dans une fonction serverless, comme dans le navigateur.
 // C'est tout l'intérêt — la règle « fiche → compte » n'existe qu'à un endroit.
 import { resoudreCompteClient } from '../../src/services/compte-client.js';
+// Date metier a Libreville. `src/lib/dates.js` est un module pur, importable
+// ici comme dans le navigateur — et c'est le seul endroit ou la regle vit.
+import { dateLocaleDepuisInstantUtc } from '../../src/lib/dates.js';
 
 /* ═══════════════════════════════════════════════════════════════════════════
    1. STATUTS
@@ -584,7 +587,19 @@ async function appliquerEncaissementConfirme({ depot, paiement, montant, origine
         montant,
         description: `Paiement Mobile Money — ${paiement.nom_client || 'Client'}${numero}`,
         compte_id: compteRow.id,
-        date: maintenant.slice(0, 10),
+        // ⚠️ JAMAIS `maintenant.slice(0, 10)`, qui est la date UTC.
+        //
+        // Cette fonction tourne sur Vercel, c'est-a-dire en UTC, pendant que
+        // l'imprimerie vit a Libreville (UTC+1, sans heure d'ete). Un paiement
+        // encaisse a 00 h 30 a Moanda est 23 h 30 UTC la VEILLE : le mouvement
+        // de tresorerie tombait dans la journee precedente, en pleine plage
+        // d'achats en ligne. Le rapprochement de caisse du lendemain ne le
+        // trouvait pas.
+        //
+        // `dateLocaleDepuisInstantUtc` convertit l'instant en date metier a
+        // +01:00 : le resultat ne depend ni du fuseau du serveur, ni de celui
+        // du navigateur. Voir l'en-tete de src/lib/dates.js.
+        date: dateLocaleDepuisInstantUtc(maintenant) || maintenant.slice(0, 10),
         reference,
         categorie: 'encaissement_singpay',
         source: 'singpay',

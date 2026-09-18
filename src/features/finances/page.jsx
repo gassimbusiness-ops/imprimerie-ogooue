@@ -7,7 +7,7 @@ import { EnChargement, EchecChargement } from '@/features/partages/etat-chargeme
 import { executerPrelevementsDus } from '@/services/credit-mensualites';
 import { executerChargesDues } from '@/services/charges-fixes-prelevement';
 import { apercuMensualitesDues, apercuChargesDues } from '@/services/prelevements-apercu';
-import { verrouPrelevements, CLE_PRELEVEMENTS } from '@/services/execution-unique';
+import { verrouPrelevements, CLE_PRELEVEMENTS, creerVerrouExecution } from '@/services/execution-unique';
 import { todayISO } from '@/lib/dates';
 import { exportGrandLivrePDF } from '@/services/export-pdf';
 import { tresorerieImprimerie, chargeMensuelle } from '@/services/finance-calc';
@@ -51,6 +51,19 @@ function addMonths(dateStr, n = 1) {
   d.setMonth(d.getMonth() + n);
   return d.toISOString().slice(0, 10);
 }
+
+/**
+ * Verrou d'execution — un seul enregistrement a la fois par onglet et par ligne.
+ *
+ * Le `disabled` du bouton protege l'utilisateur ; ce verrou protege l'argent.
+ * `handleSave` ajuste le solde des comptes AVANT d'ecrire le mouvement : deux
+ * appels concurrents debitaient deux fois le compte pour une seule saisie, et
+ * creaient deux mouvements. Le meme chemin sert aux dettes et aux charges
+ * fixes — c'est-a-dire aux remboursements.
+ *
+ * Declare hors du composant : un remontage ne le perd pas.
+ */
+const verrouFinances = creerVerrouExecution();
 
 const TABS = [
   { id: 'comptes', label: 'Comptes bancaires', icon: Building2 },
@@ -108,6 +121,7 @@ export default function Finances() {
   const [confirmPrelevement, setConfirmPrelevement] = useState(null);
   const [prelevementEnCours, setPrelevementEnCours] = useState(false);
   const [showForm, setShowForm] = useState(false);
+  const [enregistrementEnCours, setEnregistrementEnCours] = useState(false);
   const [editItem, setEditItem] = useState(null);
   const [form, setForm] = useState({});
   const [filterMonth, setFilterMonth] = useState(() => {
@@ -292,7 +306,19 @@ export default function Finances() {
     setShowForm(true);
   };
 
-  const handleSave = async () => {
+  const handleSave = () => verrouFinances.executerUneSeuleFois(
+    `${activeTab}:${editItem?.id || 'nouveau'}`,
+    async () => {
+      setEnregistrementEnCours(true);
+      try {
+        await enregistrerLigne();
+      } finally {
+        setEnregistrementEnCours(false);
+      }
+    },
+  );
+
+  const enregistrerLigne = async () => {
     const coll = getCollection();
     const data = { ...form };
     // Convert numbers
@@ -1217,7 +1243,7 @@ export default function Finances() {
               </div>
             </>)}
 
-            <Button className="w-full" onClick={handleSave}>{editItem ? 'Enregistrer' : 'Ajouter'}</Button>
+            <Button className="w-full" disabled={enregistrementEnCours} onClick={handleSave}>{editItem ? 'Enregistrer' : 'Ajouter'}</Button>
           </div>
         </DialogContent>
       </Dialog>

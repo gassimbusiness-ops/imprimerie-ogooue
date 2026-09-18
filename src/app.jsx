@@ -1,6 +1,7 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { toast } from 'sonner';
 import { useAuth } from '@/services/auth';
+import { accesPortail } from '@/services/acces-portail';
 import AppLayout from '@/components/layout/app-layout';
 import ClientLayout from '@/components/layout/client-layout';
 import Login from '@/features/login/page';
@@ -75,10 +76,28 @@ function ProtectedRoutes() {
   return <AppLayout />;
 }
 
+/**
+ * Garde d'un portail.
+ *
+ * ⚠️ Ces deux gardes ne verifiaient QUE la presence d'une session : n'importe
+ * quel compte connecte — employe, client — ouvrait `/associe` en tapant
+ * l'adresse, et y lisait la tresorerie, le capital et les salaires. La regle de
+ * qui entre ou pas vit desormais dans `src/services/acces-portail.js`, testee
+ * role par role.
+ *
+ * Le refus renvoie vers `/`, jamais vers le portail refuse : `ProtectedRoutes`
+ * y remet chaque role a sa place (client → `/client`, associe → `/associe`),
+ * donc aucun aller-retour ne peut boucler.
+ */
 function ProtectedClientRoutes() {
   const { user, loading } = useAuth();
   if (loading) return <div className="flex h-screen items-center justify-center"><div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" /></div>;
   if (!user) return <Navigate to="/login" replace />;
+  const verdict = accesPortail(user, 'client');
+  if (!verdict.autorise) {
+    toast.error(verdict.motif, { duration: 8000 });
+    return <Navigate to="/" replace />;
+  }
   return <ClientLayout />;
 }
 
@@ -86,6 +105,11 @@ function ProtectedAssocieRoutes() {
   const { user, loading } = useAuth();
   if (loading) return <div className="flex h-screen items-center justify-center"><div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" /></div>;
   if (!user) return <Navigate to="/login" replace />;
+  const verdict = accesPortail(user, 'associe');
+  if (!verdict.autorise) {
+    toast.error(verdict.motif, { duration: 8000 });
+    return <Navigate to="/" replace />;
+  }
   return <AssocieLayout />;
 }
 

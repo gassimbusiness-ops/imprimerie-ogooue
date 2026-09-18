@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { db } from '@/services/db';
+import { toISODate, todayISO } from '@/lib/dates';
 import { useAuth } from '@/services/auth';
 import { logAction } from '@/services/audit';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -17,6 +18,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { askAI } from '@/services/ai';
+import { lireJsonIA, scoreLisible } from '@/services/lecture-json-ia';
 import {
   STATUT_RH, estEnAttente, estApprouvee, estRejetee, estPayee, estEngageante, libelleStatutDemande,
 } from '@/services/statuts-rh';
@@ -72,7 +74,10 @@ export default function PerformanceRH() {
   const [showEvalForm, setShowEvalForm] = useState(false);
   const [showEvalDetail, setShowEvalDetail] = useState(null);
   const [evalForm, setEvalForm] = useState({
-    employeId: '', periode: new Date().toISOString().slice(0, 7),
+    // ⚠️ `todayISO()` et non `.toISOString()` : le 1er du mois entre 00 h et
+    // 01 h a Libreville, l'ancienne forme ecrivait l'evaluation SUR LE MOIS
+    // PRECEDENT. Voir src/lib/dates.js.
+    employeId: '', periode: todayISO().slice(0, 7),
     joursPresents: '', joursAbsents: '', retards: '', totalHeuresTravaillees: '',
     tachesAssignees: '', tachesTerminees: '', tachesEnRetard: '',
     notePerformance: 3, commentaireManager: '',
@@ -100,7 +105,9 @@ export default function PerformanceRH() {
 
   useEffect(() => { load(); }, []);
 
-  const currentMonth = new Date().toISOString().slice(0, 7);
+  // Mois de reference de la paie : meme piege, consequence directe sur les
+  // jours pointes retenus et donc sur le salaire proratise.
+  const currentMonth = todayISO().slice(0, 7);
 
   // ═══ Paie semi-auto + Activite par employe (mois courant) ═══
   const paieData = useMemo(() => {
@@ -144,7 +151,7 @@ export default function PerformanceRH() {
   // ═══ Dashboard data ═══
   const dashData = useMemo(() => {
     const effectif = employes.length;
-    const today = new Date().toISOString().slice(0, 10);
+    const today = todayISO();
     const todayPointages = pointages.filter((p) => p.date === today);
     const presentsAujourdhui = todayPointages.filter((p) => p.statut === 'present' || p.arrivee).length;
     const absentsAujourdhui = effectif - presentsAujourdhui;
@@ -174,7 +181,7 @@ export default function PerformanceRH() {
     for (let i = 5; i >= 0; i--) {
       const d = new Date();
       d.setMonth(d.getMonth() - i);
-      months.push(d.toISOString().slice(0, 7));
+      months.push(toISODate(d).slice(0, 7));
     }
     const perfParMois = months.map((m) => {
       const perfs = performances.filter((p) => p.periode === m);
@@ -341,18 +348,16 @@ export default function PerformanceRH() {
 
       const response = await askAI(system, userMessage, 1024);
 
-      // Extract JSON from the response (handle markdown code blocks)
-      let jsonStr = response;
-      const jsonMatch = response.match(/```(?:json)?\s*([\s\S]*?)```/);
-      if (jsonMatch) jsonStr = jsonMatch[1].trim();
-      // Also try to find raw JSON object
-      if (!jsonStr.startsWith('{')) {
-        const braceMatch = jsonStr.match(/\{[\s\S]*\}/);
-        if (braceMatch) jsonStr = braceMatch[0];
+      // Lecture PARTAGEE (src/services/lecture-json-ia.js) : la meme que le
+      // Dashboard Financier et Rapports & Analyses. Elle remplace les trois
+      // essais successifs qui vivaient ici, et surtout elle NOMME l'echec.
+      const lu = lireJsonIA(response);
+      if (!lu.ok) {
+        setIaResult(null);
+        toast.error(lu.message, { duration: 12000 });
+        return;
       }
-
-      const parsed = JSON.parse(jsonStr);
-      setIaResult(parsed);
+      setIaResult(lu.donnees);
       toast.success('Analyse IA terminée');
     } catch (err) {
       console.error('[IA RH]', err);
@@ -363,6 +368,10 @@ export default function PerformanceRH() {
   };
 
   if (loading) return <div className="flex items-center justify-center py-20"><div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" /></div>;
+
+  // `null` quand le modele n'a pas renvoye de score : la jauge ne se dessine pas
+  // plutot que d'ecrire « NaN 314 » dans l'attribut du cercle.
+  const scoreGlobal = iaResult ? scoreLisible(iaResult.score_global) : null;
 
   return (
     <div className="space-y-6">
@@ -835,17 +844,23 @@ export default function PerformanceRH() {
               <Card className="border-l-4 border-l-violet-500">
                 <CardContent className="p-6">
                   <div className="flex flex-col sm:flex-row items-center gap-6">
-                    <div className="relative flex items-center justify-center">
-                      <svg className="h-28 w-28 -rotate-90" viewBox="0 0 120 120">
-                        <circle cx="60" cy="60" r="50" fill="none" stroke="#e5e7eb" strokeWidth="10" />
-                        <circle
-                          cx="60" cy="60" r="50" fill="none"
-                          stroke={iaResult.score_global >= 70 ? '#10b981' : iaResult.score_global >= 50 ? '#f59e0b' : '#ef4444'}
-                          strokeWidth="10" strokeLinecap="round"
-                          strokeDasharray={`${(iaResult.score_global / 100) * 314} 314`}
-                        />
-                      </svg>
-                      <span className="absolute text-2xl font-bold">{iaResult.score_global}</span>
+                    <div className="relative flex h-28 w-28 shrink-0 items-center justify-center">
+                      {scoreGlobal === null ? (
+                        <span className="px-2 text-center text-xs text-muted-foreground">Score non renvoyé</span>
+                      ) : (
+                        <>
+                          <svg className="h-28 w-28 -rotate-90" viewBox="0 0 120 120">
+                            <circle cx="60" cy="60" r="50" fill="none" stroke="#e5e7eb" strokeWidth="10" />
+                            <circle
+                              cx="60" cy="60" r="50" fill="none"
+                              stroke={scoreGlobal >= 70 ? '#10b981' : scoreGlobal >= 50 ? '#f59e0b' : '#ef4444'}
+                              strokeWidth="10" strokeLinecap="round"
+                              strokeDasharray={`${(scoreGlobal / 100) * 314} 314`}
+                            />
+                          </svg>
+                          <span className="absolute text-2xl font-bold">{scoreGlobal}</span>
+                        </>
+                      )}
                     </div>
                     <div className="flex-1 text-center sm:text-left">
                       <p className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">Score global de l'équipe</p>

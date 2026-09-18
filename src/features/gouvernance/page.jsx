@@ -19,6 +19,7 @@ import {
   Edit3, AlertTriangle, FileText, Download, Pencil, Calculator, Edit2, Trash2,
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { creerVerrouExecution } from '@/services/execution-unique';
 
 // ─── Defaults from seed-data (used as initial values if no DB overrides) ───
 const DEFAULT_VALUATION = {
@@ -27,6 +28,19 @@ const DEFAULT_VALUATION = {
   tresorerie_compte: FINANCIAL_SUMMARY.cash_en_compte,
   tresorerie_caisse: FINANCIAL_SUMMARY.cash_en_caisse,
 };
+
+/**
+ * Verrou d'execution — un seul remboursement de dette a la fois.
+ *
+ * Le `disabled` du bouton protege l'utilisateur ; ce verrou protege l'argent.
+ * `handleAddRemboursement` ecrit le remboursement PUIS recalcule le solde de la
+ * dette a partir de la liste lue au rendu : deux appels concurrents lisaient la
+ * meme liste, creaient deux lignes et ecrivaient deux fois le MEME solde — la
+ * dette envers l'associe etait amputee une fois pour deux versements.
+ *
+ * Declare hors du composant : un remontage ne le perd pas.
+ */
+const verrouGouvernance = creerVerrouExecution();
 
 function fmt(n) { return new Intl.NumberFormat('fr-FR').format(Math.round(n || 0)); }
 function pct(n) { return (n || 0).toFixed(1) + '%'; }
@@ -120,6 +134,7 @@ export default function Gouvernance() {
   const [loading, setLoading] = useState(true);
   const [showApportForm, setShowApportForm] = useState(false);
   const [showRemboursementForm, setShowRemboursementForm] = useState(false);
+  const [remboursementEnCours, setRemboursementEnCours] = useState(false);
   const [showModifModal, setShowModifModal] = useState(false);
   const [showAddInvestisseur, setShowAddInvestisseur] = useState(false);
   const [selectedInvestisseur, setSelectedInvestisseur] = useState(null);
@@ -349,7 +364,19 @@ export default function Gouvernance() {
     }
   };
 
-  const handleAddRemboursement = async () => {
+  const handleAddRemboursement = () => verrouGouvernance.executerUneSeuleFois(
+    `remboursement:${editRembId || 'nouveau'}`,
+    async () => {
+      setRemboursementEnCours(true);
+      try {
+        await enregistrerRemboursement();
+      } finally {
+        setRemboursementEnCours(false);
+      }
+    },
+  );
+
+  const enregistrerRemboursement = async () => {
     if (!rembForm.montant || Number(rembForm.montant) <= 0) { toast.error('Montant requis'); return; }
     const montant = Number(rembForm.montant);
 
@@ -1487,7 +1514,7 @@ export default function Gouvernance() {
               <label className="mb-1.5 block text-sm font-medium">Description</label>
               <Input value={rembForm.description} onChange={(e) => setRembForm({ ...rembForm, description: e.target.value })} placeholder="Ex: Versement espèces..." />
             </div>
-            <Button className="w-full" onClick={handleAddRemboursement}>{editRembId ? 'Enregistrer les modifications' : 'Valider le remboursement'}</Button>
+            <Button className="w-full" disabled={remboursementEnCours} onClick={handleAddRemboursement}>{editRembId ? 'Enregistrer les modifications' : 'Valider le remboursement'}</Button>
           </div>
         </DialogContent>
       </Dialog>

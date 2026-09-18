@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { db } from '@/services/db';
+import { todayISO } from '@/lib/dates';
 import { useAuth } from '@/services/auth';
 import { logAction } from '@/services/audit';
 import { Card, CardContent } from '@/components/ui/card';
@@ -103,7 +104,7 @@ export default function DemandesRH() {
 
   /* ── KPIs enrichis ── */
   const stats = useMemo(() => {
-    const currentMonth = new Date().toISOString().slice(0, 7);
+    const currentMonth = todayISO().slice(0, 7);
     const thisMonth = demandes.filter((d) => (d.created_at || '').startsWith(currentMonth));
 
     const chargeTypes = Object.keys(TYPES_CHARGES);
@@ -197,7 +198,10 @@ export default function DemandesRH() {
             montant: d.montant,
             description: desc,
             compte_id: compteIdFinal,
-            date: new Date().toISOString().slice(0, 10),
+            // ⚠️ `todayISO()` et non `.toISOString()` : c'est la date d'une
+            // SORTIE DE CAISSE. Le 1er du mois a 00 h 30 a Libreville,
+            // l'ancienne forme la faisait tomber dans le mois precedent.
+            date: todayISO(),
             reference,
             categorie: isCharge ? 'charge_ponctuelle' : 'avance_employe',
             source: 'demandes_rh',
@@ -384,7 +388,7 @@ export default function DemandesRH() {
             </h3>
             <div className="space-y-2">
               {Object.entries(TYPES_CHARGES).map(([key, config]) => {
-                const currentMonth = new Date().toISOString().slice(0, 7);
+                const currentMonth = todayISO().slice(0, 7);
                 const items = demandes.filter((d) => d.type === key && (d.created_at || '').startsWith(currentMonth));
                 const total = items.filter(estEngageante).reduce((s, d) => s + (d.montant || 0), 0);
                 const pending = items.filter(estEnAttente).reduce((s, d) => s + (d.montant || 0), 0);

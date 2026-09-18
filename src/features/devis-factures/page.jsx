@@ -4,6 +4,7 @@ import { useAuth } from '@/services/auth';
 import { notifyFactureDisponible } from '@/services/notifications';
 import { exportDocument } from '@/services/export-pdf';
 import { todayISO } from '@/lib/dates';
+import { creerVerrouExecution } from '@/services/execution-unique';
 import ClientCombobox from './client-combobox';
 import { RESOLUTION, resoudreClient, nettoyerNom } from './client-resolution';
 import { assurerClientFacture } from './client-annuaire';
@@ -64,6 +65,19 @@ function fmt(n) {
   return new Intl.NumberFormat('fr-FR').format(n || 0);
 }
 
+/**
+ * Verrou d'execution — une seule conversion a la fois PAR DEVIS.
+ *
+ * Le `disabled` du bouton protege l'utilisateur ; ce verrou protege la
+ * facturation. Le numero de facture est calcule a partir du NOMBRE de factures
+ * deja lues (`FAC-${factures.length + 1}`) : deux appels concurrents lisent le
+ * meme nombre, fabriquent DEUX factures portant LE MEME NUMERO, et notifient
+ * deux fois le client.
+ *
+ * Declare hors du composant : un remontage ne le perd pas.
+ */
+const verrouDevis = creerVerrouExecution();
+
 export default function DevisFactures() {
   const { hasPermission } = useAuth();
   const canWrite = hasPermission('devis_factures', 'write');
@@ -74,6 +88,7 @@ export default function DevisFactures() {
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [showDetail, setShowDetail] = useState(null);
+  const [conversionEnCours, setConversionEnCours] = useState(null);
   const [form, setForm] = useState({
     type: 'devis',
     client_id: '',
@@ -277,7 +292,19 @@ export default function DevisFactures() {
   // Conversion devis → facture.
   // C'est ici que se joue le cas « devis a client libre qui devient une facture » :
   // le devis n'avait pas cree de fiche, la facture doit le faire maintenant.
-  const handleConvertToFacture = async (devis) => {
+  const handleConvertToFacture = (devis) => verrouDevis.executerUneSeuleFois(
+    `conversion:${devis.id}`,
+    async () => {
+      setConversionEnCours(devis.id);
+      try {
+        await convertirDevisEnFacture(devis);
+      } finally {
+        setConversionEnCours(null);
+      }
+    },
+  );
+
+  const convertirDevisEnFacture = async (devis) => {
     const factures = documents.filter((d) => d._type === 'facture');
     const num = `FAC-${String(factures.length + 1).padStart(4, '0')}`;
 
@@ -626,7 +653,7 @@ export default function DevisFactures() {
                       </Button>
                     )}
                     {showDetail._type === 'devis' && (showDetail.statut === 'envoye' || showDetail.statut === 'brouillon') && (
-                      <Button size="sm" className="gap-1" onClick={() => handleConvertToFacture(showDetail)}>
+                      <Button size="sm" className="gap-1" disabled={conversionEnCours === showDetail.id} onClick={() => handleConvertToFacture(showDetail)}>
                         <ArrowRight className="h-3.5 w-3.5" /> Convertir en facture
                       </Button>
                     )}

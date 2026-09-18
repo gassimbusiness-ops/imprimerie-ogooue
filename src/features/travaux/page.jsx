@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { db } from '@/services/db';
 import { useAuth } from '@/services/auth';
 import { logAction } from '@/services/audit';
+import { creerVerrouExecution } from '@/services/execution-unique';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -43,6 +44,23 @@ const SOURCES_PAIEMENT = [
   { value: 'moov_money', label: 'Moov Money' },
 ];
 
+/**
+ * Verrous d'execution — un seul enregistrement a la fois par projet, et par etape.
+ *
+ * Le `disabled` des boutons protege l'utilisateur ; ces verrous protegent
+ * l'argent. `handleSaveEtape` cree un MOUVEMENT DE SORTIE et debite le compte
+ * source des qu'une etape passe « payee » : deux appels concurrents sortaient
+ * deux fois la depense du chantier de la caisse, sous deux references
+ * distinctes — donc sans qu'aucune idempotence ne les rattrape.
+ *
+ * Deux verrous separes : enregistrer une etape ne doit pas bloquer
+ * l'enregistrement d'un projet, ce sont deux formulaires distincts.
+ *
+ * Declares hors du composant : un remontage ne les perd pas.
+ */
+const verrouProjet = creerVerrouExecution();
+const verrouEtape = creerVerrouExecution();
+
 export default function Travaux() {
   const { hasPermission, user } = useAuth();
   const isAssocie = user?.role === 'associe';
@@ -58,6 +76,8 @@ export default function Travaux() {
   const [showEtapeForm, setShowEtapeForm] = useState(false);
   const [editProjet, setEditProjet] = useState(null);
   const [editEtape, setEditEtape] = useState(null);
+  const [projetEnCours, setProjetEnCours] = useState(false);
+  const [etapeEnCours, setEtapeEnCours] = useState(false);
   const [selectedProjet, setSelectedProjet] = useState(null);
   const [projetForm, setProjetForm] = useState(emptyProjet);
   const [etapeForm, setEtapeForm] = useState(emptyEtape);
@@ -157,7 +177,19 @@ export default function Travaux() {
     setShowProjetForm(true);
   };
 
-  const handleSaveProjet = async () => {
+  const handleSaveProjet = () => verrouProjet.executerUneSeuleFois(
+    `projet:${editProjet?.id || 'nouveau'}`,
+    async () => {
+      setProjetEnCours(true);
+      try {
+        await enregistrerProjet();
+      } finally {
+        setProjetEnCours(false);
+      }
+    },
+  );
+
+  const enregistrerProjet = async () => {
     if (!projetForm.nom.trim()) { toast.error('Nom requis'); return; }
     const data = { ...projetForm, budget_prevu: Number(projetForm.budget_prevu) || 0 };
     if (editProjet) {
@@ -175,7 +207,19 @@ export default function Travaux() {
   const openAddEtape = (projetId) => { setSelectedProjet(projetId); setEditEtape(null); setEtapeForm(emptyEtape); setShowEtapeForm(true); };
   const openEditEtape = (e) => { setSelectedProjet(e.projet_id); setEditEtape(e); setEtapeForm({ nom: e.nom || '', description: e.description || '', statut: e.statut || 'en_attente', budget: e.budget || '', depense: e.depense || '', statut_paiement: e.statut_paiement || 'non_paye', source_paiement: e.source_paiement || 'caisse' }); setShowEtapeForm(true); };
 
-  const handleSaveEtape = async () => {
+  const handleSaveEtape = () => verrouEtape.executerUneSeuleFois(
+    `etape:${editEtape?.id || `nouvelle:${selectedProjet}`}`,
+    async () => {
+      setEtapeEnCours(true);
+      try {
+        await enregistrerEtape();
+      } finally {
+        setEtapeEnCours(false);
+      }
+    },
+  );
+
+  const enregistrerEtape = async () => {
     if (!etapeForm.nom.trim()) { toast.error('Nom requis'); return; }
     const depense = Number(etapeForm.depense) || 0;
     const data = { ...etapeForm, projet_id: selectedProjet, budget: Number(etapeForm.budget) || 0, depense };
@@ -589,7 +633,7 @@ export default function Travaux() {
               <div><label className="mb-1.5 block text-sm font-medium">Debut</label><Input type="date" value={projetForm.date_debut} onChange={(e) => setProjetForm({ ...projetForm, date_debut: e.target.value })} /></div>
               <div><label className="mb-1.5 block text-sm font-medium">Fin</label><Input type="date" value={projetForm.date_fin} onChange={(e) => setProjetForm({ ...projetForm, date_fin: e.target.value })} /></div>
             </div>
-            <Button className="w-full" onClick={handleSaveProjet}>{editProjet ? 'Enregistrer' : 'Creer'}</Button>
+            <Button className="w-full" disabled={projetEnCours} onClick={handleSaveProjet}>{editProjet ? 'Enregistrer' : 'Creer'}</Button>
           </div>
         </DialogContent>
       </Dialog>
@@ -661,7 +705,7 @@ export default function Travaux() {
                 })()}
               </div>
             )}
-            <Button className="w-full" onClick={handleSaveEtape}>{editEtape ? 'Enregistrer' : 'Ajouter'}</Button>
+            <Button className="w-full" disabled={etapeEnCours} onClick={handleSaveEtape}>{editEtape ? 'Enregistrer' : 'Ajouter'}</Button>
           </div>
         </DialogContent>
       </Dialog>

@@ -5,6 +5,7 @@ import { useAuth } from '@/services/auth';
 import { useChargeur, executerAction } from '@/services/chargement';
 import { EnChargement, EchecChargement } from '@/features/partages/etat-chargement';
 import { logAction } from '@/services/audit';
+import { creerVerrouExecution } from '@/services/execution-unique';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -52,12 +53,25 @@ const DENOMINATIONS = [
   { label: '5 F', value: 5 },
 ];
 
+/**
+ * Verrou d'execution — une seule cloture a la fois, pour un jour donne.
+ *
+ * Le `disabled` du bouton protege l'utilisateur ; ce verrou protege la piece
+ * comptable. Deux clics creaient DEUX clotures pour le meme jour, avec le meme
+ * ecart : l'ecart du soir etait compte deux fois dans les statistiques, et un
+ * « ecart majeur » etait notifie deux fois a l'administrateur.
+ *
+ * Declare hors du composant : un remontage ne le perd pas.
+ */
+const verrouCloture = creerVerrouExecution();
+
 export default function ClotureCaisse() {
   const { user, hasPermission, isAdmin } = useAuth();
   const canWrite = hasPermission('statistiques', 'write');
   const [clotures, setClotures] = useState([]);
   const [rapports, setRapports] = useState([]);
   const [showForm, setShowForm] = useState(false);
+  const [clotureEnCours, setClotureEnCours] = useState(false);
   const [showDetail, setShowDetail] = useState(null);
   const [counts, setCounts] = useState({});
   const [commentaire, setCommentaire] = useState('');
@@ -109,7 +123,16 @@ export default function ClotureCaisse() {
     setShowForm(true);
   };
 
-  const handleSubmit = async () => {
+  const handleSubmit = () => verrouCloture.executerUneSeuleFois(`cloture:${today}`, async () => {
+    setClotureEnCours(true);
+    try {
+      await enregistrerCloture();
+    } finally {
+      setClotureEnCours(false);
+    }
+  });
+
+  const enregistrerCloture = async () => {
     const statut = Math.abs(ecart) < 1000 ? 'ok' : Math.abs(ecart) < 5000 ? 'ecart_mineur' : 'ecart_majeur';
     const data = {
       date: today,
@@ -386,7 +409,7 @@ export default function ClotureCaisse() {
               />
             </div>
 
-            <Button className="w-full gap-2" onClick={handleSubmit}>
+            <Button className="w-full gap-2" disabled={clotureEnCours} onClick={handleSubmit}>
               <CheckCircle2 className="h-4 w-4" />
               Enregistrer la clôture
             </Button>

@@ -480,8 +480,15 @@ export async function rendreEcran(p) {
   // Les ecrans qui contiennent des `<Link>` ont besoin d'un routeur : sans lui,
   // le montage echoue au premier lien rendu. On n'enveloppe QUE sur demande
   // (`routeur: true`), pour ne rien changer aux tests deja ecrits.
+  // `entreesRouteur` : l'adresse depuis laquelle on monte. Indispensable pour
+  // tester une GARDE DE ROUTE — « un employe qui tape /associe » n'a de sens
+  // qu'a partir d'une URL. Absent, le routeur demarre a « / » comme avant.
   const element = p.routeur
-    ? React.createElement(module.MemoryRouter, null, React.createElement(module.Ecran))
+    ? React.createElement(
+      module.MemoryRouter,
+      p.entreesRouteur ? { initialEntries: p.entreesRouteur } : null,
+      React.createElement(module.Ecran),
+    )
     : React.createElement(module.Ecran);
 
   await act(async () => {

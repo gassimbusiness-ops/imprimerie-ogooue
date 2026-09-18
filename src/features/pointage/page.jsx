@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { db } from '@/services/db';
+import { toISODate, todayISO } from '@/lib/dates';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -43,6 +44,10 @@ function minutesToHM(mins) {
   return `${h}h${pad(m)}`;
 }
 
+// ⚠️ `toISODate` et jamais `.toISOString().split('T')[0]` : a Libreville
+// (UTC+1), minuit local est 23 h UTC la VEILLE. Entre 00 h et 01 h, la semaine
+// entiere se decalait d'un jour — et le pointage lu n'etait pas celui du jour.
+// Voir l'en-tete de src/lib/dates.js.
 function getWeekDates(offset = 0) {
   const now = new Date();
   const day = now.getDay();
@@ -52,7 +57,7 @@ function getWeekDates(offset = 0) {
   for (let i = 0; i < 7; i++) {
     const d = new Date(monday);
     d.setDate(monday.getDate() + i);
-    dates.push(d.toISOString().split('T')[0]);
+    dates.push(toISODate(d));
   }
   return dates;
 }
@@ -81,7 +86,11 @@ export default function Pointage() {
   useEffect(() => { load(); }, []);
 
   const weekDates = useMemo(() => getWeekDates(weekOffset), [weekOffset]);
-  const today = new Date().toISOString().split('T')[0];
+  // ⚠️ `todayISO()` et non `.toISOString()` : cette date est celle SOUS LAQUELLE
+  // le pointage est ECRIT. Entre 00 h et 01 h a Libreville, l'ancienne forme
+  // rendait la veille — le pointage de nuit ecrasait celui de la veille, et la
+  // paie etait fausse a la source.
+  const today = todayISO();
   const weekStart = weekDates[0];
   const weekEnd = weekDates[6];
 

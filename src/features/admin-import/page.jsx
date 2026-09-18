@@ -1,14 +1,40 @@
 /**
- * Page d'import des données réelles — Admin uniquement
- * Cette page est temporaire et sera retirée après l'import.
+ * Page d'import des donnees reelles — Admin uniquement.
+ *
+ * ⚠️ CE QUE CETTE PAGE DETRUIT
+ *
+ * `doDeleteTestData()` supprime, une ligne a la fois et sans retour possible :
+ * TOUS les rapports journaliers, TOUS les articles de stock, TOUS les
+ * mouvements de stock. Au 18/09/2026 la base de production en compte
+ * respectivement 237, 45 et 44 : c'est trois mois de saisie du gerant.
+ *
+ * La route `/admin-import` est ACTIVE et ABSENTE DU MENU — donc invisible, et
+ * non surveillee. Jusqu'a cette intervention, un seul clic sur « Lancer
+ * l'import complet » suffisait : AUCUNE confirmation, aucun comptage prealable,
+ * aucune trace dans le journal d'audit.
+ *
+ * Desormais, et dans cet ordre :
+ *   1. un COMPTAGE en lecture seule dit, chiffre par chiffre, ce qui va
+ *      disparaitre ;
+ *   2. l'administrateur doit retaper le mot SUPPRIMER — un mot qu'on ne tape
+ *      pas par accident ;
+ *   3. la destruction est tracee dans le journal d'audit AVANT d'avoir lieu ;
+ *   4. les trois conditions (role, comptage fait, mot retape) sont verifiees
+ *      DANS `runFullImport`, pas seulement dans l'affichage : un bouton grise
+ *      n'arrete pas un appel deja parti.
+ *
+ * Le code d'import lui-meme n'a pas ete touche : il servira peut-etre encore.
  */
 import { useState, useRef } from 'react';
 import { db } from '@/services/db';
 import { useAuth } from '@/services/auth';
+import { logAction } from '@/services/audit';
+import { creerVerrouExecution } from '@/services/execution-unique';
+import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
-import { Upload, CheckCircle, AlertTriangle, Loader2, Database } from 'lucide-react';
+import { Upload, CheckCircle, AlertTriangle, Loader2, Database, ListChecks, ShieldAlert } from 'lucide-react';
 
 /* ─── Helpers ─── */
 function fmt(n) { return new Intl.NumberFormat('fr-FR').format(Math.round(n || 0)); }
@@ -65,6 +91,15 @@ function isMetaRow(designation) {
   return META_KEYWORDS.some(kw => d.includes(kw)) || d.startsWith('VALEUR TOTAL');
 }
 
+/** Le mot a retaper. Volontairement en majuscules, sans accent, non traduit. */
+const MOT_DE_CONFIRMATION = 'SUPPRIMER';
+
+/**
+ * Verrou d'execution — un seul import a la fois.
+ * Le `disabled` du bouton protege l'utilisateur ; ce verrou protege la base.
+ */
+const verrouImport = creerVerrouExecution();
+
 /* ══════════════════════════════════════════════
    MAIN IMPORT PAGE
    ══════════════════════════════════════════════ */
@@ -74,6 +109,11 @@ export default function AdminImport() {
   const [running, setRunning] = useState(false);
   const [step, setStep] = useState('');
   const [stats, setStats] = useState(null);
+  // Comptage prealable : `null` tant qu'il n'a pas ete fait. C'est LUI qui
+  // autorise l'import — pas l'affichage.
+  const [aDetruire, setADetruire] = useState(null);
+  const [comptageEnCours, setComptageEnCours] = useState(false);
+  const [motSaisi, setMotSaisi] = useState('');
   const logsEndRef = useRef(null);
 
   const log = (msg, type = 'info') => {
@@ -436,11 +476,69 @@ export default function AdminImport() {
     return { rapports: rapports.length, produits: produits.length, catalogue: catalogue.length, totalChantier };
   };
 
+  /* ─── Comptage prealable — LECTURE SEULE ───
+     Rien n'est ecrit ici. On va chercher, en base, le nombre exact de lignes
+     que l'import detruira, pour pouvoir le NOMMER dans la confirmation. Une
+     confirmation qui dit « etes-vous sur ? » sans dire de quoi ne protege
+     personne. */
+  const compterCeQuiSeraDetruit = async () => {
+    setComptageEnCours(true);
+    try {
+      const [rapports, produits, mouvements] = await Promise.all([
+        db.rapports.list(),
+        db.produits.list(),
+        db.mouvements_stock.list(),
+      ]);
+      const dates = rapports.map((r) => r.date).filter(Boolean).sort();
+      const compte = {
+        rapports: rapports.length,
+        produits: produits.length,
+        mouvements_stock: mouvements.length,
+        total: rapports.length + produits.length + mouvements.length,
+        premiere_date: dates[0] || null,
+        derniere_date: dates[dates.length - 1] || null,
+      };
+      setADetruire(compte);
+      setMotSaisi('');
+      return compte;
+    } finally {
+      setComptageEnCours(false);
+    }
+  };
+
   /* ─── Run all steps ─── */
-  const runFullImport = async () => {
+  const runFullImport = () => verrouImport.executerUneSeuleFois('import-admin', async () => {
+    // ── LES TROIS GARDES, DANS LA FONCTION ──
+    // Un bouton grise n'arrete pas un appel deja parti, et une page ouverte
+    // dans un second onglet n'a pas le meme etat d'affichage.
+    if (user?.role !== 'admin') {
+      log('⛔ Import refusé : réservé aux administrateurs.', 'error');
+      return;
+    }
+    if (!aDetruire) {
+      log('⛔ Import refusé : le comptage de ce qui sera supprimé n’a pas été fait.', 'error');
+      return;
+    }
+    if (motSaisi.trim() !== MOT_DE_CONFIRMATION) {
+      log(`⛔ Import refusé : le mot « ${MOT_DE_CONFIRMATION} » n’a pas été retapé.`, 'error');
+      return;
+    }
+
     setRunning(true);
     setLogs([]);
     setStats(null);
+
+    // Trace AVANT la destruction : si l'import echoue au milieu, on saura
+    // quand meme qui l'a lance, et sur quel volume.
+    await logAction('import_massif', 'admin_import', {
+      entityLabel: 'Import administrateur — suppression puis réimport',
+      details: `${aDetruire.rapports} rapports, ${aDetruire.produits} articles de stock, `
+        + `${aDetruire.mouvements_stock} mouvements de stock supprimés `
+        + `(rapports du ${aDetruire.premiere_date || '?'} au ${aDetruire.derniere_date || '?'})`,
+      metadata: aDetruire,
+    });
+    log(`⚠️ Suppression confirmée par ${user?.prenom || ''} ${user?.nom || ''} : `
+      + `${aDetruire.total} lignes vont être détruites.`, 'warn');
 
     try {
       // Step 0: Audit
@@ -483,8 +581,11 @@ export default function AdminImport() {
     } finally {
       setRunning(false);
       setStep('');
+      // Le mot doit etre retape pour toute execution suivante.
+      setMotSaisi('');
+      setADetruire(null);
     }
-  };
+  });
 
   return (
     <div className="space-y-6 max-w-4xl mx-auto">
@@ -516,21 +617,78 @@ export default function AdminImport() {
         </CardContent>
       </Card>
 
-      {/* Action */}
+      {/* Action — en deux temps : compter, puis confirmer en toutes lettres */}
       <div className="flex gap-3">
         <Button
           size="lg"
+          variant="outline"
           className="gap-2"
-          onClick={runFullImport}
-          disabled={running}
+          onClick={compterCeQuiSeraDetruit}
+          disabled={running || comptageEnCours}
         >
-          {running ? (
-            <><Loader2 className="h-4 w-4 animate-spin" /> {step}</>
+          {comptageEnCours ? (
+            <><Loader2 className="h-4 w-4 animate-spin" /> Comptage…</>
           ) : (
-            <><Upload className="h-4 w-4" /> Lancer l'import complet</>
+            <><ListChecks className="h-4 w-4" /> Compter ce qui sera supprimé</>
           )}
         </Button>
       </div>
+
+      {/* Confirmation — nomme ce qui va etre detruit, et combien de lignes */}
+      {aDetruire && (
+        <Card className="border-red-400 bg-red-50">
+          <CardContent className="p-4 space-y-3">
+            <h3 className="font-semibold text-red-800 flex items-center gap-2">
+              <ShieldAlert className="h-5 w-5" />
+              Cet import va supprimer définitivement {fmt(aDetruire.total)} lignes
+            </h3>
+            <ul className="text-sm text-red-700 space-y-0.5">
+              <li>
+                • <strong>{fmt(aDetruire.rapports)} rapports journaliers</strong>
+                {aDetruire.premiere_date
+                  ? ` — du ${aDetruire.premiere_date} au ${aDetruire.derniere_date}`
+                  : ''}
+              </li>
+              <li>• <strong>{fmt(aDetruire.produits)} articles de stock</strong></li>
+              <li>• <strong>{fmt(aDetruire.mouvements_stock)} mouvements de stock</strong> (tout l’historique)</li>
+            </ul>
+            <p className="text-sm text-red-800">
+              Cette suppression est <strong>irréversible</strong> et il n’existe aucune annulation.
+              Pour continuer, retapez le mot <strong>{MOT_DE_CONFIRMATION}</strong> ci-dessous.
+            </p>
+            <div className="flex flex-wrap items-center gap-3">
+              <Input
+                className="max-w-[220px] bg-white"
+                value={motSaisi}
+                onChange={(e) => setMotSaisi(e.target.value)}
+                placeholder={MOT_DE_CONFIRMATION}
+                aria-label={`Retapez ${MOT_DE_CONFIRMATION} pour confirmer`}
+              />
+              <Button
+                size="lg"
+                variant="destructive"
+                className="gap-2"
+                onClick={runFullImport}
+                disabled={running || motSaisi.trim() !== MOT_DE_CONFIRMATION}
+              >
+                {running ? (
+                  <><Loader2 className="h-4 w-4 animate-spin" /> {step}</>
+                ) : (
+                  <><Upload className="h-4 w-4" /> Supprimer et lancer l&apos;import</>
+                )}
+              </Button>
+              <Button
+                size="lg"
+                variant="ghost"
+                onClick={() => { setADetruire(null); setMotSaisi(''); }}
+                disabled={running}
+              >
+                Annuler
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      )}
 
       {/* Logs */}
       {logs.length > 0 && (
