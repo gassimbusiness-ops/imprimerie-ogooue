@@ -100,6 +100,7 @@ import { supabaseAdmin } from './_lib/supabase-admin.js';
 import { depotSupabaseAutopost } from './_lib/autopost-depot.js';
 import { creerClientMeta } from './_lib/autopost-meta.js';
 import { executerPassage, modeGlobalDemande } from './_lib/autopost-executeur.js';
+import { sonderDrive, lireConfigurationDrive, DIAGNOSTICS, MESSAGES } from './_lib/drive.js';
 
 /** Voies servies par ce point d'entrée. */
 export const VOIES_AUTOPOST = Object.freeze(['tick', 'etat']);
@@ -152,7 +153,33 @@ export function creerGestionnaireAutopost({
   depot: depotFourni = null,
   client: clientFourni = null,
   maintenant = () => new Date(),
+  sonde = sonderDrive,
 } = {}) {
+  /**
+   * ⛔ LE SONDAGE DU DRIVE, ET SON FILET.
+   *
+   * Il fait un VRAI appel à Google (un seul listing) pour que l'écran puisse
+   * distinguer les quatre causes : variables absentes, clé refusée, dossier non
+   * partagé, dossier vide. Chacune appelle un geste différent ; un message
+   * unique pour les quatre fait perdre une heure.
+   *
+   * Et il ne peut pas faire tomber la lecture d'état : la file et le journal
+   * doivent rester lisibles même quand Google est injoignable. `sonderDrive()`
+   * ne lève déjà pas ; ce `catch` est le filet du filet.
+   */
+  async function etatDrive() {
+    try {
+      return await sonde();
+    } catch (err) {
+      return {
+        diagnostic: DIAGNOSTICS.PANNE,
+        message: MESSAGES.panne,
+        piste: 'Réessayer au prochain passage. La file et le journal, eux, sont à jour.',
+        detail: `sondage impossible : ${err?.message || err}`,
+      };
+    }
+  }
+
   return async function gestionnaireAutopost(req, res) {
     const voie = voieAutopost(req);
     if (voie === null) {
@@ -181,11 +208,13 @@ export function creerGestionnaireAutopost({
           controle,
           mode_global: modeGlobalDemande(),
           jeton_meta_present: Boolean((process.env.META_PAGE_ACCESS_TOKEN || '').trim()),
-          acces_drive_configure: Boolean(
-            (process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL || '').trim()
-            && (process.env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY || '').trim()
-            && (process.env.DRIVE_DOSSIER_PUBLICATIONS_ID || '').trim(),
-          ),
+          // ⚠️ Ce booléen dit seulement que TROIS VARIABLES SONT POSÉES. Il ne
+          //    dit RIEN de ce que le robot peut lire — c'était le faux témoin
+          //    du 18/09 : le voyant passait au vert sans qu'aucune ligne de
+          //    code n'ait jamais ouvert le Drive. Il est conservé pour la
+          //    compatibilité de l'écran ; ce qui fait foi, c'est `drive`.
+          acces_drive_configure: lireConfigurationDrive().configure,
+          drive: await etatDrive(),
           file,
           journal,
         });

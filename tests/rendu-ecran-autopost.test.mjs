@@ -203,3 +203,153 @@ test('⛔ une lecture en echec DIT la panne au lieu d afficher « rien de prévu
     await r.demonter();
   }
 });
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   LE VOYANT DRIVE — quatre pannes, quatre phrases, quatre gestes
+
+   Avant le 18/09/2026 cet ecran affichait « Acces Drive non configure » et rien
+   d'autre, pour QUATRE causes differentes. Et le voyant vert ne prouvait rien :
+   il se contentait de constater que trois variables etaient posees, sans
+   qu'aucune ligne de code n'ait jamais ouvert le Drive.
+
+   Desormais `/api/autopost-etat` porte un bloc `drive` issu d'une VRAIE lecture
+   (`api/_lib/drive.js`). Ces tests montent l'ecran pour de bon et exigent que
+   chaque cause se lise differemment — sinon on perd une heure a chercher un
+   partage manquant alors que c'est la cle qui est mal collee.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+function etatAvecDrive(drive) {
+  return { ...ETAT, acces_drive_configure: drive.diagnostic === 'ok', drive };
+}
+
+const CAS_DRIVE = [
+  {
+    nom: 'non configure',
+    drive: {
+      diagnostic: 'non_configure',
+      message: 'Acces Drive non configure. Il manque : DRIVE_DOSSIER_PUBLICATIONS_ID.',
+      piste: 'Poser DRIVE_DOSSIER_PUBLICATIONS_ID dans Vercel, puis redeployer.',
+      detail: null,
+    },
+    attendu: /Il manque : DRIVE_DOSSIER_PUBLICATIONS_ID/,
+  },
+  {
+    nom: 'cle refusee',
+    drive: {
+      diagnostic: 'cle_refusee',
+      message: 'La cle privee est refusee par Google.',
+      piste: 'Recoller GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY depuis le JSON du compte de service.',
+      detail: 'HTTP 400 : {"error":"invalid_grant"}',
+    },
+    attendu: /cle privee est refusee par Google/,
+  },
+  {
+    nom: 'dossier non partage',
+    drive: {
+      diagnostic: 'dossier_inaccessible',
+      message: "Le dossier n'est pas partage avec le robot.",
+      piste: 'Ouvrir 10_PUBLICATIONS, Partager, ajouter le compte de service en LECTEUR.',
+      detail: 'HTTP 404 : File not found',
+    },
+    attendu: /n'est pas partage avec le robot|n’est pas partage avec le robot/,
+  },
+  {
+    nom: 'dossier vide',
+    drive: {
+      diagnostic: 'dossier_vide',
+      message: 'Aucune publication deposee dans le dossier.',
+      piste: "Le robot LIT bien le dossier : c'est a ChatGPT de deposer.",
+      detail: null,
+    },
+    attendu: /Aucune publication deposee/,
+  },
+];
+
+for (const cas of CAS_DRIVE) {
+  test(`l ecran DIT « ${cas.nom} » avec ses propres mots, et le geste qui repare`, async () => {
+    const f = installerFetch(etatAvecDrive(cas.drive));
+    const r = await rendreEcran({ ecran: 'src/features/autopost/page.jsx' });
+    try {
+      assert.equal(r.erreurs.length, 0, `exceptions au montage : ${r.erreurs.map((e) => e?.message).join(' · ')}`);
+      assert.ok(r.texte.length > 200, 'ecran blanc');
+      assert.match(r.texte, cas.attendu);
+      assert.match(r.texte, new RegExp(cas.drive.piste.slice(0, 25).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')),
+        'une panne sans geste a faire ne sert a rien');
+    } finally {
+      f.restaurer();
+      await r.demonter();
+    }
+  });
+}
+
+test('⛔ les quatre phrases du Drive sont VRAIMENT differentes a l ecran', async () => {
+  const vues = [];
+  for (const cas of CAS_DRIVE) {
+    const f = installerFetch(etatAvecDrive(cas.drive));
+    const r = await rendreEcran({ ecran: 'src/features/autopost/page.jsx' });
+    try {
+      vues.push(r.texte.includes(cas.drive.message));
+    } finally {
+      f.restaurer();
+      await r.demonter();
+    }
+  }
+  assert.deepEqual(vues, [true, true, true, true], 'chaque message doit apparaitre tel quel');
+});
+
+test('quand le Drive marche, l ecran le dit SANS pretendre qu une publication existe', async () => {
+  const f = installerFetch(etatAvecDrive({
+    diagnostic: 'ok',
+    message: 'Acces Drive operationnel. 3 dossier(s) et 0 fichier(s) a la racine de 10_PUBLICATIONS.',
+    piste: null,
+    detail: null,
+  }));
+  const r = await rendreEcran({ ecran: 'src/features/autopost/page.jsx' });
+  try {
+    assert.match(r.texte, /Acces Drive operationnel/);
+    assert.match(r.texte, /3 dossier\(s\)/, 'le compte VU, pas une promesse');
+  } finally {
+    f.restaurer();
+    await r.demonter();
+  }
+});
+
+test('une reponse SANS bloc drive (deploiement plus ancien) ne casse pas l ecran', async () => {
+  const f = installerFetch(ETAT); // pas de champ `drive`
+  const r = await rendreEcran({ ecran: 'src/features/autopost/page.jsx' });
+  try {
+    assert.equal(r.erreurs.length, 0);
+    assert.ok(r.texte.length > 200, 'ecran blanc');
+  } finally {
+    f.restaurer();
+    await r.demonter();
+  }
+});
+
+/* ── LE CINQUIEME ETAT : 77 fichiers deposes, aucun conforme ────────────────
+   Releve terrain du 18/09/2026. Si l'ecran affichait « aucune publication
+   deposee » dans ce cas, Gassim irait revérifier un partage de dossier qui
+   marche tres bien — au lieu de regarder le FORMAT de ce que ChatGPT depose. */
+
+test('⛔ 77 fichiers hors contrat : l ecran dit ce qui est LA, pas « rien »', async () => {
+  const f = installerFetch(etatAvecDrive({
+    diagnostic: 'rien_de_conforme',
+    message: '77 fichier(s) trouve(s) dans le Drive, mais aucun dossier ne contient '
+      + '« publication.json » : rien n est conforme au contrat de publication.',
+    piste: 'Le robot LIT le Drive : l acces et le partage sont bons. Ce sont les FICHIERS qui ne '
+      + 'forment pas une publication.',
+    detail: null,
+  }));
+  const r = await rendreEcran({ ecran: 'src/features/autopost/page.jsx' });
+  try {
+    assert.equal(r.erreurs.length, 0);
+    assert.match(r.texte, /77 fichier/, 'le nombre reellement vu doit etre a l ecran');
+    assert.match(r.texte, /publication\.json/, 'et le repere qui manque');
+    assert.doesNotMatch(r.texte, /Aucune publication deposee|Aucune publication déposée/,
+      'dire « rien de depose » devant 77 fichiers envoie chercher au mauvais endroit');
+    assert.match(r.texte, /l acces et le partage sont bons/);
+  } finally {
+    f.restaurer();
+    await r.demonter();
+  }
+});

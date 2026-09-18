@@ -100,6 +100,61 @@ function Voyant({ actif, ouiTexte, nonTexte, Icone }) {
   );
 }
 
+/**
+ * ⛔ LE VOYANT DRIVE — quatre pannes, quatre phrases, quatre gestes.
+ *
+ * Avant le 18/09/2026, cet écran affichait « Accès Drive non configuré » pour
+ * QUATRE causes différentes. Et son voyant vert ne prouvait rien : il
+ * constatait que trois variables étaient posées dans Vercel, sans qu'aucune
+ * ligne de code n'ait jamais ouvert le Drive. Un voyant qui passe au vert sans
+ * que rien ne fonctionne est exactement le faux témoin qu'on a déjà corrigé
+ * deux fois cette semaine (le badge « Sans mdp », le score fabriqué à 0).
+ *
+ * Le bloc `drive` de `/api/autopost-etat` vient désormais d'une VRAIE lecture
+ * (`api/_lib/drive.js`). On affiche SA phrase, et le geste qui la répare :
+ *
+ *   non_configure        → Gassim pose les variables dans Vercel ;
+ *   cle_refusee          → la clé est mal collée ou révoquée ;
+ *   dossier_inaccessible → le partage du dossier a été oublié (le cas le plus
+ *                          fréquent), ou l'identifiant est celui d'un voisin ;
+ *   dossier_vide         → tout marche, ChatGPT n'a simplement rien déposé.
+ *
+ * Le repli sur l'ancien texte n'est pas de la coquetterie : pendant les
+ * quelques minutes qui séparent le déploiement de l'API de celui du bundle,
+ * une réponse sans champ `drive` arrive ici, et l'écran doit tenir.
+ */
+function VoyantDrive({ drive, configure }) {
+  if (!drive) {
+    return (
+      <Voyant
+        actif={configure}
+        Icone={HardDriveDownload}
+        ouiTexte="Accès Drive : trois variables sont posées. Ce que le robot lit vraiment n'a pas encore été mesuré."
+        nonTexte="Accès Drive non configuré : les publications doivent être déposées depuis l'application."
+      />
+    );
+  }
+
+  const ok = drive.diagnostic === 'ok';
+  const vide = drive.diagnostic === 'dossier_vide';
+  // « Vide » n'est pas une panne : le robot LIT, il n'y a rien à lire.
+  const Icone = ok ? CheckCircle2 : (vide ? HardDriveDownload : AlertTriangle);
+  const teinte = ok ? 'text-emerald-600' : (vide ? 'text-slate-500' : 'text-orange-500');
+
+  return (
+    <div className="flex items-start gap-2">
+      <Icone className={`mt-0.5 h-4 w-4 shrink-0 ${teinte}`} />
+      <div className="text-sm">
+        <div>{drive.message}</div>
+        {drive.piste && <div className="mt-1 text-slate-600">{drive.piste}</div>}
+        {drive.detail && (
+          <div className="mt-1 font-mono text-xs text-slate-400">{drive.detail}</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function Bandeau({ etat }) {
   const enMarche = etat?.controle?.actif === true;
   const reel = etat?.controle?.mode === 'live' && etat?.mode_global === 'live' && etat?.jeton_meta_present;
@@ -125,12 +180,7 @@ function Bandeau({ etat }) {
           ouiTexte="Jeton Meta présent."
           nonTexte="Jeton Meta absent — c'est normal aujourd'hui. Tant qu'il manque, tout reste en simulation."
         />
-        <Voyant
-          actif={etat?.acces_drive_configure}
-          Icone={HardDriveDownload}
-          ouiTexte="Accès Drive configuré (compte de service Google)."
-          nonTexte="Accès Drive non configuré : les publications doivent être déposées depuis l'application."
-        />
+        <VoyantDrive drive={etat?.drive} configure={etat?.acces_drive_configure} />
       </CardContent>
     </Card>
   );
