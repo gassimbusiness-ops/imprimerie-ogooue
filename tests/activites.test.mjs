@@ -34,6 +34,7 @@ import {
   ACTIVITE_DEFAUT,
   ACTIVITE_IMPRIMERIE,
   ACTIVITE_PAPETERIE,
+  ACTIVITE_TOPSHOP,
   TOUTES_ACTIVITES,
   activiteDe,
   avecActivite,
@@ -47,8 +48,14 @@ import {
    1. Le vocabulaire
    ═══════════════════════════════════════════════════════════════════════════ */
 
-test('deux activites, pas trois — et l’imprimerie est celle par defaut', () => {
-  assert.deepEqual(ACTIVITES, [ACTIVITE_IMPRIMERIE, ACTIVITE_PAPETERIE]);
+test('TROIS activites depuis le 19/09 — et l’imprimerie reste celle par defaut', () => {
+  // Ce test disait « deux activites, pas trois » jusqu'au 19/09/2026. Le
+  // dirigeant a demande d'ajouter TOPSHOP GABON (« TopShop : cree l'activite
+  // dans l'app »), pour la meme raison que la papeterie avait ete posee avant
+  // son premier franc : un champ d'appartenance pose APRES coup ne se rattrape
+  // pas. La mise a jour est donc deliberee, pas un test plie pour passer.
+  assert.deepEqual(ACTIVITES, [ACTIVITE_IMPRIMERIE, ACTIVITE_PAPETERIE, ACTIVITE_TOPSHOP]);
+  assert.equal(ACTIVITE_TOPSHOP, 'topshop');
   assert.equal(ACTIVITE_DEFAUT, ACTIVITE_IMPRIMERIE);
   assert.equal(ACTIVITE_IMPRIMERIE, 'imprimerie');
   assert.equal(ACTIVITE_PAPETERIE, 'papeterie');
@@ -65,7 +72,10 @@ test('les libelles sont ecrits pour le gerant, pas pour la base', () => {
   // se lisent plus comme etant de meme nature.
   assert.equal(libelleActivite(ACTIVITE_IMPRIMERIE), 'IMPRIMERIE OGOOUÉ');
   assert.equal(libelleActivite(ACTIVITE_PAPETERIE), 'PAPETERIE OGOOUÉ');
-  assert.equal(libelleActivite(TOUTES_ACTIVITES), 'Les deux');
+  assert.equal(libelleActivite(ACTIVITE_TOPSHOP), 'TOPSHOP GABON');
+  // « Les deux » est devenu FAUX le jour ou une troisieme activite est apparue.
+  // Un libelle qui compte mal ce qu'il montre fait douter du chiffre a cote.
+  assert.equal(libelleActivite(TOUTES_ACTIVITES), 'Toutes');
   // Une valeur inconnue ne doit pas afficher « undefined » dans un ecran d'argent.
   assert.equal(libelleActivite('zzz'), 'IMPRIMERIE OGOOUÉ');
   // Le libelle est un habillage : la valeur STOCKEE reste en minuscules.
@@ -187,7 +197,11 @@ test('la somme des deux activites fait exactement le total', () => {
 
 test('une repartition sur rien vaut zero partout — pas NaN', () => {
   const r = repartirParActivite([], (l) => l.montant);
-  assert.deepEqual(r, { imprimerie: 0, papeterie: 0, total: 0 });
+  assert.deepEqual(r, { imprimerie: 0, papeterie: 0, topshop: 0, total: 0 });
+  // Le point qui compte : CHAQUE activite connue a sa case a zero. Une case
+  // manquante rendrait `undefined`, et `undefined + 5000` vaut `NaN` — un
+  // chiffre faux qui s'affiche sans planter.
+  for (const a of ACTIVITES) assert.equal(r[a], 0, `${a} n'a pas de case a zero`);
 });
 
 test('une mesure non numerique compte pour zero, elle ne contamine pas le total', () => {

@@ -34,7 +34,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { rendreEcran, texteVivant } from './outils/rendu-ecran.mjs';
 import { todayISO } from '../src/lib/dates.js';
-import { ACTIVITE_PAPETERIE, libelleActivite } from '../src/services/activites.js';
+import { ACTIVITE_PAPETERIE, TOUTES_ACTIVITES, libelleActivite } from '../src/services/activites.js';
 
 /**
  * Le texte du bouton, lu a la source.
@@ -258,14 +258,18 @@ test('cloture — la piece comptable ecrite porte l’activite comptee', async (
    4. La vue consolidee reste possible
    ═══════════════════════════════════════════════════════════════════════════ */
 
-test('cloture — « Les deux » additionne les deux caisses, et interdit de compter', async () => {
+test('cloture — la vue consolidee additionne les caisses, et interdit de compter', async () => {
   const v = await rendreEcran({
     ecran: 'src/features/cloture-caisse/page.jsx',
     donnees: BASE,
     utilisateur: ADMIN,
   });
   try {
-    const bLesDeux = bouton(v.conteneur, 'Les deux');
+    // Le libelle de la vue consolidee est lu A LA SOURCE, plus ecrit en dur :
+    // il valait « Les deux » tant qu'il y avait deux activites, et « Toutes »
+    // depuis l'arrivee de TOPSHOP GABON le 19/09/2026. Un test qui figerait le
+    // mot casserait a chaque activite ajoutee, sans rien proteger de plus.
+    const bLesDeux = bouton(v.conteneur, libelleActivite(TOUTES_ACTIVITES));
     assert.ok(bLesDeux, 'aucun etat consolide sur le selecteur');
     await cliquer(v, bLesDeux);
 

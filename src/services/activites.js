@@ -79,8 +79,31 @@ export const ACTIVITE_IMPRIMERIE = 'imprimerie';
 /** La caisse ouverte en septembre 2026. */
 export const ACTIVITE_PAPETERIE = 'papeterie';
 
-/** Les seules valeurs qui ont le droit d'etre ECRITES en base. */
-export const ACTIVITES = [ACTIVITE_IMPRIMERIE, ACTIVITE_PAPETERIE];
+/**
+ * La troisieme activite, posee le 19/09/2026 sur instruction du dirigeant
+ * (« TopShop : cree l'activite dans l'app »).
+ *
+ * ⚠️ Elle N'EST PAS de meme nature que les deux autres, et c'est voulu :
+ * TOPSHOP GABON est un commerce en ligne, paiement a la livraison, qui livre a
+ * Libreville — pas un comptoir a Moanda. Elle n'a pas encore encaisse un franc.
+ *
+ * Elle est posee MAINTENANT pour la meme raison que la papeterie l'a ete :
+ * « plus tot on le code, moins il y aura a demeler ». Le jour ou la premiere
+ * vente TopShop tombera dans la meme table que celles de l'imprimerie sans
+ * champ pour les separer, plus personne ne pourra les demeler — ni le
+ * logiciel, ni un humain relisant les rapports trois mois plus tard.
+ */
+export const ACTIVITE_TOPSHOP = 'topshop';
+
+/**
+ * Les seules valeurs qui ont le droit d'etre ECRITES en base.
+ *
+ * ⚠️ Cette liste est la SOURCE : tout ce qui depend du nombre d'activites la
+ * lit au lieu de recopier deux ou trois noms. Ajouter la papeterie avait
+ * demande de retoucher chaque endroit qui supposait « une seule activite » ;
+ * ajouter TopShop ne doit pas redemander ce travail une troisieme fois.
+ */
+export const ACTIVITES = [ACTIVITE_IMPRIMERIE, ACTIVITE_PAPETERIE, ACTIVITE_TOPSHOP];
 
 /** Ce que vaut une ligne qui ne dit rien. Voir « LA REGLE N°1 » ci-dessus. */
 export const ACTIVITE_DEFAUT = ACTIVITE_IMPRIMERIE;
@@ -114,7 +137,10 @@ export const TOUTES_ACTIVITES = '__toutes__';
 const LIBELLES = {
   [ACTIVITE_IMPRIMERIE]: 'IMPRIMERIE OGOOUÉ',
   [ACTIVITE_PAPETERIE]: 'PAPETERIE OGOOUÉ',
-  [TOUTES_ACTIVITES]: 'Les deux',
+  [ACTIVITE_TOPSHOP]: 'TOPSHOP GABON',
+  /* « Les deux » est devenu faux le 19/09/2026 : il y a trois activités.
+     Un libellé qui compte mal ce qu'il montre fait douter du chiffre a côté. */
+  [TOUTES_ACTIVITES]: 'Toutes',
 };
 
 /**
@@ -196,7 +222,13 @@ export function filtrerParActivite(liste, activite) {
  * @returns {{imprimerie: number, papeterie: number, total: number}}
  */
 export function repartirParActivite(liste, mesurer) {
-  const r = { [ACTIVITE_IMPRIMERIE]: 0, [ACTIVITE_PAPETERIE]: 0, total: 0 };
+  /* Construit depuis ACTIVITES, jamais en recopiant les noms : le jour ou une
+     activite est ajoutee, une ventilation qui en oublierait une rendrait
+     `undefined` sur sa ligne — et `undefined + 5000` vaut `NaN`, qui s'affiche
+     sans planter. C'est exactement le defaut « Commande undefined » corrige
+     hier, transpose a de l'argent. */
+  const r = Object.fromEntries(ACTIVITES.map((a) => [a, 0]));
+  r.total = 0;
   if (!Array.isArray(liste) || typeof mesurer !== 'function') return r;
   for (const x of liste) {
     const brut = Number(mesurer(x));
