@@ -1,6 +1,8 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { db } from '@/services/db';
 import { askAI, chatAI } from '@/services/ai';
+import { lireJsonIA, scoreLisible } from '@/services/lecture-json-ia';
+import { texteAffichable } from '@/services/libelles';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -106,6 +108,8 @@ export default function Statistiques() {
   const [showIA, setShowIA] = useState(false);
   const [iaLoading, setIaLoading] = useState(false);
   const [iaResult, setIaResult] = useState(null);
+  // Une reponse illisible n'est pas un score de 0 : elle a son propre etat.
+  const [iaErreur, setIaErreur] = useState(null);
   // CFO Chat
   const [cfoMessages, setCfoMessages] = useState([]);
   const [cfoInput, setCfoInput] = useState('');
@@ -215,21 +219,22 @@ export default function Statistiques() {
     if (!stats) return;
     setIaLoading(true);
     setIaResult(null);
+    setIaErreur(null);
     try {
       const system = 'Tu es expert-comptable pour une PME africaine (imprimerie au Gabon). Analyse ces données financières et retourne UNIQUEMENT un JSON valide (pas de markdown, pas de texte avant/après) : { "analyse": "texte court 2-3 phrases", "alertes": ["alerte1", "alerte2"], "recommandations": ["reco1", "reco2", "reco3"], "score_sante": 75 }';
       const userMsg = `Recettes mois : ${stats.totalRec} FCFA | Dépenses : ${stats.totalDep} FCFA | Solde : ${stats.benefice} FCFA | Nombre de rapports : ${filtered.length}`;
       const raw = await askAI(system, userMsg, 500);
-      const jsonStr = raw.trim().replace(/```json\s*/g, '').replace(/```\s*/g, '');
-      const parsed = JSON.parse(jsonStr);
-      setIaResult(parsed);
+      // Lecture PARTAGEE — la meme que Rapports & Analyses et Performance RH.
+      // Elle remplace le retrait des ``` suivi d'un JSON.parse : celui-ci
+      // rendait la main sur un objet entoure de phrases, ou tronque.
+      const lu = lireJsonIA(raw);
+      if (lu.ok) setIaResult(lu.donnees);
+      else setIaErreur(lu.message);
     } catch (err) {
       console.error('[IA Finance]', err);
-      setIaResult({
-        analyse: 'Erreur lors de l\'analyse. Veuillez réessayer.',
-        alertes: ['Impossible de contacter le service IA'],
-        recommandations: [],
-        score_sante: 0,
-      });
+      // Le service n'a pas repondu. On ne fabrique plus un score de 0 :
+      // un 0 se lit comme une mesure, et le gerant decide dessus.
+      setIaErreur(err?.message || 'Impossible de contacter le service IA. Réessayez dans un instant.');
     } finally {
       setIaLoading(false);
     }
@@ -301,6 +306,9 @@ Parle en français, sans markdown, de manière directe et professionnelle. Max 1
     );
   }
 
+  // `null` quand le modele n'a pas renvoye de score : la jauge ne se dessine pas.
+  const scoreSante = iaResult ? scoreLisible(iaResult.score_sante) : null;
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -348,8 +356,16 @@ Parle en français, sans markdown, de manière directe et professionnelle. Max 1
             )}
           </CardHeader>
           <CardContent>
+            {/* State: la lecture a echoue — on le DIT, on n'invente pas de score */}
+            {iaErreur && !iaLoading && (
+              <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                <AlertIcon className="mt-0.5 h-4 w-4 shrink-0" />
+                <span>{iaErreur}</span>
+              </div>
+            )}
+
             {/* State: pas encore lancé */}
-            {!iaResult && !iaLoading && (
+            {!iaResult && !iaErreur && !iaLoading && (
               <div className="flex flex-col items-center justify-center py-10 text-center">
                 <Brain className="mb-4 h-16 w-16 text-emerald-300" />
                 <p className="text-muted-foreground">
@@ -373,18 +389,27 @@ Parle en français, sans markdown, de manière directe et professionnelle. Max 1
                 {/* Score santé financière */}
                 <div className="flex flex-col items-center rounded-xl border bg-card p-6 sm:flex-row sm:gap-6">
                   <div className="relative mb-4 flex h-28 w-28 shrink-0 items-center justify-center sm:mb-0">
-                    <svg className="h-28 w-28 -rotate-90" viewBox="0 0 120 120">
-                      <circle cx="60" cy="60" r="50" fill="none" stroke="currentColor" strokeWidth="8" className="text-muted/30" />
-                      <circle
-                        cx="60" cy="60" r="50" fill="none"
-                        strokeWidth="8" strokeLinecap="round"
-                        strokeDasharray={`${(iaResult.score_sante / 100) * 314} 314`}
-                        stroke={iaResult.score_sante >= 70 ? '#10b981' : iaResult.score_sante >= 40 ? '#f59e0b' : '#ef4444'}
-                      />
-                    </svg>
-                    <span className={`absolute text-2xl font-bold ${iaResult.score_sante >= 70 ? 'text-emerald-600' : iaResult.score_sante >= 40 ? 'text-amber-500' : 'text-red-500'}`}>
-                      {iaResult.score_sante}
-                    </span>
+                    {/* Pas de score renvoye = pas de jauge. Sans ce filtre,
+                        `undefined / 100 * 314` ecrivait « NaN 314 » dans
+                        l'attribut du cercle. */}
+                    {scoreSante === null ? (
+                      <span className="px-2 text-center text-xs text-muted-foreground">Score non renvoyé</span>
+                    ) : (
+                      <>
+                        <svg className="h-28 w-28 -rotate-90" viewBox="0 0 120 120">
+                          <circle cx="60" cy="60" r="50" fill="none" stroke="currentColor" strokeWidth="8" className="text-muted/30" />
+                          <circle
+                            cx="60" cy="60" r="50" fill="none"
+                            strokeWidth="8" strokeLinecap="round"
+                            strokeDasharray={`${(scoreSante / 100) * 314} 314`}
+                            stroke={scoreSante >= 70 ? '#10b981' : scoreSante >= 40 ? '#f59e0b' : '#ef4444'}
+                          />
+                        </svg>
+                        <span className={`absolute text-2xl font-bold ${scoreSante >= 70 ? 'text-emerald-600' : scoreSante >= 40 ? 'text-amber-500' : 'text-red-500'}`}>
+                          {scoreSante}
+                        </span>
+                      </>
+                    )}
                   </div>
                   <div className="text-center sm:text-left">
                     <h3 className="text-lg font-bold">Score Santé Financière</h3>
@@ -436,7 +461,7 @@ Parle en français, sans markdown, de manière directe et professionnelle. Max 1
                     variant="outline"
                     size="sm"
                     onClick={() => {
-                      const text = `ANALYSE IA — IMPRIMERIE OGOOUÉ\n${'='.repeat(40)}\nDate : ${new Date().toLocaleDateString('fr-FR')}\nScore santé : ${iaResult.score_sante}/100\n\nAnalyse :\n${iaResult.analyse}\n\nAlertes :\n${(iaResult.alertes || []).map((a, i) => `  ${i + 1}. ${a}`).join('\n')}\n\nRecommandations :\n${(iaResult.recommandations || []).map((r, i) => `  ${i + 1}. ${r}`).join('\n')}`;
+                      const text = `ANALYSE IA — IMPRIMERIE OGOOUÉ\n${'='.repeat(40)}\nDate : ${new Date().toLocaleDateString('fr-FR')}\nScore santé : ${scoreSante === null ? 'non renvoyé par le modèle' : `${scoreSante}/100`}\n\nAnalyse :\n${texteAffichable(iaResult.analyse, 'non renseignée')}\n\nAlertes :\n${(iaResult.alertes || []).map((a, i) => `  ${i + 1}. ${a}`).join('\n')}\n\nRecommandations :\n${(iaResult.recommandations || []).map((r, i) => `  ${i + 1}. ${r}`).join('\n')}`;
                       const blob = new Blob([text], { type: 'text/plain' });
                       const url = URL.createObjectURL(blob);
                       const a = document.createElement('a');

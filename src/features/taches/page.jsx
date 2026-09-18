@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { db } from '@/services/db';
 import { useAuth } from '@/services/auth';
 import { logAction } from '@/services/audit';
+import { libelleTache, nomPersonne, nettoyerLibelle } from '@/services/libelles';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -69,7 +70,7 @@ export default function Taches() {
       if (filterPriorite !== 'all' && t.priorite !== filterPriorite) return false;
       if (search) {
         const q = search.toLowerCase();
-        return `${t.titre} ${t.description} ${t.categorie} ${t.assigne_nom || ''}`.toLowerCase().includes(q);
+        return `${libelleTache(t)} ${t.description || ''} ${t.categorie || ''} ${t.assigne_nom || ''}`.toLowerCase().includes(q);
       }
       return true;
     });
@@ -92,7 +93,7 @@ export default function Taches() {
   const openEdit = (t) => {
     setEditItem(t);
     setForm({
-      titre: t.titre || '', description: t.description || '',
+      titre: libelleTache(t), description: t.description || '',
       priorite: t.priorite || 'normale', categorie: t.categorie || 'Impression',
       statut: t.statut || 'en_attente', assigne_a: t.assigne_a || '',
       date_echeance: t.date_echeance || '', progression: t.progression || 0,
@@ -105,7 +106,10 @@ export default function Taches() {
     const emp = employes.find((e) => e.id === form.assigne_a);
     const data = {
       ...form, titre: form.titre.trim(), description: form.description.trim(),
-      assigne_nom: emp ? `${emp.prenom} ${emp.nom}` : '',
+      // `nomPersonne` : la garde `emp ? …` ne protege QUE l'objet. Un employe
+      // sans prenom ecrivait « undefined Abakar » dans `assigne_nom`, affiche
+      // ensuite sur la carte.
+      assigne_nom: nomPersonne(emp),
       progression: Number(form.progression) || 0,
     };
     if (editItem) {
@@ -122,17 +126,17 @@ export default function Taches() {
   };
 
   const handleDelete = async (t) => {
-    if (!confirm(`Supprimer la tâche "${t.titre}" ?`)) return;
+    if (!confirm(`Supprimer la tâche "${libelleTache(t)}" ?`)) return;
     await db.taches.delete(t.id);
-    await logAction('delete', 'taches', { entityId: t.id, entityLabel: t.titre });
+    await logAction('delete', 'taches', { entityId: t.id, entityLabel: libelleTache(t) });
     toast.success('Tâche supprimée');
     load();
   };
 
   const changeStatut = async (t, newStatut) => {
-    await db.taches.update(t.id, { statut: newStatut, progression: newStatut === 'terminee' || newStatut === 'validee' ? 100 : t.progression });
-    await logAction('update', 'taches', { entityId: t.id, entityLabel: t.titre, details: `Statut: ${newStatut}` });
-    toast.success(`Tâche "${t.titre}" → ${STATUTS[newStatut]?.label}`);
+    await db.taches.update(t.id, { statut: newStatut, progression: newStatut === 'terminee' || newStatut === 'validee' ? 100 : Number(t.progression) || 0 });
+    await logAction('update', 'taches', { entityId: t.id, entityLabel: libelleTache(t), details: `Statut: ${newStatut}` });
+    toast.success(`Tâche "${libelleTache(t)}" → ${STATUTS[newStatut]?.label ?? newStatut}`);
     load();
   };
 
@@ -141,10 +145,7 @@ export default function Taches() {
     return new Date(t.date_echeance) < new Date();
   };
 
-  const getEmployeName = (id) => {
-    const e = employes.find((emp) => emp.id === id);
-    return e ? `${e.prenom} ${e.nom}` : '';
-  };
+  const getEmployeName = (id) => nomPersonne(employes.find((emp) => emp.id === id));
 
   // Kanban columns
   const kanbanCols = ['en_attente', 'en_cours', 'terminee', 'validee'];
@@ -164,7 +165,10 @@ export default function Taches() {
           <div className="flex items-start gap-2">
             <div className={`mt-0.5 h-2 w-2 rounded-full shrink-0 ${prio.dot}`} />
             <div className="flex-1 min-w-0">
-              <p className="font-semibold text-sm truncate">{t.titre}</p>
+              {/* `libelleTache` et pas `t.titre` : deux taches portent
+                  « Commande undefined — … » DANS LA BASE depuis le 17/09.
+                  Reparer la source ne les rattrape pas. */}
+              <p className="font-semibold text-sm truncate">{libelleTache(t)}</p>
               {t.description && !compact && (
                 <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{t.description}</p>
               )}
@@ -179,8 +183,8 @@ export default function Taches() {
                 {overdue && <Badge className="text-[10px] bg-red-500 text-white">En retard</Badge>}
               </div>
               <div className="flex items-center gap-3 mt-2 text-[10px] text-muted-foreground">
-                {t.assigne_nom && (
-                  <span className="flex items-center gap-1"><User className="h-3 w-3" />{t.assigne_nom}</span>
+                {nettoyerLibelle(t.assigne_nom) && (
+                  <span className="flex items-center gap-1"><User className="h-3 w-3" />{nettoyerLibelle(t.assigne_nom)}</span>
                 )}
                 {t.date_echeance && (
                   <span className="flex items-center gap-1"><Calendar className="h-3 w-3" />{new Date(t.date_echeance).toLocaleDateString('fr-FR', { day: '2-digit', month: 'short' })}</span>
@@ -319,13 +323,13 @@ export default function Taches() {
                   <div className={`h-2.5 w-2.5 rounded-full shrink-0 ${prio.dot}`} />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2 flex-wrap">
-                      <p className="font-semibold text-sm">{t.titre}</p>
+                      <p className="font-semibold text-sm">{libelleTache(t)}</p>
                       <Badge variant="outline" className={`text-[10px] ${statut.color}`}>{statut.label}</Badge>
                       {overdue && <Badge className="text-[10px] bg-red-500 text-white">Retard</Badge>}
                     </div>
                     <div className="flex items-center gap-3 mt-1 text-[10px] text-muted-foreground">
                       <span>{t.categorie}</span>
-                      {t.assigne_nom && <span className="flex items-center gap-1"><User className="h-3 w-3" />{t.assigne_nom}</span>}
+                      {nettoyerLibelle(t.assigne_nom) && <span className="flex items-center gap-1"><User className="h-3 w-3" />{nettoyerLibelle(t.assigne_nom)}</span>}
                       {t.date_echeance && <span className="flex items-center gap-1"><Calendar className="h-3 w-3" />{new Date(t.date_echeance).toLocaleDateString('fr-FR')}</span>}
                     </div>
                   </div>

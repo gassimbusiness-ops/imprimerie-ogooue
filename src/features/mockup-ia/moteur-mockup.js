@@ -693,17 +693,93 @@ export const LONGUEUR_PROMPT_LIBRE_MAX = 240;
  */
 const MOTIF_SUITE_DE_CHIFFRES = /(?:\d[\s.\-/]*){5,}/;
 
+/* ─────────────────────────────────────────────────────────────────────────────
+   DECRIRE UN LIEU N'EST PAS DEMANDER D'ECRIRE  (18/09/2026)
+
+   Le gerant a tape, dans le champ de description de scene :
+
+       « À l'intérieur de l'imprimerie Ogooué, sur un mannequin noir »
+
+   et l'ecran a REFUSE, parce que la phrase contient « IMPRIMERIE OGOOUÉ », qui
+   est aussi un de ses blocs de texte a marquer. C'est le nom de sa boutique :
+   il est a la fois le texte a imprimer ET le lieu ou la photo se passe. Le
+   controle ne savait pas faire la difference, et il ne pouvait pas : il
+   comparait des chaines.
+
+   La regle du 16/09 reste bonne — le modele ne dessine pas les textes, c'est
+   `composition.js` qui les compose, caractere par caractere. Ce qui change,
+   c'est SON DECLENCHEUR et SA FORCE :
+
+     - elle ne se declenche que si la phrase DEMANDE D'ECRIRE (« ecris… »,
+       « avec le texte… », « inscription… ») ;
+     - elle AVERTIT, elle ne refuse plus. Meme decision que le 17/09 pour
+       `verifierFaisabilite` / `reserves` / `apercuPossible` : un mockup est un
+       apercu commercial, et un ecran qui refuse coute une vente.
+
+   Ce qui bloque encore dans ce champ : la LONGUEUR, et elle seule. Ce n'est
+   pas un jugement sur l'intention, c'est de la place qui manque dans le prompt.
+   ───────────────────────────────────────────────────────────────────────── */
+
 /**
- * Valide le prompt libre. Renvoie TOUJOURS un message lisible quand c'est
- * refuse : ce champ est a l'ecran, au comptoir, devant un client qui attend.
+ * Les tournures qui demandent d'ECRIRE quelque chose, par opposition a celles
+ * qui decrivent un decor.
+ *
+ * Chaque motif est volontairement etroit. « imprim… » ne compte que suivi d'un
+ * nom de contenu : sans ca, « a l'interieur de l'imprimerie » se declencherait
+ * — ce qui serait refaire le faux positif avec une autre regle.
+ */
+const MOTIFS_DEMANDE_ECRITURE = [
+  // ecris / ecrire / ecrit / ecrivez…
+  // Pas de `\b` devant : `\b` est ASCII, et il n'y en a pas entre un espace et
+  // le « é » de « écris ». Le mot serait manque une fois sur deux — exactement
+  // la tournure que le gerant tape.
+  /(?<![a-zà-ÿ])[eé]cri(?:s|t|te|ts|tes|re|vez|vons|rez)(?![a-zà-ÿ])/i,
+  // avec le texte / avec la mention / avec le numero…
+  /\bavec\s+(?:l[ea]s?|un[e]?|mon|ma|mes|son|sa|ses|leurs?|du|des)?\s*(?:texte|mention|inscription|slogan|lettrage|num[eé]ro|titre|message|phrase|mot|mots)\b/i,
+  // inscription / slogan, employes seuls
+  /\binscriptions?\b/i,
+  /\bslogans?\b/i,
+  // marquer / imprimer / afficher / ajouter / mettre + un nom de CONTENU
+  /(?<![a-zà-ÿ])(?:marqu|imprim|affich|ajout|inscri|met|mett)[a-zà-ÿ]*\s+(?:l[ea]s?|un[e]?|du|des|mon|ma|mes|son|sa|ses)?\s*(?:texte|mention|inscription|slogan|lettrage|num[eé]ro|titre|message|phrase|mot|mots|nom)\b/i,
+  // « texte : … », « slogan : … »
+  /\b(?:texte|slogan|mention|lettrage)\s*:/i,
+  // l'anglais, au cas ou le champ soit rempli en anglais
+  /\b(?:write|lettering|text saying|caption)\b/i,
+];
+
+/**
+ * La description demande-t-elle d'ECRIRE, ou se contente-t-elle de decrire ?
+ *
+ * Ne leve jamais.
+ *
+ * @param {*} valeur
+ * @returns {{trouve: boolean, expression: string}} `expression` : ce qui a
+ *          declenche, cite tel quel pour que l'avertissement soit verifiable.
+ */
+export function demandeEcritureDeTexte(valeur) {
+  const v = nettoyer(valeur);
+  if (!v) return { trouve: false, expression: '' };
+  for (const motif of MOTIFS_DEMANDE_ECRITURE) {
+    const m = v.match(motif);
+    if (m) return { trouve: true, expression: m[0] };
+  }
+  return { trouve: false, expression: '' };
+}
+
+/**
+ * Valide le prompt libre.
+ *
+ * Un seul motif de REFUS subsiste : la longueur. Tout le reste est rendu dans
+ * `avertissements` — a afficher a cote du champ, sans jamais griser le bouton.
  *
  * @param {string} promptLibre
  * @param {Array} [textes]  les blocs de texte declares
- * @returns {{ok: boolean, valeur: string, raison: string|null, message: string}}
+ * @returns {{ok: boolean, valeur: string, raison: string|null, message: string,
+ *            avertissements: Array<{code: string, message: string}>}}
  */
 export function validerPromptLibre(promptLibre, textes = []) {
   const valeur = nettoyer(promptLibre);
-  if (!valeur) return { ok: true, valeur: '', raison: null, message: '' };
+  if (!valeur) return { ok: true, valeur: '', raison: null, message: '', avertissements: [] };
 
   if (valeur.length > LONGUEUR_PROMPT_LIBRE_MAX) {
     return {
@@ -713,38 +789,45 @@ export function validerPromptLibre(promptLibre, textes = []) {
       message: `Votre description de scene fait ${valeur.length} caracteres, maximum `
         + `${LONGUEUR_PROMPT_LIBRE_MAX}. Au-dela, elle repousse la description du support `
         + 'hors du prompt. Gardez l\'essentiel : le decor, la lumiere, la mise en situation.',
+      avertissements: [],
     };
   }
 
-  // ── Un texte client recopie dans le champ libre ──────────────────────────
-  const fuite = promptContientTexteClient(valeur, textes);
-  if (fuite.trouve) {
-    return {
-      ok: false,
-      valeur,
-      raison: 'prompt-libre-texte-client',
-      message: `Votre description de scene contient « ${fuite.contenu} », qui est un de vos `
-        + 'blocs de texte. Ce champ decrit la SCENE (decor, lumiere, mise en situation) — '
-        + 'il ne peut pas demander d\'ecrire du texte. Le 16/09, un bloc demande au modele '
-        + 'a ete purement omis, sans le moindre avertissement : depuis, c\'est l\'application '
-        + 'qui dessine les textes, caractere par caractere. Retirez-le d\'ici, il sera marque.',
-    };
+  const avertissements = [];
+
+  // ── Un bloc de texte cite ET une demande d'ecriture ──────────────────────
+  // Les deux conditions, pas une seule : citer le nom de la boutique pour dire
+  // OU la photo se passe est normal ; demander de l'ecrire ne l'est pas.
+  const ecriture = demandeEcritureDeTexte(valeur);
+  if (ecriture.trouve) {
+    const fuite = promptContientTexteClient(valeur, textes);
+    if (fuite.trouve) {
+      avertissements.push({
+        code: 'scene-demande-un-texte',
+        message: `Votre description de scene semble demander d'ecrire « ${fuite.contenu} » `
+          + `(« ${ecriture.expression} »). Ce n'est pas la peine : ce bloc est deja marque par `
+          + 'l\'application, caractere par caractere, par-dessus l\'image. Le modele, lui, peut '
+          + 'l\'ecrire de travers ou l\'oublier — le 16/09, un bloc demande a ete purement omis, '
+          + 'sans le moindre avertissement. L\'apercu part quand meme.',
+      });
+    }
   }
 
   // ── Un numero tape directement, sans passer par un bloc ──────────────────
+  // Celui-ci ne demande pas de verbe : une suite de cinq chiffres ou plus dans
+  // une description de decor EST un contenu a ecrire, quelle que soit la phrase.
   if (MOTIF_SUITE_DE_CHIFFRES.test(valeur)) {
-    return {
-      ok: false,
-      valeur,
-      raison: 'prompt-libre-chiffres',
+    avertissements.push({
+      code: 'scene-suite-de-chiffres',
       message: 'Votre description de scene contient une suite de chiffres, qui ressemble a un '
         + 'numero. Le modele ne doit recevoir AUCUN texte a ecrire : un numero redessine par lui '
         + 'peut etre faux, ou disparaitre en silence. Saisissez-le comme bloc de texte '
-        + '(etape « Textes et personnalisation ») — l\'application le dessinera elle-meme.',
-    };
+        + '(etape « Textes et personnalisation ») — l\'application le dessinera elle-meme. '
+        + 'L\'apercu part quand meme.',
+    });
   }
 
-  return { ok: true, valeur, raison: null, message: '' };
+  return { ok: true, valeur, raison: null, message: '', avertissements };
 }
 
 /**
@@ -1065,9 +1148,26 @@ export function preparerTextesPourRendu(textes, params = {}) {
  *
  * @returns {{trouve: boolean, contenu: string}}
  */
-export function promptContientTexteClient(prompt, textes) {
-  const p = String(prompt || '').toLowerCase();
+export function promptContientTexteClient(prompt, textes, options = {}) {
+  let p = String(prompt || '').toLowerCase();
   if (!p) return { trouve: false, contenu: '' };
+
+  // ── `ignorer` : les portions DEJA validees ailleurs ──────────────────────
+  // La description de scene passe par `validerPromptLibre`, qui sait, elle,
+  // distinguer « decrire le lieu » de « demander d'ecrire ». La repasser ici,
+  // dans un controle qui ne compare que des chaines, refaisait le faux positif
+  // du 18/09 : « a l'interieur de l'imprimerie Ogooue » etait refuse parce que
+  // le nom de la boutique est aussi un bloc de texte. Ce controle-ci garde son
+  // objet reel : ce qui a ete recopie a la main DANS LA ZONE DE PROMPT.
+  for (const brut of [].concat(options.ignorer || [])) {
+    const portion = String(brut || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    // Le prompt est borne : la fin de la portion a pu etre rognee. On retire
+    // donc le plus long prefixe REELLEMENT present.
+    for (let reste = portion; reste.length >= 3; reste = reste.slice(0, -1)) {
+      if (p.includes(reste)) { p = p.split(reste).join(' '); break; }
+    }
+  }
+
   for (const t of normaliserTextes(textes)) {
     const c = t.contenu.trim();
     if (c.length < 3) continue;
@@ -1175,14 +1275,17 @@ export function construirePromptMockupIA(params) {
  *   - le plafond du jour (de l'argent) ;
  *   - une INFORMATION MANQUANTE pour composer l'image : support, coloris, zone,
  *     fichier logo lisible, prompt non vide ;
- *   - une regle du 16/09 : bloc de texte vide, texte client recopie dans le
- *     prompt, description de scene qui reclame du texte.
+ *   - une regle du 16/09 : bloc de texte vide, texte client recopie DANS LA
+ *     ZONE DE PROMPT editable ;
+ *   - la longueur de la description de scene (de la place qui manque).
  *
- * Ce qui ne bloque PLUS : la faisabilite en atelier. Elle est renvoyee dans
+ * Ce qui ne bloque PLUS : la faisabilite en atelier (17/09) — renvoyee dans
  * `faisabilite` (reserves + avertissements) pour etre AFFICHEE, jamais pour
- * refuser. Un mockup est un apercu commercial, pas un bon a tirer.
+ * refuser ; et le CONTENU de la description de scene (18/09) — renvoye dans
+ * `avertissementsScene`. Un mockup est un apercu commercial, pas un bon a
+ * tirer, et decrire le lieu ou la photo se passe n'est pas demander d'ecrire.
  *
- * @returns {{ok, raison, message, prompt, cout, scene, faisabilite}}
+ * @returns {{ok, raison, message, prompt, cout, scene, faisabilite, avertissementsScene}}
  */
 export function validerDemandeMockup(params) {
   const {
@@ -1236,7 +1339,7 @@ export function validerDemandeMockup(params) {
   const scene = (!modeIA && sceneExistante) ? 'photo' : 'ia';
   const cout = scene === 'photo' ? 0 : coutGeneration(qualite);
 
-  const base = { prompt, cout, scene, faisabilite: null };
+  const base = { prompt, cout, scene, faisabilite: null, avertissementsScene: [] };
 
   if (enCours) {
     return {
@@ -1331,12 +1434,18 @@ export function validerDemandeMockup(params) {
   if (!verifLibre.ok) {
     return { ...base, ok: false, raison: verifLibre.raison, message: verifLibre.message, faisabilite };
   }
+  // Ce que la scene signale SANS refuser. Remonte tel quel pour etre affiche
+  // a cote du bouton — un avertissement, jamais un bouton grise (18/09/2026).
+  base.avertissementsScene = verifLibre.avertissements;
 
   // ── Aucun texte client ne part au modele, prompt edite compris ───────────
   // C'est la barriere mecanique derriere la decision du 16/09/2026. Les
   // constructeurs de prompt n'emettent plus aucun texte utilisateur ; ce
   // controle-ci couvre le seul chemin qui reste, la zone de prompt editable.
-  const fuite = promptContientTexteClient(prompt, textes);
+  // `ignorer: promptLibre` : la description de scene a deja son propre controle,
+  // qui sait distinguer decrire d'ecrire. Sans cette exclusion, le nom de la
+  // boutique tape dans la scene rebloquait ici (faux positif du 18/09).
+  const fuite = promptContientTexteClient(prompt, textes, { ignorer: promptLibre });
   if (fuite.trouve) {
     return {
       ...base,

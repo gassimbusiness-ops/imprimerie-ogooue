@@ -1290,7 +1290,13 @@ function EcranMockup() {
                   </button>
                 )}
               </div>
+              {/* Un refus ici n'existe plus que pour la longueur. Le reste
+                  s'affiche en ATTENTION : decrire le lieu ou la photo se passe
+                  n'est pas demander d'ecrire (18/09/2026). */}
               {!libreVerif.ok && <Alerte type="blocage">{libreVerif.message}</Alerte>}
+              {(libreVerif.avertissements || []).map((av) => (
+                <Alerte key={av.code} type="attention">{av.message}</Alerte>
+              ))}
             </div>
 
             <details className="rounded-lg border bg-muted/30 p-3">

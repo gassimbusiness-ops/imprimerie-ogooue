@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { db } from '@/services/db';
+import { libelleCommande } from '@/services/libelles';
 import { supabase, USE_SUPABASE } from '@/services/supabase';
 import { useAuth } from '@/services/auth';
 import { useChargeur, executerAction, messageEchecAction } from '@/services/chargement';
@@ -923,7 +924,11 @@ export default function Commandes() {
       if (!existing) {
         // Creer une nouvelle tache liee a la commande
         await db.taches.create({
-          titre: `Commande ${cmd.numero} — ${cmd.client_nom}`,
+          // `libelleCommande` et pas une interpolation : une commande sans
+          // numero (import, saisie ancienne, creation depuis le portail
+          // client) ecrivait « Commande undefined — … » DANS LA BASE,
+          // et le gerant le lisait sur l'ecran Taches.
+          titre: libelleCommande({ numero: cmd.numero, client: cmd.client_nom }),
           description: cmd.description || (cmd.lignes || []).map((l) => `${l.quantite}× ${l.description}`).join('\n'),
           priorite: 'haute',
           categorie: 'Commande',

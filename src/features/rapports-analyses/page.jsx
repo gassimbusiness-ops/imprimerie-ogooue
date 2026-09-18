@@ -19,6 +19,8 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { askAI } from '@/services/ai';
+import { lireJsonIA, scoreLisible } from '@/services/lecture-json-ia';
+import { texteAffichable } from '@/services/libelles';
 
 function fmt(n) { return new Intl.NumberFormat('fr-FR').format(Math.round(n || 0)); }
 
@@ -86,6 +88,9 @@ export default function RapportsAnalyses() {
   // IA
   const [iaLoading, setIaLoading] = useState(false);
   const [iaResult, setIaResult] = useState(null);
+  // Une lecture qui echoue n'est PAS un resultat a zero : c'est une panne, et
+  // elle a son propre etat pour pouvoir se dire comme telle.
+  const [iaErreur, setIaErreur] = useState(null);
 
   useEffect(() => {
     (async () => {
@@ -302,6 +307,12 @@ export default function RapportsAnalyses() {
   });
 
   if (loading) return <div className="flex items-center justify-center py-20"><div className="h-8 w-8 animate-spin rounded-full border-2 border-primary border-t-transparent" /></div>;
+
+  // Le score n'est affiche que si c'en est un. Sans ce filtre, un JSON valide
+  // mais sans `score_performance` envoyait `undefined * 2.51` dans l'attribut
+  // `strokeDasharray` du cercle : « NaN 251 » — une valeur manquante de plus,
+  // dans un attribut cette fois.
+  const scoreIA = iaResult ? scoreLisible(iaResult.score_performance) : null;
 
   return (
     <div className="space-y-6">
@@ -945,6 +956,7 @@ export default function RapportsAnalyses() {
               onClick={async () => {
                 setIaLoading(true);
                 setIaResult(null);
+                setIaErreur(null);
                 try {
                   const byService = {};
                   const catKeys = CATEGORIES_RAPPORT;
@@ -963,15 +975,23 @@ export default function RapportsAnalyses() {
                   const system = `Tu es analyste commercial senior pour Imprimerie Ogooue, Moanda, Gabon.`;
                   const prompt = `Analyse complete sur la periode selectionnee :\n\nCA total : ${ca} FCFA\nCA par service : ${JSON.stringify(byService)}\nEvolution vs periode precedente : ${evolution}%\nNombre de commandes : ${periodCommandes.length}\nPanier moyen : ${periodCommandes.length > 0 ? Math.round(periodCommandes.reduce((s, c) => s + (c.montant_total || c.total || 0), 0) / periodCommandes.length) : 0} FCFA\nTop 5 produits catalogue : ${JSON.stringify(topProduits)}\n\nRetourne un JSON strictement valide :\n{"score_performance": 0-100, "resume_performance": "texte 2 phrases", "top_services": ["service1 : explication", "service2 : explication"], "opportunites": ["opportunite 1", "opportunite 2"], "alertes": ["alerte 1", "alerte 2"], "recommandations": [{"action": "titre court", "detail": "explication 2 phrases", "impact": "eleve/moyen/faible"}, {"action": "...", "detail": "...", "impact": "..."}, {"action": "...", "detail": "...", "impact": "..."}]}`;
 
-                  const raw = await askAI(system, prompt, 800);
-                  try {
-                    const jsonMatch = raw.match(/\{[\s\S]*\}/);
-                    if (jsonMatch) setIaResult(JSON.parse(jsonMatch[0]));
-                    else setIaResult({ resume_performance: raw, score_performance: 0, top_services: [], opportunites: [], alertes: [], recommandations: [] });
-                  } catch {
-                    setIaResult({ resume_performance: raw, score_performance: 0, top_services: [], opportunites: [], alertes: [], recommandations: [] });
+                  // 1500 et non 800 : le JSON demande ici porte un resume, quatre
+                  // listes et TROIS recommandations de deux phrases. A 800 jetons
+                  // la reponse etait coupee en plein objet — c'est la cause reelle
+                  // du « score 0 » vu le 18/09, et c'est la place qui manquait.
+                  const raw = await askAI(system, prompt, 1500);
+                  // Lecture PARTAGEE (src/services/lecture-json-ia.js) : la meme
+                  // que le Dashboard Financier et la Performance RH. Elle ne
+                  // fabrique jamais de valeur de remplacement — quand elle ne
+                  // sait pas lire, elle le dit, et l'ecran affiche la panne.
+                  const lu = lireJsonIA(raw);
+                  if (lu.ok) {
+                    setIaResult(lu.donnees);
+                    toast.success('Analyse IA terminee');
+                  } else {
+                    setIaErreur({ message: lu.message, brut: lu.brut });
+                    toast.error(lu.message, { duration: 12000 });
                   }
-                  toast.success('Analyse IA terminee');
                 } catch (err) {
                   // api/_lib/modeles.js:46-63 construit un message qui nomme la
                   // cause reelle. On le remonte tel quel — c'est lui qui evite
@@ -991,11 +1011,34 @@ export default function RapportsAnalyses() {
             </Button>
           </div>
 
-          {!iaResult && !iaLoading && (
+          {!iaResult && !iaErreur && !iaLoading && (
             <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
               <BarChart3 className="h-16 w-16 mb-4 opacity-20" />
               <p className="text-sm">Lancez l'analyse pour obtenir des insights sur vos ventes</p>
             </div>
+          )}
+
+          {/* La panne se dit comme une panne. Avant le 18/09, ce cas affichait
+              la reponse brute du modele dans le champ « resume » et un score de
+              0 dans la jauge : le gerant lisait « 0/100 » la ou l'application
+              voulait dire « je n'ai pas su lire ». */}
+          {iaErreur && !iaLoading && (
+            <Card className="border-amber-300 bg-amber-50/70">
+              <CardContent className="p-4 space-y-2">
+                <h3 className="flex items-center gap-2 text-sm font-semibold text-amber-900">
+                  <AlertTriangle className="h-4 w-4" /> Analyse non lisible — aucun chiffre affiche
+                </h3>
+                <p className="text-sm text-amber-900/90">{iaErreur.message}</p>
+                {iaErreur.brut && (
+                  <details className="text-xs text-amber-900/80">
+                    <summary className="cursor-pointer">Voir la reponse brute du modele</summary>
+                    <pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded bg-white/70 p-2 text-[11px]">
+                      {iaErreur.brut}
+                    </pre>
+                  </details>
+                )}
+              </CardContent>
+            </Card>
           )}
 
           {iaResult && (
@@ -1004,18 +1047,24 @@ export default function RapportsAnalyses() {
               <Card className="border-violet-200 bg-violet-50/50">
                 <CardContent className="p-4 text-center">
                   <p className="text-xs text-muted-foreground mb-2">Score de performance</p>
-                  <div className="relative inline-flex items-center justify-center">
-                    <svg className="h-24 w-24" viewBox="0 0 100 100">
-                      <circle cx="50" cy="50" r="40" fill="none" stroke="#e5e7eb" strokeWidth="8" />
-                      <circle cx="50" cy="50" r="40" fill="none"
-                        stroke={iaResult.score_performance >= 70 ? '#10b981' : iaResult.score_performance >= 40 ? '#f59e0b' : '#ef4444'}
-                        strokeWidth="8" strokeLinecap="round"
-                        strokeDasharray={`${iaResult.score_performance * 2.51} 251`}
-                        transform="rotate(-90 50 50)" />
-                    </svg>
-                    <span className="absolute text-2xl font-black">{iaResult.score_performance}</span>
-                  </div>
-                  <p className="text-sm mt-2">{iaResult.resume_performance}</p>
+                  {scoreIA === null ? (
+                    <p className="py-6 text-sm text-muted-foreground">
+                      Le modele n&apos;a pas renvoye de score pour cette periode.
+                    </p>
+                  ) : (
+                    <div className="relative inline-flex items-center justify-center">
+                      <svg className="h-24 w-24" viewBox="0 0 100 100">
+                        <circle cx="50" cy="50" r="40" fill="none" stroke="#e5e7eb" strokeWidth="8" />
+                        <circle cx="50" cy="50" r="40" fill="none"
+                          stroke={scoreIA >= 70 ? '#10b981' : scoreIA >= 40 ? '#f59e0b' : '#ef4444'}
+                          strokeWidth="8" strokeLinecap="round"
+                          strokeDasharray={`${scoreIA * 2.51} 251`}
+                          transform="rotate(-90 50 50)" />
+                      </svg>
+                      <span className="absolute text-2xl font-black">{scoreIA}</span>
+                    </div>
+                  )}
+                  <p className="text-sm mt-2">{iaResult.resume_performance || ''}</p>
                 </CardContent>
               </Card>
 
@@ -1027,10 +1076,10 @@ export default function RapportsAnalyses() {
                   </h3>
                   <div className="space-y-2">
                     {(iaResult.top_services || []).map((s, i) => (
-                      <div key={i} className="text-xs rounded-lg bg-emerald-50 p-2">{s}</div>
+                      <div key={i} className="text-xs rounded-lg bg-emerald-50 p-2">{texteAffichable(s)}</div>
                     ))}
                     {(iaResult.opportunites || []).map((o, i) => (
-                      <div key={i} className="text-xs rounded-lg bg-blue-50 p-2">{o}</div>
+                      <div key={i} className="text-xs rounded-lg bg-blue-50 p-2">{texteAffichable(o)}</div>
                     ))}
                   </div>
                 </CardContent>
@@ -1044,7 +1093,7 @@ export default function RapportsAnalyses() {
                   </h3>
                   <div className="space-y-2">
                     {(iaResult.alertes || []).map((a, i) => (
-                      <div key={i} className="text-xs rounded-lg bg-amber-50 p-2">{a}</div>
+                      <div key={i} className="text-xs rounded-lg bg-amber-50 p-2">{texteAffichable(a)}</div>
                     ))}
                   </div>
                 </CardContent>
@@ -1060,10 +1109,10 @@ export default function RapportsAnalyses() {
                     {(iaResult.recommandations || []).map((r, i) => (
                       <div key={i} className="rounded-lg border p-2.5">
                         <div className="flex items-center justify-between">
-                          <p className="text-xs font-semibold">{r.action || r}</p>
-                          {r.impact && <Badge variant="outline" className="text-[9px]">{r.impact}</Badge>}
+                          <p className="text-xs font-semibold">{texteAffichable(r?.action) || texteAffichable(r)}</p>
+                          {texteAffichable(r?.impact) && <Badge variant="outline" className="text-[9px]">{texteAffichable(r.impact)}</Badge>}
                         </div>
-                        {r.detail && <p className="text-[11px] text-muted-foreground mt-1">{r.detail}</p>}
+                        {texteAffichable(r?.detail) && <p className="text-[11px] text-muted-foreground mt-1">{texteAffichable(r.detail)}</p>}
                       </div>
                     ))}
                   </div>

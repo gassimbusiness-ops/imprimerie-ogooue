@@ -98,38 +98,52 @@ function blocs(...contenus) {
    1. UN NUMERO SAISI DANS LE PROMPT LIBRE EST REFUSE
    ═══════════════════════════════════════════════════════════════════════════ */
 
-test('prompt libre : le numero DECLARE comme bloc y est refuse, avec le message', () => {
+test('prompt libre : le numero DECLARE comme bloc y est SIGNALE, sans refus', () => {
+  // 18/09/2026 : ce cas etait un REFUS. Il ne l'est plus. La phrase demande
+  // bien d'ecrire (« avec le numero… ») et merite d'etre signalee — mais un
+  // avertissement suffit, et le gerant reste libre de lancer son apercu.
+  // Le blocage, lui, refusait aussi « a l'interieur de l'imprimerie Ogooue ».
   const r = validerDemandeMockup(demandeValide({
     mode: 'ia',
     textes: blocs(NUMERO),
     promptLibre: `avec le numero ${NUMERO} bien visible sous le logo`,
   }));
-  assert.equal(r.ok, false);
-  assert.equal(r.raison, 'prompt-libre-texte-client');
-  assert.ok(r.message.includes(NUMERO), 'le refus doit citer le texte en cause');
-  assert.match(r.message, /scene/i, 'le refus doit dire a quoi sert ce champ');
-  assert.ok(r.message.length > 60, 'un refus au comptoir doit etre exploitable');
+  assert.equal(r.ok, true, `l'apercu ne doit plus etre refuse : ${r.message}`);
+  const m = r.avertissementsScene.map((x) => x.message).join(' ');
+  assert.ok(m.includes(NUMERO), 'l\'avertissement doit citer le texte en cause');
+  assert.match(m, /application/i, 'il doit dire qui dessine les textes');
+  assert.ok(m.length > 60, 'un avertissement au comptoir doit etre exploitable');
 });
 
-test('prompt libre : un numero NON declare est refuse lui aussi', () => {
+test('prompt libre : un numero NON declare est signale lui aussi', () => {
   // Le cas que `promptContientTexteClient` seul ne verrait pas : le numero
   // n'a jamais ete saisi comme bloc, il est tape directement dans la scene.
+  // Il est SIGNALE — plus refuse (18/09/2026).
   const r = validerDemandeMockup(demandeValide({
     mode: 'ia',
     textes: [],
     promptLibre: 'ecris 077 12 34 56 en gros sur le t-shirt',
   }));
-  assert.equal(r.ok, false);
-  assert.equal(r.raison, 'prompt-libre-chiffres');
-  assert.match(r.message, /chiffres/i);
-  assert.match(r.message, /bloc de texte/i, 'le refus doit dire ou le saisir a la place');
+  assert.equal(r.ok, true, `l'apercu ne doit plus etre refuse : ${r.message}`);
+  const m = r.avertissementsScene.map((x) => x.message).join(' ');
+  assert.match(m, /chiffres/i);
+  assert.match(m, /bloc de texte/i, 'l\'avertissement doit dire ou le saisir a la place');
 });
 
-test('prompt libre : le nom du client y est refuse comme le numero', () => {
+test('prompt libre : citer le nom du client pour DECRIRE ne declenche rien', () => {
+  // « une banderole IMPRIMERIE OGOOUÉ tendue sur une facade » decrit ce qu'on
+  // photographie ; elle ne demande pas au modele de l'ecrire. C'est la meme
+  // phrase que celle du gerant le 18/09 (« a l'interieur de l'imprimerie
+  // Ogooue »), qui etait refusee — et c'est le nom de sa propre boutique.
   const r = validerPromptLibre(`une banderole ${NOM} tendue sur une facade`, blocs(NOM));
-  assert.equal(r.ok, false);
-  assert.equal(r.raison, 'prompt-libre-texte-client');
-  assert.ok(r.message.includes(NOM));
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.avertissements, []);
+
+  // En revanche, DEMANDER de l'ecrire est signale — la regle du 16/09 tient.
+  const d = validerPromptLibre(`avec le texte ${NOM} sur la banderole`, blocs(NOM));
+  assert.equal(d.ok, true, 'un avertissement n\'est pas un refus');
+  assert.equal(d.avertissements.length >= 1, true);
+  assert.ok(d.avertissements[0].message.includes(NOM));
 });
 
 test('prompt libre : une vraie description de scene passe, chiffres courts compris', () => {
