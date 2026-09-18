@@ -11,7 +11,7 @@ import { useNavigate } from 'react-router-dom';
 import { notifyNouvelleCommande } from '@/services/notifications';
 import { exportDocument, exportRecuPaiement } from '@/services/export-pdf';
 import { toast } from 'sonner';
-import { todayISO } from '@/lib/dates';
+import { todayISO, dateMetierDepuisHorodatage } from '@/lib/dates';
 
 function fmt(n) { return new Intl.NumberFormat('fr-FR').format(Math.round(n || 0)); }
 
@@ -283,7 +283,7 @@ export default function ClientCommandes() {
         exportDocument({
           numero: cmd.numero,
           client_nom: cmd.client_nom,
-          date: cmd.created_at?.slice(0, 10),
+          date: dateMetierDepuisHorodatage(cmd.created_at),
           statut: 'livree',
           objet: cmd.description,
         }, lignes, 'facture');
@@ -324,7 +324,7 @@ export default function ClientCommandes() {
                         <Badge className={cfg.color + ' text-[10px]'}>{cfg.shortLabel}</Badge>
                       </div>
                       <p className="text-sm text-muted-foreground">{cmd.description || cmd.service}</p>
-                      <p className="text-xs text-muted-foreground">{cmd.date_creation || cmd.created_at?.slice(0, 10)}</p>
+                      <p className="text-xs text-muted-foreground">{cmd.date_creation || dateMetierDepuisHorodatage(cmd.created_at)}</p>
                     </div>
                     <p className="text-lg font-bold shrink-0">{fmt(cmd.montant_total || cmd.total)} F</p>
                   </div>

@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { db } from '@/services/db';
-import { toISODate, todayISO } from '@/lib/dates';
+import { toISODate, todayISO, dateMetierDepuisHorodatage, moisMetierDepuisHorodatage } from '@/lib/dates';
 import { useAuth } from '@/services/auth';
 import { logAction } from '@/services/audit';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -119,7 +119,11 @@ export default function PerformanceRH() {
 
       // Avances ce mois (demandes type avance, approuvee ou payee)
       const avances = demandesRH
-        .filter((d) => (d.employe_id === empId || d.user_id === empId) && d.type === 'avance' && estEngageante(d) && (d.created_at || '').slice(0, 7) === currentMonth)
+        // ARGENT — ces avances sont RETRANCHEES du net a payer juste en
+        // dessous. `created_at` est un instant UTC : une avance versee le 1er
+        // a 00 h 30 heure de Moanda se rangeait dans le mois PRECEDENT, et le
+        // salaire du mois etait verse sans en tenir compte.
+        .filter((d) => (d.employe_id === empId || d.user_id === empId) && d.type === 'avance' && estEngageante(d) && moisMetierDepuisHorodatage(d.created_at) === currentMonth)
         .reduce((s, d) => s + (Number(d.montant) || 0), 0);
 
       const salaireBase = Number(e.salaire_base) || 0;
@@ -776,7 +780,7 @@ export default function PerformanceRH() {
                       <div>
                         <p className="text-sm font-medium">{d.employe_nom || '—'}</p>
                         <p className="text-xs text-muted-foreground">
-                          {d.type === 'conge' ? 'Congé' : d.type || '—'} — {d.created_at?.slice(0, 10) || ''}
+                          {d.type === 'conge' ? 'Congé' : d.type || '—'} — {dateMetierDepuisHorodatage(d.created_at)}
                         </p>
                       </div>
                       <Badge className={`text-[10px] ${
@@ -1116,7 +1120,7 @@ export default function PerformanceRH() {
                   )}
 
                   <p className="text-[10px] text-muted-foreground text-center">
-                    Évaluation par {p.auteurNom || '—'} — {p.updated_at?.slice(0, 10) || p.created_at?.slice(0, 10) || ''}
+                    Évaluation par {p.auteurNom || '—'} — {dateMetierDepuisHorodatage(p.updated_at) || dateMetierDepuisHorodatage(p.created_at)}
                   </p>
                 </div>
               </>

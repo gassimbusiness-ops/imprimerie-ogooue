@@ -62,7 +62,7 @@ import { syncClientFromCommande } from '@/services/sync-clients';
 import { syncCommandeToRapport } from '@/services/sync-commande-rapport';
 import { syncStockFromCommande } from '@/services/sync-stock-commande';
 import { exportBonTravail } from '@/services/export-pdf';
-import { todayISO, addDaysISO, startOfMonthISO } from '@/lib/dates';
+import { todayISO, addDaysISO, startOfMonthISO, dateMetierDepuisHorodatage } from '@/lib/dates';
 import SelecteurActivite from '@/features/partages/selecteur-activite';
 import {
   ACTIVITE_DEFAUT, TOUTES_ACTIVITES, activiteDe, avecActivite, filtrerParActivite,
@@ -289,7 +289,12 @@ export default function Commandes() {
       counts[n] = (counts[n] || 0) + 1;
     });
     const thisMonth = commandes.filter((c) => {
-      const d = c.created_at?.split('T')[0] || '';
+      // ARGENT — ce `d` sert a compter le CA DU MOIS. `created_at` est un
+      // instant UTC : le decouper rendait la VEILLE entre 00 h et 01 h a
+      // Moanda, et une commande du 1er a 00 h 30 tombait dans le mois
+      // precedent. `dateMetierDepuisHorodatage` lit l'instant a Moanda et
+      // retombe sur l'ancien decoupage si la forme lui est inconnue.
+      const d = dateMetierDepuisHorodatage(c.created_at);
       // `startOfMonthISO()` : le 1er du mois entre 00 h et 01 h, l'ancienne
       // forme rendait le mois PRECEDENT et le CA du mois repartait a zero
       // une heure trop tard.
@@ -486,7 +491,9 @@ export default function Commandes() {
       // affichait 0 F faute de ce champ (constat E6).
       total: cmd.montant_total || cmd.total || 0,
       statut: 'envoyee',
-      date_commande: cmd.created_at?.slice(0, 10) || '',
+      // Date portee par une FACTURE remise au client : meme exigence que
+      // `date` et `date_livraison` juste en dessous.
+      date_commande: dateMetierDepuisHorodatage(cmd.created_at),
       // `todayISO()` et non `toISOString()` : entre 00 h et 01 h heure de
       // Libreville, la facture — document legal — portait la date de la veille.
       date_livraison: todayISO(),

@@ -8,7 +8,7 @@ import { executerPrelevementsDus } from '@/services/credit-mensualites';
 import { executerChargesDues } from '@/services/charges-fixes-prelevement';
 import { apercuMensualitesDues, apercuChargesDues } from '@/services/prelevements-apercu';
 import { verrouPrelevements, CLE_PRELEVEMENTS, creerVerrouExecution } from '@/services/execution-unique';
-import { dateMetierEnDateLocale, toISODate, todayISO } from '@/lib/dates';
+import { dateMetierEnDateLocale, toISODate, todayISO, dateMetierDepuisHorodatage } from '@/lib/dates';
 import SelecteurActivite from '@/features/partages/selecteur-activite';
 import {
   ACTIVITE_DEFAUT, TOUTES_ACTIVITES, activiteDe, avecActivite,
@@ -273,7 +273,10 @@ export default function Finances() {
     // Filtre d'activite AVANT tout le reste : les deux caisses ne partagent
     // pas le meme solde d'especes, elles ne partagent donc pas le meme total.
     return filtrerParActivite(mouvements, mvActivite).filter((m) => {
-      const d = (m.date || m.created_at || '').slice(0, 10);
+      // ARGENT — ce `d` decide si le mouvement entre dans le total affiche.
+      // Les 34 mouvements en base portent un champ `date` : le repli sur
+      // `created_at` est rare, il n'a pas a etre faux pour autant.
+      const d = m.date || dateMetierDepuisHorodatage(m.created_at);
       // Filtre date : plage > mois > all
       if (mvShowAll) {
         // pas de filtre date
@@ -773,7 +776,7 @@ export default function Finances() {
                               au total de l'entreprise, il déplace. */}
                           {estTransfertInterne(m.type) ? '' : (m.type === 'sortie' ? '-' : '+')}{fmt(m.montant)} F
                         </p>
-                        <p className="text-[10px] text-muted-foreground">{m.date || m.created_at?.slice(0, 10)}</p>
+                        <p className="text-[10px] text-muted-foreground">{m.date || dateMetierDepuisHorodatage(m.created_at)}</p>
                       </div>
                       {(isAdmin || isManager) && (
                         <div className="flex gap-1 shrink-0">

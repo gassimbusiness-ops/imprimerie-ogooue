@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { db } from '@/services/db';
-import { toISODate, todayISO, addDaysISO } from '@/lib/dates';
+import { toISODate, todayISO, addDaysISO, dateMetierDepuisHorodatage, moisMetierDepuisHorodatage } from '@/lib/dates';
 import { caRapports, CATEGORIES_RAPPORT } from '@/services/finance-calc';
 import { useAuth } from '@/services/auth';
 import { exportInventairePDF, exportRapportCompletPDF, exportCSV } from '@/services/export-pdf';
@@ -23,6 +23,24 @@ import { lireJsonIA, scoreLisible } from '@/services/lecture-json-ia';
 import { texteAffichable } from '@/services/libelles';
 
 function fmt(n) { return new Intl.NumberFormat('fr-FR').format(Math.round(n || 0)); }
+
+/**
+ * ARGENT — la date metier d'une commande, celle qui decide dans quelle periode
+ * son montant est compte.
+ *
+ * Aucune des commandes en base ne porte de champ `date` (0 sur 5 releve le
+ * 19/09/2026) : c'est donc TOUJOURS `created_at` qui date le chiffre
+ * d'affaires. Or `created_at` est un instant UTC, et le decouper aux dix
+ * premiers caracteres rendait LA VEILLE entre 00 h et 01 h heure de Moanda.
+ * Une commande du 1er a 00 h 30 comptait dans le mois precedent.
+ *
+ * Definie au niveau du module, et pas dans le composant : elle est lue depuis
+ * plusieurs `useMemo`, et une fonction recreee a chaque rendu y serait une
+ * dependance manquante.
+ */
+function dateCommande(c) {
+  return c?.date || dateMetierDepuisHorodatage(c?.created_at);
+}
 
 const COLORS = ['#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ef4444', '#06b6d4', '#ec4899', '#84cc16'];
 
@@ -127,11 +145,11 @@ export default function RapportsAnalyses() {
     [rapports, prevRange]
   );
   const periodCommandes = useMemo(() =>
-    commandes.filter((c) => (c.date || c.created_at?.slice(0, 10) || '') >= start && (c.date || c.created_at?.slice(0, 10) || '') <= end),
+    commandes.filter((c) => dateCommande(c) >= start && dateCommande(c) <= end),
     [commandes, start, end]
   );
   const prevCommandes = useMemo(() =>
-    commandes.filter((c) => (c.date || c.created_at?.slice(0, 10) || '') >= prevRange.start && (c.date || c.created_at?.slice(0, 10) || '') <= prevRange.end),
+    commandes.filter((c) => dateCommande(c) >= prevRange.start && dateCommande(c) <= prevRange.end),
     [commandes, prevRange]
   );
 
@@ -213,7 +231,9 @@ export default function RapportsAnalyses() {
     // `todayISO().slice(0, 7)` : decouper une DATE METIER est licite ;
     // decouper un instant UTC rend le mois precedent le 1er a 00 h 30.
     const thisMonth = todayISO().slice(0, 7);
-    const nouveaux = clients.filter((c) => (c.created_at || '').slice(0, 7) === thisMonth).length;
+    // Un client cree le 1er a 00 h 31 comptait pour le mois PRECEDENT : c'est
+    // arrive une fois sur les 14 clients en base.
+    const nouveaux = clients.filter((c) => moisMetierDepuisHorodatage(c.created_at) === thisMonth).length;
     const recurrents = clients.filter((c) => {
       const cmdCount = commandes.filter((cmd) => cmd.client_id === c.id).length;
       return cmdCount >= 2;
@@ -225,7 +245,7 @@ export default function RapportsAnalyses() {
       const cmds = commandes.filter((cmd) => cmd.client_id === c.id);
       const caTotal = cmds.reduce((s, cmd) => s + (cmd.montant_total || cmd.total || 0), 0);
       const derniere = cmds.sort((a, b) => (b.date || b.created_at || '').localeCompare(a.date || a.created_at || ''))[0];
-      return { ...c, nbCommandes: cmds.length, caTotal, derniereCommande: derniere?.date || derniere?.created_at?.slice(0, 10) || '—' };
+      return { ...c, nbCommandes: cmds.length, caTotal, derniereCommande: derniere?.date || dateMetierDepuisHorodatage(derniere?.created_at) || '—' };
     }).sort((a, b) => b.caTotal - a.caTotal).slice(0, 10);
 
     // Inactifs > 30 jours
@@ -236,7 +256,7 @@ export default function RapportsAnalyses() {
       const cmds = commandes.filter((cmd) => cmd.client_id === c.id);
       if (cmds.length === 0) return true;
       const lastDate = cmds.reduce((max, cmd) => {
-        const d = cmd.date || cmd.created_at?.slice(0, 10) || '';
+        const d = dateCommande(cmd);
         return d > max ? d : max;
       }, '');
       return lastDate < thirtyDaysAgo;
@@ -249,7 +269,7 @@ export default function RapportsAnalyses() {
     // Évolution nombre de clients par mois
     const parMois = {};
     clients.forEach((c) => {
-      const m = (c.created_at || '').slice(0, 7);
+      const m = moisMetierDepuisHorodatage(c.created_at);
       if (m) parMois[m] = (parMois[m] || 0) + 1;
     });
     const evolutionClients = Object.entries(parMois)
@@ -298,6 +318,11 @@ export default function RapportsAnalyses() {
     });
 
     // Derniers mouvements financiers
+    // ⚠️ Ce `.slice(0, 10)` tronque la LISTE — les dix derniers mouvements —
+    // et non une date. Il ressemble a s'y meprendre a la troncature
+    // d'horodatage interdite par tests/dates-horodatage-supabase.test.mjs :
+    // ce n'en est pas une, et il n'y a rien a corriger ici. Le tri compare des
+    // chaines entre elles, jamais a une date metier : aucun franc n'en depend.
     const derniersMouvements = [...mouvements].sort((a, b) => (b.date || b.created_at || '').localeCompare(a.date || a.created_at || '')).slice(0, 10);
 
     return { recettes, depenses, marge, soldeCaisse, recettesVsDepenses, comptes, derniersMouvements };

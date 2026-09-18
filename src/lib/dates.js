@@ -179,16 +179,113 @@ export function formaterInstantUtc(d) {
 }
 
 /**
- * Lit un instant UTC (`…Z`) et rend le nombre de millisecondes, ou `null`.
- * Refuse tout ce qui ne finit pas par `Z` : une chaîne sans fuseau explicite
- * serait interprétée en heure locale par `new Date()`, et c'est exactement le
- * genre de tolérance qui a coûté 55 300 F.
+ * Les formes d'horodatage DATÉ ET SITUÉ que ce logiciel accepte.
+ *
+ * ── Pourquoi plusieurs formes, et lesquelles exactement ───────────────────
+ *
+ * Un horodatage traverse ce dépôt par trois chemins, et les trois n'écrivent
+ * pas pareil. Relevé le 19/09/2026 sur les 4 109 lignes de `app_data` du
+ * projet `bcwkrrqmjpaohmafcncw` :
+ *
+ *   • `new Date().toISOString()` — le chemin normal, celui de `db.create()` :
+ *     `2026-09-18T20:08:56.689Z`.                          3 975 lignes.
+ *   • PostgREST (lecture directe d'une colonne `timestamptz`) :
+ *     `2026-09-18T18:14:29.258082+00:00`.                      1 ligne.
+ *   • `now()::text` (une correction passée par l'éditeur SQL) :
+ *     `2026-09-17 21:18:28.025859+00` — ESPACE au lieu du `T`, offset `+00`
+ *     sans minutes.                                           18 lignes.
+ *
+ * Les deux dernières ne finissaient pas par `Z` : la version précédente de
+ * cette fonction les REFUSAIT. Refuser n'est pas neutre — un appelant qui
+ * affiche `dateLocaleDepuisInstantUtc(x)` sans repli montre alors une case
+ * VIDE, ce qui fait croire que la donnée n'existe pas. Un affichage décalé
+ * d'une heure gêne ; un affichage vide ment.
+ *
+ * ── LA CHAÎNE AMBIGUË : DÉCISION ET RAISON ────────────────────────────────
+ *
+ * `2026-06-07 21:19:46` — datée, mais SANS AUCUN FUSEAU.
+ *
+ * ⛔ Elle est REFUSÉE (`null`). Ce n'est pas une omission, c'est le choix.
+ *
+ * `new Date('2026-06-07 21:19:46')` l'interprète dans le fuseau de la MACHINE.
+ * La même chaîne vaudrait donc 21 h 19 UTC sur Vercel et 20 h 19 UTC dans le
+ * navigateur du gérant : deux instants distants d'une heure, et deux dates
+ * métier différentes une heure par jour. C'est le mécanisme exact de l'écart
+ * de 55 300 F documenté en tête de ce fichier.
+ *
+ * Deviner « c'est sûrement de l'UTC » serait un pari : rien dans la chaîne ne
+ * le dit. Ce fichier n'invente pas de fuseau — il le dit ou il refuse. Le
+ * refus est sûr parce qu'il est VISIBLE au bon endroit : les appelants passent
+ * par `dateMetierDepuisHorodatage()`, qui retombe alors sur les dix premiers
+ * caractères, c'est-à-dire sur le comportement d'avant — au pire une heure de
+ * décalage, jamais un écran vide, jamais un résultat qui dépend de la machine.
+ *
+ * Aucune ligne de production ne porte cette forme (0 sur 4 109). Le cas est
+ * donc théorique aujourd'hui — et testé quand même, parce que la prochaine
+ * correction SQL passée à la main peut l'écrire.
+ *
+ * Refusées pour la même raison : la date seule (`2026-06-07`, qui n'est pas un
+ * instant mais une date métier — voir `dateMetierDepuisHorodatage`), et tout
+ * ce qui n'a pas la forme d'un horodatage.
+ */
+const RE_INSTANT = new RegExp(
+  '^(\\d{4})-(\\d{2})-(\\d{2})'        // date
+  + '[T ]'                             // « T » (ISO) ou espace (sortie SQL)
+  + '(\\d{2}):(\\d{2})'                // heures:minutes
+  + '(?::(\\d{2}))?'                   // secondes, facultatives
+  + '(?:\\.(\\d{1,9}))?'               // fraction (Postgres en écrit 6)
+  + '(Z|z|[+-]\\d{2}(?::?\\d{2})?)$',  // Z, +01:00, +0100 ou +00
+);
+
+/**
+ * Lit un horodatage DATÉ ET SITUÉ et rend le nombre de millisecondes, ou
+ * `null` si la chaîne n'en est pas un — voir `RE_INSTANT` ci-dessus pour la
+ * liste des formes admises et pour le sort réservé à la chaîne sans fuseau.
+ *
+ * Le calcul passe par `Date.UTC` et un offset retiré à la main, jamais par
+ * `Date.parse` : le résultat est donc identique que le processus tourne à
+ * Libreville, en UTC ou à Los Angeles, ce que les tests vérifient sous les
+ * trois fuseaux.
+ *
  * @param {string} instant
  * @returns {number|null}
  */
 export function msDepuisInstantUtc(instant) {
-  if (typeof instant !== 'string' || !/Z$/.test(instant)) return null;
-  const ms = Date.parse(instant);
+  if (typeof instant !== 'string') return null;
+  const m = RE_INSTANT.exec(instant);
+  if (m === null) return null;
+
+  const [, a, mo, j, hh, mi, ss, frac, zone] = m;
+  const annee = Number(a);
+  const mois = Number(mo);
+  const jour = Number(j);
+  const heures = Number(hh);
+  const minutes = Number(mi);
+  const secondes = ss === undefined ? 0 : Number(ss);
+  // La fraction est ramenée à des millisecondes : `.258082` → 258 ms. On
+  // TRONQUE au lieu d'arrondir — un horodatage ne doit jamais avancer.
+  const millis = frac === undefined ? 0 : Number(`${frac}000`.slice(0, 3));
+
+  if (mois < 1 || mois > 12 || jour < 1 || jour > 31) return null;
+  if (heures > 23 || minutes > 59 || secondes > 60) return null;
+
+  let decalageMinutes = 0;
+  if (zone !== 'Z' && zone !== 'z') {
+    const signe = zone[0] === '-' ? -1 : 1;
+    const chiffres = zone.slice(1).replace(':', '');
+    const offH = Number(chiffres.slice(0, 2));
+    const offM = chiffres.length > 2 ? Number(chiffres.slice(2, 4)) : 0;
+    if (offH > 23 || offM > 59) return null;
+    decalageMinutes = signe * (offH * 60 + offM);
+  }
+
+  // Contrôle de débordement : le 31 février serait silencieusement reporté au
+  // 2 ou 3 mars. Un horodatage inventé doit être refusé, pas décalé — même
+  // précaution qu'à `instantUtcDepuisCreneau`.
+  const verif = new Date(Date.UTC(annee, mois - 1, jour));
+  if (verif.getUTCMonth() !== mois - 1 || verif.getUTCDate() !== jour) return null;
+
+  const ms = Date.UTC(annee, mois - 1, jour, heures, minutes - decalageMinutes, secondes, millis);
   return Number.isFinite(ms) ? ms : null;
 }
 
@@ -273,4 +370,61 @@ export function contexteMoanda(maintenant = new Date()) {
 export function dateLocaleDepuisInstantUtc(instantUtc, offset = '+01:00') {
   const rendu = formaterInstantLocal(instantUtc, offset, '');
   return rendu ? rendu.slice(0, 10) : null;
+}
+
+/**
+ * Date métier `YYYY-MM-DD` d'un champ d'horodatage de la base — vue de Moanda.
+ *
+ * ── Le défaut qu'elle remplace ────────────────────────────────────────────
+ *
+ * `created_at?.slice(0, 10)` découpe la représentation UTC. À Moanda (UTC+1,
+ * sans heure d'été), tout ce qui est horodaté entre 23 h et minuit UTC — donc
+ * entre 00 h et 01 h heure locale — se lit alors LA VEILLE. Relevé en base le
+ * 19/09/2026 : 30 lignes sur 4 109 tombent dans ce créneau, dont un client
+ * créé le 1er juin à 00 h 31 qui compte comme un client de MAI.
+ *
+ * ── Pourquoi cette fonction, et pas `dateLocaleDepuisInstantUtc` tout court ─
+ *
+ * Parce qu'elle NE PEUT PAS VIDER un écran. Trois entrées possibles, trois
+ * sorties, dans cet ordre :
+ *
+ *   1. déjà une date métier (`2026-06-07`) — rendue telle quelle. Un champ
+ *      `date` saisi par le gérant n'est pas un instant : le convertir serait
+ *      lui inventer une heure ;
+ *   2. un horodatage daté et situé (les trois formes réelles de Supabase,
+ *      cf. `RE_INSTANT`) — converti en date de Moanda. C'est la correction ;
+ *   3. tout le reste — chaîne sans fuseau, champ vide, valeur inattendue :
+ *      on retombe sur les dix premiers caractères, c'est-à-dire sur le
+ *      comportement d'AVANT. Au pire un décalage d'une heure, jamais un
+ *      écran vide.
+ *
+ * Le repli du point 3 est la raison d'être de cette fonction. La substitution
+ * directe de `dateLocaleDepuisInstantUtc()` aux `slice(0, 10)` aurait EFFACÉ
+ * les 19 lignes qui ne finissent pas par `Z` : c'est pire que le défaut
+ * corrigé, et c'est pourquoi ce chantier avait été ajourné.
+ *
+ * @param {unknown} valeur `created_at`, `updated_at`, `date`…
+ * @param {string} [offset] offset de lecture, Moanda par défaut
+ * @returns {string} date métier `YYYY-MM-DD`, ou `''` si rien d'exploitable
+ */
+export function dateMetierDepuisHorodatage(valeur, offset = OFFSET_MOANDA) {
+  if (typeof valeur !== 'string' || valeur === '') return '';
+  if (RE_DATE_METIER.test(valeur)) return valeur;
+  return dateLocaleDepuisInstantUtc(valeur, offset) || valeur.slice(0, 10);
+}
+
+/**
+ * Mois métier `YYYY-MM` d'un champ d'horodatage — même contrat que
+ * `dateMetierDepuisHorodatage`, dont elle n'est que la troncature.
+ *
+ * Écrite à part parce que `.slice(0, 7)` sur un `created_at` a une conséquence
+ * propre : il ne décale pas d'un jour, il change de MOIS un jour par mois.
+ * « Nouveaux clients ce mois » et « avances versées ce mois » en dépendent.
+ *
+ * @param {unknown} valeur
+ * @param {string} [offset]
+ * @returns {string} `YYYY-MM`, ou `''`
+ */
+export function moisMetierDepuisHorodatage(valeur, offset = OFFSET_MOANDA) {
+  return dateMetierDepuisHorodatage(valeur, offset).slice(0, 7);
 }

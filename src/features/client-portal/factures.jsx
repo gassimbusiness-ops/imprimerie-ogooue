@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { db } from '@/services/db';
+import { dateMetierDepuisHorodatage } from '@/lib/dates';
 import { useAuth } from '@/services/auth';
 import { exportDocument } from '@/services/export-pdf';
 import { Card, CardContent } from '@/components/ui/card';
@@ -86,7 +87,7 @@ export default function ClientFactures() {
                         </Badge>
                       </div>
                       <p className="text-sm text-muted-foreground mt-0.5">{f.objet || f.description}</p>
-                      <p className="text-xs text-muted-foreground">{f.date || f.created_at?.slice(0, 10)}</p>
+                      <p className="text-xs text-muted-foreground">{f.date || dateMetierDepuisHorodatage(f.created_at)}</p>
                       {f.commande_numero && (
                         <p className="text-xs text-muted-foreground">Commande : {f.commande_numero}</p>
                       )}

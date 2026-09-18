@@ -37,6 +37,7 @@ import {
   OFFSET_MOANDA as OFFSET_DES_DATES,
   contexteMoanda,
   dateLocaleDepuisInstantUtc,
+  dateMetierDepuisHorodatage,
 } from '../../src/lib/dates.js';
 import { ACTIVITES, activiteDe, libelleActivite } from '../../src/services/activites.js';
 import {
@@ -149,7 +150,12 @@ export function dateDeLivraison(commande) {
   }
   const parMaj = dateLocaleDepuisInstantUtc(String(commande?.updated_at || ''), OFFSET_MOANDA);
   if (parMaj) return parMaj;
-  if (typeof commande?.date_creation === 'string') return commande.date_creation.slice(0, 10);
+  // `date_creation` est une date metier (`YYYY-MM-DD`) pour les 7 lignes qui
+  // en portent une — mais rien ne l'impose au schema. `dateMetierDepuisHorodatage`
+  // rend la date telle quelle si c'en est une, et la ramene a Moanda si c'est
+  // un horodatage : le dernier recours pour dater une LIVRAISON ne doit pas
+  // dependre de la forme qu'a prise l'ecriture.
+  if (typeof commande?.date_creation === 'string') return dateMetierDepuisHorodatage(commande.date_creation) || null;
   return null;
 }
 

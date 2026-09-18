@@ -6,7 +6,7 @@
 // Le grand livre doit lire un dépôt hebdomadaire comme le reste de
 // l'application : un transfert interne, pas une recette (Q3, arbitrage n°13).
 import { estTransfertInterne } from '@/services/mouvements-financiers';
-import { todayISO } from '@/lib/dates';
+import { todayISO, dateMetierDepuisHorodatage } from '@/lib/dates';
 
 /**
  * Génère un PDF à partir de HTML (via impression du navigateur).
@@ -286,10 +286,11 @@ export function exportDocument(doc, lignes, type = 'facture') {
   // ⚠️ `todayISO()` et jamais `.toISOString().slice(0, 10)` : c'est la date
   // imprimee sur une facture remise au client. A Moanda (UTC+1), la seconde
   // forme datait de la VEILLE toute facture editee entre 00 h et 01 h.
-  // (`doc.created_at?.slice(0, 10)` reste un decoupage d'horodatage UTC : il
-  //  releve d'un autre chantier, cf. rapport — `created_at` finit par « +00 »
-  //  et non par « Z », que `msDepuisInstantUtc` exige.)
-  const dateDoc = doc.date || doc.created_at?.slice(0, 10) || todayISO();
+  // Le repli sur `created_at` tombait dans le meme piege, pour la meme raison :
+  // c'est un instant UTC. `dateMetierDepuisHorodatage` le lit a Moanda et,
+  // s'il ne reconnait pas la forme, rend les dix premiers caracteres plutot
+  // qu'une case vide — une facture sans date ne se remet pas a un client.
+  const dateDoc = doc.date || dateMetierDepuisHorodatage(doc.created_at) || todayISO();
   const dateFr = (() => { try { return new Date(dateDoc + 'T00:00:00').toLocaleDateString('fr-FR'); } catch { return dateDoc; } })();
   const docLabelGauche = type === 'facture' ? 'BON DE LIVRAISON' : type === 'devis' ? 'DEVIS' : 'BON DE LIVRAISON';
   const numFacture = `FACTURE N°${numero}/GA/${new Date(dateDoc).getFullYear() || new Date().getFullYear()}`;
@@ -586,7 +587,7 @@ export function exportFicheClientPDF(client, commandes = [], devis = []) {
     <tr><td style="border:none;padding:2px 16px 2px 0;font-weight:600;">Téléphone:</td><td style="border:none;padding:2px 0;">${client.telephone || '—'}</td></tr>
     <tr><td style="border:none;padding:2px 16px 2px 0;font-weight:600;">Ville:</td><td style="border:none;padding:2px 0;">${client.ville || '—'}</td></tr>
     <tr><td style="border:none;padding:2px 16px 2px 0;font-weight:600;">Type:</td><td style="border:none;padding:2px 0;">${client.type === 'entreprise' ? 'Entreprise' : 'Particulier'}</td></tr>
-    <tr><td style="border:none;padding:2px 16px 2px 0;font-weight:600;">Client depuis:</td><td style="border:none;padding:2px 0;">${client.created_at?.slice(0, 10) || '—'}</td></tr>
+    <tr><td style="border:none;padding:2px 16px 2px 0;font-weight:600;">Client depuis:</td><td style="border:none;padding:2px 0;">${dateMetierDepuisHorodatage(client.created_at) || '—'}</td></tr>
   </table>`;
 
   const caTotal = commandes.reduce((s, c) => s + (c.montant_total || c.total || 0), 0);
@@ -602,7 +603,7 @@ export function exportFicheClientPDF(client, commandes = [], devis = []) {
     <table><thead><tr><th>Date</th><th>Référence</th><th>Statut</th><th class="text-right">Montant</th></tr></thead><tbody>`;
     commandes.forEach((c) => {
       html += `<tr>
-        <td>${c.date || c.created_at?.slice(0, 10) || '—'}</td>
+        <td>${c.date || dateMetierDepuisHorodatage(c.created_at) || '—'}</td>
         <td>${c.numero || c.id?.slice(0, 8) || '—'}</td>
         <td>${c.statut || '—'}</td>
         <td class="text-right font-bold">${fmt(c.montant_total || c.total || 0)} F</td>
@@ -617,7 +618,7 @@ export function exportFicheClientPDF(client, commandes = [], devis = []) {
     <table><thead><tr><th>Date</th><th>Numéro</th><th>Statut</th><th class="text-right">Montant</th></tr></thead><tbody>`;
     devis.forEach((d) => {
       html += `<tr>
-        <td>${d.date || d.created_at?.slice(0, 10) || '—'}</td>
+        <td>${d.date || dateMetierDepuisHorodatage(d.created_at) || '—'}</td>
         <td>${d.numero || d.id?.slice(0, 8) || '—'}</td>
         <td>${d.statut || '—'}</td>
         <td class="text-right font-bold">${fmt(d.montant_total || d.total || 0)} F</td>
@@ -843,7 +844,9 @@ export function exportGrandLivrePDF({ mouvements = [], comptes = [], compteId = 
   const filtres = mouvements
     .filter((m) => !compteId || m.compte_id === compteId)
     .filter((m) => {
-      const d = (m.date || m.created_at || '').slice(0, 10);
+      // ARGENT — le grand livre est le releve de compte. Ce `d` decide quelles
+      // lignes entrent dans la periode, donc le solde imprime.
+      const d = m.date || dateMetierDepuisHorodatage(m.created_at);
       if (dateFrom && d < dateFrom) return false;
       if (dateTo && d > dateTo) return false;
       return true;
@@ -864,7 +867,7 @@ export function exportGrandLivrePDF({ mouvements = [], comptes = [], compteId = 
     if (estEntree) { solde += montant; totalEntrees += montant; }
     else { solde -= montant; totalSorties += montant; }
     rows += `<tr>
-      <td>${(m.date || m.created_at || '').slice(0, 10)}</td>
+      <td>${m.date || dateMetierDepuisHorodatage(m.created_at)}</td>
       <td>${m.description || m.categorie || '—'}</td>
       <td>${m.reference || ''}</td>
       <td class="text-right" style="color:#16a34a;">${estEntree ? fmt(montant) + ' F' : ''}</td>

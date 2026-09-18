@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { db, getSettings } from '@/services/db';
+import { dateMetierDepuisHorodatage } from '@/lib/dates';
 import { useAuth } from '@/services/auth';
 import { useChargeur } from '@/services/chargement';
 import { EnChargement, EchecChargement } from '@/features/partages/etat-chargement';
@@ -335,7 +336,7 @@ export default function ClientDashboard() {
                 <div key={f.id} className="flex items-center justify-between rounded-lg border p-3">
                   <div>
                     <p className="font-medium text-sm">{f.numero || 'DEV'}</p>
-                    <p className="text-xs text-muted-foreground">{f.date || f.created_at?.slice(0, 10)}</p>
+                    <p className="text-xs text-muted-foreground">{f.date || dateMetierDepuisHorodatage(f.created_at)}</p>
                   </div>
                   <div className="text-right">
                     <p className="font-semibold text-sm">{fmt(f.total || f.montant)} F</p>
