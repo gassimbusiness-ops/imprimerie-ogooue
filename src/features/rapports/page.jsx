@@ -2,6 +2,11 @@ import { useState, useMemo, useCallback } from 'react';
 import { db } from '@/services/db';
 import { todayISO, startOfMonthISO, addDaysISO } from '@/lib/dates';
 import { caRapport, depensesRapport } from '@/services/finance-calc';
+import SelecteurActivite from '@/features/partages/selecteur-activite';
+import {
+  ACTIVITE_IMPRIMERIE, ACTIVITE_PAPETERIE, TOUTES_ACTIVITES,
+  filtrerParActivite, libelleActivite, repartirParActivite,
+} from '@/services/activites';
 import {
   filtrerRapports, indexerRapports, normaliserPlage, plageActive,
   libellePlage, totauxFiltres,
@@ -83,6 +88,11 @@ export default function Rapports() {
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
+  // ── Quelle activite ? ──────────────────────────────────────────────────
+  // Ecran de LECTURE : il demarre sur la vue consolidee, exactement ce que le
+  // gerant voyait avant l'ouverture de la papeterie. Rien ne disparait de son
+  // ecran sans qu'il l'ait demande.
+  const [activite, setActivite] = useState(TOUTES_ACTIVITES);
 
   // Month navigation
   const [currentMonth, setCurrentMonth] = useState(() => {
@@ -123,14 +133,24 @@ export default function Rapports() {
 
   // Filtrage : plage de dates ET mot-clé ET statut. Logique pure et testée
   // dans src/features/rapports/filtrage.js (tests/filtrage.test.mjs).
-  const filtered = useMemo(() => filtrerRapports(rapports, {
+  // Filtre d'activite pose AVANT le filtrage metier : les compteurs, les
+  // totaux et la liste parlent ainsi tous du meme ensemble.
+  const rapportsActivite = useMemo(
+    () => filtrerParActivite(rapports, activite),
+    [rapports, activite],
+  );
+
+  const filtered = useMemo(() => filtrerRapports(rapportsActivite, {
     debut: dateFrom,
     fin: dateTo,
     mot: searchTerm,
     statut: filterStatut,
     // Le mois de la navigation ← → ne sert que si aucune plage n'est saisie.
     mois: isEmploye ? '' : currentMonth,
-  }, indexRecherche), [rapports, indexRecherche, dateFrom, dateTo, searchTerm, filterStatut, currentMonth, isEmploye]);
+    // ⚠️ La dependance est `rapportsActivite`, PAS `rapports`. Avec `rapports`,
+    // changer d'activite ne recalculait rien : le selecteur basculait bien
+    // (bouton actif), les totaux ne bougeaient pas — un filtre qui ment.
+  }, indexRecherche), [rapportsActivite, indexRecherche, dateFrom, dateTo, searchTerm, filterStatut, currentMonth, isEmploye]);
 
   // Stats de CE QUI EST AFFICHÉ (et non du mois entier) : les cartes et le
   // tableau parlent ainsi toujours du même ensemble. Sur 0 résultat, les
@@ -143,6 +163,20 @@ export default function Rapports() {
       clotures: filtered.filter((r) => r.statut === 'cloture').length,
     };
   }, [filtered]);
+
+  // ── CA par activite, sur CE QUI EST AFFICHE ─────────────────────────────
+  //
+  // Invariant garanti par `repartirParActivite` (et teste) :
+  //     imprimerie + papeterie === total
+  // Les trois chiffres tiennent donc ensemble : un lecteur n'a jamais a se
+  // demander lequel croire, ni a ressortir la calculette.
+  //
+  // ⚠️ Rien a voir avec la CATEGORIE `imprimerie` d'un rapport, qui est une
+  // prestation. Voir l'en-tete de src/services/activites.js.
+  const caParActivite = useMemo(
+    () => repartirParActivite(filtered, totalRecettes),
+    [filtered],
+  );
 
   // Période affichée en clair : « du 05/04/2026 au 15/04/2026 » ou le mois courant.
   const periodeLabel = usePlageActive ? libellePlage(dateFrom, dateTo) : '';
@@ -384,7 +418,10 @@ export default function Rapports() {
           <h2 className="text-2xl font-bold tracking-tight">Rapports journaliers</h2>
           <p className="text-muted-foreground">Recettes quotidiennes — cliquez une cellule pour éditer</p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Quelle activite est lue. « Les deux » par defaut : le gerant
+              retrouve exactement l'ecran qu'il avait avant la papeterie. */}
+          <SelecteurActivite valeur={activite} onChange={setActivite} avecToutes compact />
           <div className="flex rounded-lg border p-0.5">
             <button onClick={() => setViewMode('tableur')} className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${viewMode === 'tableur' ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}>
               <Table2 className="h-4 w-4" />
@@ -503,6 +540,16 @@ export default function Rapports() {
             <Card><CardContent className="p-3">
               <p className="text-[10px] text-muted-foreground">Recettes</p>
               <p className={`text-lg font-bold ${stats.recettes == null ? 'text-muted-foreground/50' : 'text-emerald-600'}`}>{fmtMontant(stats.recettes)}</p>
+              {/* La part de chaque caisse, sous le total. Affichee uniquement
+                  en vue consolidee : filtree sur une activite, elle repeterait
+                  le chiffre du dessus. */}
+              {activite === TOUTES_ACTIVITES && stats.recettes != null && (
+                <p className="mt-0.5 text-[10px] leading-tight text-muted-foreground">
+                  {libelleActivite(ACTIVITE_IMPRIMERIE)} {fmt(caParActivite[ACTIVITE_IMPRIMERIE])} F
+                  <br />
+                  {libelleActivite(ACTIVITE_PAPETERIE)} {fmt(caParActivite[ACTIVITE_PAPETERIE])} F
+                </p>
+              )}
             </CardContent></Card>
             <Card><CardContent className="p-3">
               <p className="text-[10px] text-muted-foreground">Dépenses</p>

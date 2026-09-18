@@ -62,7 +62,11 @@ import { syncClientFromCommande } from '@/services/sync-clients';
 import { syncCommandeToRapport } from '@/services/sync-commande-rapport';
 import { syncStockFromCommande } from '@/services/sync-stock-commande';
 import { exportBonTravail } from '@/services/export-pdf';
-import { todayISO } from '@/lib/dates';
+import { todayISO, addDaysISO } from '@/lib/dates';
+import SelecteurActivite from '@/features/partages/selecteur-activite';
+import {
+  ACTIVITE_DEFAUT, TOUTES_ACTIVITES, activiteDe, avecActivite, filtrerParActivite,
+} from '@/services/activites';
 import { creerVerrouExecution } from '@/services/execution-unique';
 import {
   doitDeclencherLivraison,
@@ -175,6 +179,11 @@ export default function Commandes() {
   const [employes, setEmployes] = useState([]);
   const [search, setSearch] = useState('');
   const [filterStatut, setFilterStatut] = useState('all');
+  // ── Quelle activite ? ──────────────────────────────────────────────────
+  // Vue de LECTURE : elle demarre sur « Les deux », exactement l'ecran que le
+  // gerant avait avant l'ouverture de la papeterie. Rien ne disparait sans
+  // qu'il l'ait demande.
+  const [filtreActivite, setFiltreActivite] = useState(TOUTES_ACTIVITES);
   const [showForm, setShowForm] = useState(false);
   const [showDetail, setShowDetail] = useState(null);
   const [editItem, setEditItem] = useState(null);
@@ -193,6 +202,9 @@ export default function Commandes() {
     description: '',
     date_echeance: '',
     lignes: [{ description: '', quantite: 1, prix_unitaire: 0 }],
+    // A quelle activite appartient la commande. Les 5 commandes deja en base
+    // n'ont pas ce champ : elles sont de l'imprimerie (src/services/activites.js).
+    activite: ACTIVITE_DEFAUT,
   });
 
   // `listOuLeve()` : sur une coupure, `list()` rendait `[]` et l'ecran
@@ -250,7 +262,9 @@ export default function Commandes() {
   }, []);
 
   const filtered = useMemo(() => {
-    return commandes
+    // Filtre d'activite pose en premier : les compteurs d'onglets, les totaux
+    // et la liste parlent ainsi tous du meme ensemble.
+    return filtrerParActivite(commandes, filtreActivite)
       .filter((c) =>
         (c.client_nom || '').toLowerCase().includes(search.toLowerCase()) ||
         (c.numero || '').toLowerCase().includes(search.toLowerCase()) ||
@@ -263,7 +277,7 @@ export default function Commandes() {
         if (filterStatut === 'en_production') return norm === 'en_production' || norm === 'validee_attente_paiement';
         return norm === filterStatut;
       });
-  }, [commandes, search, filterStatut]);
+  }, [commandes, filtreActivite, search, filterStatut]);
 
   const stats = useMemo(() => {
     const counts = {};
@@ -301,8 +315,13 @@ export default function Commandes() {
       client_nom: '',
       client_tel: '',
       description: '',
-      date_echeance: new Date(Date.now() + 3 * 86400000).toISOString().split('T')[0],
+      // `addDaysISO(3)` et non `new Date(...).toISOString().split('T')[0]` :
+      // la seconde forme calcule l'echeance en UTC, et rendait donc la VEILLE
+      // du jour voulu entre 00 h et 01 h heure de Moanda (UTC+1).
+      // Regle du projet : src/lib/dates.js.
+      date_echeance: addDaysISO(3),
       lignes: [{ description: '', quantite: 1, prix_unitaire: 0 }],
+      activite: ACTIVITE_DEFAUT,
     });
     setShowForm(true);
   };
@@ -343,7 +362,7 @@ export default function Commandes() {
     if (!form.client_nom.trim()) { toast.error('Client requis'); return; }
     if (!form.lignes.some((l) => l.description.trim())) { toast.error('Au moins une ligne requise'); return; }
 
-    const data = {
+    const data = avecActivite({
       numero: form.numero,
       client_id: form.client_id,
       client_nom: form.client_nom.trim(),
@@ -358,7 +377,7 @@ export default function Commandes() {
       historique_statuts: editItem?.historique_statuts || [
         { statut: isEmploye ? 'validee_attente_paiement' : 'en_attente_validation', date: new Date().toISOString(), auteur: `${currentUser?.prenom} ${currentUser?.nom}` },
       ],
-    };
+    }, form.activite);
 
     const { ok } = await executerAction(async () => {
       if (editItem) {
@@ -1056,12 +1075,20 @@ export default function Commandes() {
           <h2 className="text-2xl font-bold tracking-tight">Commandes</h2>
           <p className="text-muted-foreground">Suivi des commandes clients</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           {isAdmin && (
             <Button variant="outline" size="sm" className="gap-1.5 text-destructive border-destructive/30" onClick={handlePurgeTests}>
               <Trash2 className="h-3.5 w-3.5" /> Purger tests
             </Button>
           )}
+          {/* Le filtre d'activite est une LECTURE : il reste visible meme pour
+              qui n'a pas le droit de creer une commande. */}
+          <SelecteurActivite
+            valeur={filtreActivite}
+            onChange={setFiltreActivite}
+            avecToutes
+            compact
+          />
           {canWrite && (
             <Button className="gap-2" onClick={openAdd}>
               <Plus className="h-4 w-4" /> Nouvelle commande
@@ -1279,6 +1306,15 @@ export default function Commandes() {
             <div>
               <label className="mb-1.5 block text-sm font-medium">Description</label>
               <Input value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="Ex: 500 affiches A3 couleur" />
+            </div>
+            <div>
+              {/* Deux activites, deux chiffres d'affaires. Le choix se lit sans
+                  ouvrir de menu : une commande mal rangee fausse les deux. */}
+              <label className="mb-1.5 block text-sm font-medium">Activité</label>
+              <SelecteurActivite
+                valeur={activiteDe(form)}
+                onChange={(v) => setForm({ ...form, activite: v })}
+              />
             </div>
             <div>
               <label className="mb-1.5 block text-sm font-medium">Date d'échéance</label>

@@ -9,6 +9,11 @@ import { executerChargesDues } from '@/services/charges-fixes-prelevement';
 import { apercuMensualitesDues, apercuChargesDues } from '@/services/prelevements-apercu';
 import { verrouPrelevements, CLE_PRELEVEMENTS, creerVerrouExecution } from '@/services/execution-unique';
 import { todayISO } from '@/lib/dates';
+import SelecteurActivite from '@/features/partages/selecteur-activite';
+import {
+  ACTIVITE_DEFAUT, TOUTES_ACTIVITES, activiteDe, avecActivite,
+  filtrerParActivite, libelleActivite,
+} from '@/services/activites';
 import { exportGrandLivrePDF } from '@/services/export-pdf';
 import { tresorerieImprimerie, chargeMensuelle } from '@/services/finance-calc';
 // Nature d'un mouvement et effet sur les soldes — regle unique, testee.
@@ -98,6 +103,22 @@ const MOVEMENT_TYPES = [
   { value: 'depot_hebdo', label: 'Dépôt hebdomadaire', icon: Banknote, color: 'text-amber-600' },
 ];
 
+/**
+ * Onglets dont chaque ligne appartient a UNE caisse.
+ *
+ * Les COMPTES BANCAIRES, les DETTES, les ACTIONNAIRES et les INVESTISSEMENTS
+ * n'y sont pas, et c'est un choix : ils appartiennent a l'entreprise, pas a
+ * l'un des deux commerces. Leur poser une activite donnerait l'illusion d'une
+ * separation qui n'existe pas — un compte BGFI ne se coupe pas en deux.
+ *
+ * ⚠️ Consequence a connaitre : le prelevement automatique d'une MENSUALITE DE
+ * CREDIT (src/services/credit-mensualites.js) cree donc un mouvement sans
+ * activite, qui se lit « imprimerie ». C'est assume tant que les credits sont
+ * ceux de l'entreprise ; a revoir le jour ou un credit sera pris pour la seule
+ * papeterie.
+ */
+const ONGLETS_PAR_ACTIVITE = ['mouvements', 'charges'];
+
 const CHARGE_TYPES = [
   'loyer', 'salaire', 'electricite', 'eau', 'internet', 'telephone',
   'assurance', 'transport', 'fournitures', 'maintenance', 'online',
@@ -133,6 +154,11 @@ export default function Finances() {
   const [mvDateTo, setMvDateTo] = useState('');
   const [mvSearch, setMvSearch] = useState('');
   const [mvShowAll, setMvShowAll] = useState(false); // bypass total du filtre mois
+  // ── Quelle caisse ? ────────────────────────────────────────────────────
+  // Ecran de LECTURE avant tout : il demarre donc sur la vue consolidee, pour
+  // que le gerant voie exactement ce qu'il voyait avant l'ouverture de la
+  // papeterie. Rien ne disparait de son ecran sans qu'il l'ait demande.
+  const [mvActivite, setMvActivite] = useState(TOUTES_ACTIVITES);
 
   // `listOuLeve()` : `list()` rendait `[]` sur une coupure, et l'ecran
   // affichait une tresorerie a 0 F avec des comptes « absents ». Un solde faux
@@ -236,7 +262,9 @@ export default function Finances() {
   const mvUsePlage = !!(mvDateFrom || mvDateTo);
   const mouvementsFiltres = useMemo(() => {
     const q = (mvSearch || '').trim().toLowerCase();
-    return mouvements.filter((m) => {
+    // Filtre d'activite AVANT tout le reste : les deux caisses ne partagent
+    // pas le meme solde d'especes, elles ne partagent donc pas le meme total.
+    return filtrerParActivite(mouvements, mvActivite).filter((m) => {
       const d = (m.date || m.created_at || '').slice(0, 10);
       // Filtre date : plage > mois > all
       if (mvShowAll) {
@@ -258,7 +286,7 @@ export default function Finances() {
       }
       return true;
     });
-  }, [mouvements, filterMonth, mvDateFrom, mvDateTo, mvSearch, mvUsePlage, mvShowAll, comptes]);
+  }, [mouvements, mvActivite, filterMonth, mvDateFrom, mvDateTo, mvSearch, mvUsePlage, mvShowAll, comptes]);
 
   // Un dépôt hebdomadaire n'est plus compté ici : porter la caisse à la banque
   // n'est pas une recette (Q3, arbitrage n°13).
@@ -283,15 +311,18 @@ export default function Finances() {
     if (activeTab === 'comptes') {
       setForm({ nom: '', type: 'local', devise: 'XAF', solde: '', numero_compte: '', notes: '' });
     } else if (activeTab === 'mouvements') {
-      setForm({ type: 'entree', montant: '', description: '', compte_id: '', compte_dest_id: '', date: new Date().toISOString().slice(0, 10), reference: '' });
+      // `todayISO()` et non `.toISOString().slice(0, 10)` : entre 00 h et 01 h
+      // a Moanda (UTC+1), la seconde forme datait le mouvement de la VEILLE.
+      // Regle du projet : src/lib/dates.js.
+      setForm({ type: 'entree', montant: '', description: '', compte_id: '', compte_dest_id: '', date: todayISO(), reference: '', activite: ACTIVITE_DEFAUT });
     } else if (activeTab === 'charges') {
       setForm({
         libelle: '', type: 'loyer', montant: '', beneficiaire: '', actif: true, categorie: '',
         compte_id: '', periodicite: 'mensuelle', jour_prelevement: '5', prelevement_auto: false,
-        prochaine_echeance: '',
+        prochaine_echeance: '', activite: ACTIVITE_DEFAUT,
       });
     } else if (activeTab === 'dettes') {
-      setForm({ libelle: '', montant_initial: '', taux_interet: '2.5', duree_mois: '', montant_restant: '', date_debut: new Date().toISOString().slice(0, 10), compte_id: '', jour_prelevement: '5', prelevement_auto: true, statut: 'actif' });
+      setForm({ libelle: '', montant_initial: '', taux_interet: '2.5', duree_mois: '', montant_restant: '', date_debut: todayISO(), compte_id: '', jour_prelevement: '5', prelevement_auto: true, statut: 'actif' });
     } else if (activeTab === 'actionnaires') {
       setForm({ nom: '', pourcentage: '', investissement: '' });
     } else {
@@ -320,7 +351,12 @@ export default function Finances() {
 
   const enregistrerLigne = async () => {
     const coll = getCollection();
-    const data = { ...form };
+    let data = { ...form };
+    if (ONGLETS_PAR_ACTIVITE.includes(activeTab)) {
+      // `avecActivite` normalise et refuse la vue consolidee : une ecriture
+      // appartenant aux deux caisses n'appartiendrait a aucune.
+      data = avecActivite(data, data.activite);
+    }
     // Convert numbers
     ['montant', 'solde', 'montant_initial', 'taux_interet', 'duree_mois', 'montant_restant', 'pourcentage', 'investissement', 'roi_estime', 'jour_prelevement'].forEach((k) => {
       if (data[k] !== undefined && data[k] !== '') data[k] = Number(data[k]) || 0;
@@ -614,10 +650,17 @@ export default function Finances() {
       {/* ═══════════ MOUVEMENTS FINANCIERS ═══════════ */}
       {activeTab === 'mouvements' && (
         <>
+          {/* Filtre de caisse. La vue demarre sur « Les deux » : rien ne
+              disparait de l'ecran du gerant sans qu'il l'ait demande. */}
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground">Caisse</span>
+            <SelecteurActivite valeur={mvActivite} onChange={setMvActivite} avecToutes compact />
+          </div>
           <div className="grid grid-cols-3 gap-3">
             <Card className="border-l-4 border-l-emerald-500"><CardContent className="p-3">
               <p className="text-[10px] text-muted-foreground uppercase">Entrées {mvShowAll ? '(tout)' : mvUsePlage ? '(plage)' : 'du mois'}</p>
               <p className="text-lg font-bold text-emerald-600">+{fmt(mvEntrees)} F</p>
+              <p className="text-[10px] text-muted-foreground">{libelleActivite(mvActivite)}</p>
             </CardContent></Card>
             <Card className="border-l-4 border-l-red-500"><CardContent className="p-3">
               <p className="text-[10px] text-muted-foreground uppercase">Sorties {mvShowAll ? '(tout)' : mvUsePlage ? '(plage)' : 'du mois'}</p>
@@ -1024,6 +1067,14 @@ export default function Finances() {
 
             {/* MOUVEMENTS FORM */}
             {activeTab === 'mouvements' && (<>
+              {/* Quelle caisse ? Deux activites, deux soldes d'especes : une
+                  ecriture sans caisse d'appartenance est indemelable ensuite. */}
+              <div><label className="mb-1.5 block text-sm font-medium">Caisse / activité</label>
+                <SelecteurActivite
+                  valeur={activiteDe(form)}
+                  onChange={(v) => setForm({ ...form, activite: v })}
+                />
+              </div>
               <div><label className="mb-1.5 block text-sm font-medium">Type de mouvement</label>
                 <Select value={form.type || 'entree'} onValueChange={(v) => setForm({ ...form, type: v })}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
@@ -1070,6 +1121,14 @@ export default function Finances() {
 
             {/* CHARGES FORM */}
             {activeTab === 'charges' && (<>
+              {/* Quelle caisse ? Deux activites, deux soldes d'especes : une
+                  ecriture sans caisse d'appartenance est indemelable ensuite. */}
+              <div><label className="mb-1.5 block text-sm font-medium">Caisse / activité</label>
+                <SelecteurActivite
+                  valeur={activiteDe(form)}
+                  onChange={(v) => setForm({ ...form, activite: v })}
+                />
+              </div>
               <div><label className="mb-1.5 block text-sm font-medium">Libellé</label><Input value={form.libelle || ''} onChange={(e) => setForm({ ...form, libelle: e.target.value })} placeholder="Ex: Loyer, Wifi, Salaires..." /></div>
               <div className="grid grid-cols-2 gap-3">
                 <div><label className="mb-1.5 block text-sm font-medium">Type</label>

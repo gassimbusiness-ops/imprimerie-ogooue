@@ -10,6 +10,7 @@
  */
 import { db } from './db';
 import { todayISO } from '@/lib/dates';
+import { activiteDe, avecActivite } from './activites';
 import { decisionReprise, REPRISE_AUTO_RAPPORT } from './reprise-rapport';
 
 /**
@@ -30,18 +31,31 @@ export async function syncCommandeToRapport(commande) {
   // `todayISO()` et non `toISOString()` : entre 00 h et 01 h heure de Libreville,
   // la seconde forme visait la veille — journee souvent deja cloturee.
   const date = todayISO();
+  // ── Une commande de la papeterie ne rejoint pas le rapport de l'imprimerie ──
+  //
+  // Depuis l'ouverture de la PAPETERIE (18/09/2026), il y a UN rapport par jour
+  // ET PAR ACTIVITE. Chercher « le rapport du jour » sans l'activite ferait
+  // atterrir le montant d'une commande de papeterie dans la caisse de
+  // l'imprimerie — et la reprise serait marquee faite, donc jamais rejouee.
+  //
+  // ⚠️ Ce chemin reste ferme en production (`REPRISE_AUTO_RAPPORT` vaut false).
+  // La regle est posee ici pour que le jour ou l'interrupteur s'ouvre, elle
+  // soit deja juste ; `decisionReprise()` n'est pas touchee.
+  const activite = activiteDe(commande);
   const rapports = await db.rapports.list();
-  const rapportDuJour = rapports.find((r) => r.date === date) || null;
+  const rapportDuJour = rapports.find(
+    (r) => r.date === date && activiteDe(r) === activite,
+  ) || null;
 
   const decision = decisionReprise({ commande, rapportDuJour, date });
 
   if (decision.action === 'creer') {
-    await db.rapports.create({
+    await db.rapports.create(avecActivite({
       ...decision.patch,
       historique_statuts: [
         { statut: 'brouillon', date: new Date().toISOString(), auteur: 'Système' },
       ],
-    });
+    }, activite));
   } else if (decision.action === 'ajouter') {
     await db.rapports.update(rapportDuJour.id, decision.patch);
   }

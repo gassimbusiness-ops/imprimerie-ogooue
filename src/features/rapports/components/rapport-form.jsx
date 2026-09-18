@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { db } from '@/services/db';
 import { todayISO } from '@/lib/dates';
+import { ACTIVITE_DEFAUT, activiteDe, avecActivite } from '@/services/activites';
+import SelecteurActivite from '@/features/partages/selecteur-activite';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -78,6 +80,18 @@ export default function RapportForm({ rapport, onSave, onCancel }) {
     rapport?.date || todayISO(),
   );
   const [operateurId, setOperateurId] = useState(rapport?.operateur_id || '');
+  // ── Dans quelle caisse tape-t-on ? ─────────────────────────────────────
+  // Depuis l'ouverture de la PAPETERIE (18/09/2026), un rapport journalier
+  // appartient a UNE activite. Un rapport existant garde la sienne ; un
+  // rapport neuf demarre sur l'imprimerie, la caisse historique (regle
+  // « l'absence vaut imprimerie », src/services/activites.js).
+  //
+  // ⚠️ Ne pas confondre avec la COLONNE `imprimerie` du tableur ci-dessous :
+  // c'est une categorie de prestation, pas une caisse. Un rapport papeterie
+  // peut avoir des recettes dans cette colonne.
+  const [activite, setActivite] = useState(
+    rapport ? activiteDe(rapport) : ACTIVITE_DEFAUT,
+  );
   const [lignes, setLignes] = useState(() => initRows(rapport?.lignes));
   const [validationErrors, setValidationErrors] = useState({});
   const [showHistorique, setShowHistorique] = useState(false);
@@ -339,7 +353,9 @@ export default function RapportForm({ rapport, onSave, onCancel }) {
         }
       }
 
-      await onSave({
+      // `avecActivite` plutot qu'un champ pose a la main : il normalise, et il
+      // refuse d'ecrire une vue consolidee comme si c'etait une caisse.
+      await onSave(avecActivite({
         date,
         operateur_id: operateurId,
         operateur_nom: selectedEmploye
@@ -350,7 +366,7 @@ export default function RapportForm({ rapport, onSave, onCancel }) {
         depenses,
         lignes: savedLignes,
         historique,
-      });
+      }, activite));
     } finally {
       setSaving(false);
     }
@@ -387,7 +403,7 @@ export default function RapportForm({ rapport, onSave, onCancel }) {
 
       {/* ───────── FIXED: Header fields ───────── */}
       <div className="shrink-0 border-b bg-slate-50 px-6 py-3">
-        <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-4">
           <div>
             <label className="mb-1 block text-xs font-semibold text-slate-600">Date *</label>
             <Input
@@ -411,6 +427,13 @@ export default function RapportForm({ rapport, onSave, onCancel }) {
                 ))}
               </SelectContent>
             </Select>
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-slate-600">Caisse *</label>
+            {/* Se lit sans ouvrir de menu : au comptoir, se tromper de caisse
+                se paie en ecart le soir meme. Pas d'etat « les deux » ici —
+                un rapport appartient a une caisse et une seule. */}
+            <SelecteurActivite valeur={activite} onChange={setActivite} className="bg-white" />
           </div>
           <div className="rounded-lg border border-blue-200 bg-blue-50 p-2.5">
             <p className="text-[10px] font-semibold uppercase tracking-wider text-blue-600">

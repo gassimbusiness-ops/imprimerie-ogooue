@@ -8,6 +8,8 @@ import { logAction } from '@/services/audit';
 import { creerVerrouExecution } from '@/services/execution-unique';
 import { notifyStockAlerte } from '@/services/notifications';
 import { preparerArticlesPourAffichage, seuilArticle, niveauStock } from '@/services/stocks-seuils';
+import SelecteurActivite from '@/features/partages/selecteur-activite';
+import { ACTIVITE_DEFAUT, activiteDe, avecActivite } from '@/services/activites';
 import { exportInventairePDF, exportCSV } from '@/services/export-pdf';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -63,6 +65,9 @@ const emptyForm = {
   quantite: '', quantite_minimum: 10,
   emplacement: '', masque: false, actif: true,
   type_article: 'consommable',
+  // A quel commerce appartient l'article. Les 45 articles deja en base n'ont
+  // pas ce champ : ils sont de l'imprimerie par defaut (src/services/activites.js).
+  activite: ACTIVITE_DEFAUT,
 };
 
 const UNITES = ['unité', 'rame', 'paquet', 'rouleau', 'flacon', 'set', 'cartouche', 'pot', 'kg', 'mètre'];
@@ -340,6 +345,7 @@ export default function Stocks() {
       masque: p.masque || false,
       actif: p.actif !== false,
       type_article: p.type_article || 'consommable',
+      activite: activiteDe(p),
     });
     setShowForm(true);
   };
@@ -368,15 +374,19 @@ export default function Stocks() {
       actif: form.actif,
       type_article: form.type_article || 'consommable',
     };
+    // Sans activite sur l'article, l'inventaire des deux commerces est un seul
+    // tas : ni la valeur du stock, ni les seuils d'alerte ne peuvent etre lus
+    // separement. `avecActivite` normalise ce qui part en base.
+    const dataAvecActivite = avecActivite(data, form.activite);
     // « Erreur lors de la sauvegarde » ne disait ni QUOI a echoue, ni QUE FAIRE,
     // ni si quelque chose avait ete ecrit. Le message vient desormais de
     // src/services/chargement.js, ecrit une seule fois pour toute l'application.
     const { ok } = await executerAction(async () => {
       if (editItem) {
-        await db.produits.update(editItem.id, data);
+        await db.produits.update(editItem.id, dataAvecActivite);
         await logAction('update', 'stock', { entityId: editItem.id, entityLabel: data.nom });
       } else {
-        const created = await db.produits.create(data);
+        const created = await db.produits.create(dataAvecActivite);
         await logAction('create', 'stock', { entityId: created.id, entityLabel: data.nom });
       }
     }, {
@@ -772,6 +782,14 @@ export default function Stocks() {
             <div>
               <label className="mb-1.5 block text-sm font-medium">Nom de l'article *</label>
               <Input value={form.nom} onChange={(e) => setForm({ ...form, nom: e.target.value })} placeholder="Ex: Rame papier A4 80g" />
+            </div>
+            <div>
+              {/* Deux commerces, deux inventaires. Se lit sans ouvrir de menu. */}
+              <label className="mb-1.5 block text-sm font-medium">Activité</label>
+              <SelecteurActivite
+                valeur={activiteDe(form)}
+                onChange={(v) => setForm({ ...form, activite: v })}
+              />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>

@@ -17,6 +17,7 @@
  * S'inspire de credit-mensualites.js (meme pattern, eprouve sur le credit FINAM).
  */
 import { db } from '@/services/db';
+import { activiteDe, avecActivite } from '@/services/activites';
 
 const PERIODICITE_MOIS = {
   mensuelle: 1,
@@ -87,7 +88,12 @@ export async function executerChargesDues({ today = new Date() } = {}) {
         }
 
         // 1. Creer mouvement financier (sortie)
-        const mvt = await db.mouvements_financiers.create({
+        //
+        // ⚠️ Le mouvement reprend l'activite de LA CHARGE. Sans cette ligne il
+        // retomberait sur « imprimerie » par defaut, et le loyer du local de la
+        // papeterie sortirait chaque mois de la caisse imprimerie. Le total
+        // resterait juste : c'est precisement ce qui rend l'erreur invisible.
+        const mvt = await db.mouvements_financiers.create(avecActivite({
           type: 'sortie',
           montant,
           description: `Charge fixe — ${charge.libelle}${charge.beneficiaire ? ` (${charge.beneficiaire})` : ''}`,
@@ -96,7 +102,7 @@ export async function executerChargesDues({ today = new Date() } = {}) {
           reference,
           categorie: 'charge_fixe',
           source: 'auto_charge_fixe',
-        });
+        }, activiteDe(charge)));
         mouvementsCrees.push(mvt);
 
         // 2. Debit du compte

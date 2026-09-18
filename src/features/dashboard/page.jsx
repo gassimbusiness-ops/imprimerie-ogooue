@@ -3,6 +3,9 @@ import { Link } from 'react-router-dom';
 import { db } from '@/services/db';
 import { toISODate, todayISO, startOfMonthISO } from '@/lib/dates';
 import { tresorerieImprimerie, chargeMensuelle, caRapport, caRapports, depensesRapports } from '@/services/finance-calc';
+import {
+  ACTIVITE_IMPRIMERIE, ACTIVITE_PAPETERIE, libelleActivite, repartirParActivite,
+} from '@/services/activites';
 import { useAuth } from '@/services/auth';
 import { useChargeur } from '@/services/chargement';
 import { EnChargement, EchecChargement } from '@/features/partages/etat-chargement';
@@ -187,7 +190,17 @@ export default function Dashboard() {
     });
     const pending = rapports.filter((r) => r.statut === 'soumis');
 
-    return { todayRec, todayDep, monthRec, monthDep, monthTrend, chartData, lowStock, pending };
+    // ── CA du mois PAR ACTIVITE ───────────────────────────────────────────
+    // Le total ne change pas : `imprimerie + papeterie === monthRec` est
+    // l'invariant teste de `repartirParActivite`. On ne remplace donc aucun
+    // chiffre existant, on dit seulement d'ou il vient — sinon le gerant doit
+    // ressortir la calculette pour savoir ce que rapporte la papeterie.
+    const monthParActivite = repartirParActivite(monthR, caRapport);
+
+    return {
+      todayRec, todayDep, monthRec, monthDep, monthTrend, chartData, lowStock, pending,
+      monthParActivite,
+    };
   }, [rapports, produits]);
 
   if (loading) return <EnChargement />;
@@ -248,7 +261,11 @@ export default function Dashboard() {
           <StatCard
             title="Recettes mois"
             value={`${fmt(stats?.monthRec)} F`}
-            subtitle={`Bénéf: ${fmt((stats?.monthRec || 0) - (stats?.monthDep || 0))} F`}
+            subtitle={
+              `${libelleActivite(ACTIVITE_IMPRIMERIE)} ${fmt(stats?.monthParActivite?.[ACTIVITE_IMPRIMERIE])} F`
+              + ` · ${libelleActivite(ACTIVITE_PAPETERIE)} ${fmt(stats?.monthParActivite?.[ACTIVITE_PAPETERIE])} F`
+              + ` · Bénéf: ${fmt((stats?.monthRec || 0) - (stats?.monthDep || 0))} F`
+            }
             trend={stats?.monthTrend}
             icon={TrendingUp}
             iconBg="bg-primary/10"
