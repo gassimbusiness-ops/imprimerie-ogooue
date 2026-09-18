@@ -1,9 +1,21 @@
 -- ════════════════════════════════════════════════════════════════════════════
 -- 013 — Le bot Messenger et Instagram : interrupteur + idempotence des réponses
 --
---        🔴 NON APPLIQUÉE. À exécuter par Gassim dans l'éditeur SQL Supabase,
---        bloc par bloc, dans l'ordre. Rien ici ne modifie une donnée existante :
---        un index est créé, et UNE ligne est insérée — à l'arrêt.
+--        ✅ APPLIQUÉE le 2026-09-19 vers 00 h 50 (heure de Moanda) sur le projet
+--        bcwkrrqmjpaohmafcncw, pendant que le dirigeant était absent et avait
+--        confié la main.
+--
+--        Contrôle après application :
+--          index `idx_bot_journal_*` ......... 2 posés
+--          bot_controle → actif ............. false   ⛔ le bot est ÉTEINT
+--          bot_controle → mode .............. dry_run ⛔ et en simulation
+--
+--        Rien d'existant n'a été modifié : deux index créés, une ligne insérée.
+--        Le bot ne répondra à personne tant que `actif` vaut false ET que
+--        BOT_META_MODE n'est pas posée dans Vercel. Deux verrous, pas un.
+--
+--        (texte d'origine : 🔴 NON APPLIQUÉE. À exécuter par Gassim dans
+--         l'éditeur SQL Supabase, bloc par bloc, dans l'ordre.)
 --
 -- Projet Supabase : bcwkrrqmjpaohmafcncw
 -- Rédigé le       : 2026-09-19
