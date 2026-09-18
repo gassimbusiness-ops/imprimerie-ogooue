@@ -614,6 +614,72 @@ export function creerClientDrive({
   }
 
   /**
+   * DEMANDER PLUTÔT QUE FOUILLER — la recherche par nom.
+   *
+   * Pourquoi cette fonction existe, et pourquoi elle remplace le parcours dans
+   * le sondage. Le 18/09/2026, l'écran affichait « 3 fichiers trouvés, aucun ne
+   * contient publication.json » alors que 77 publications attendaient. Le
+   * parcours en largeur épuisait son budget AVANT d'atteindre le niveau des
+   * manifestes : le Drive réel a 4 semaines × 7 jours × 1 dossier de
+   * publication, donc plus de 30 dossiers rien qu'au deuxième niveau. Relever
+   * le budget était une course perdue d'avance : chaque semaine déposée en
+   * ajoute sept.
+   *
+   * Google sait répondre à « où sont les fichiers nommés publication.json ? »
+   * en UNE requête. On la pose. Le parcours reste utilisé là où il faut
+   * vraiment tout voir ; le sondage, lui, n'a besoin que de cette réponse.
+   *
+   * ⚠️ La recherche porte sur tout ce que le robot peut voir, c'est-à-dire
+   * uniquement ce qui lui a été partagé. C'est exactement le dossier des
+   * publications et sa descendance — pas le Drive entier de l'imprimerie.
+   *
+   * @param {string} nom nom exact recherché
+   * @param {number} [maxRequetes] plafond de pages, pour ne pas fouiller sans fin
+   * @returns {Promise<Array<{id: string, name: string, parents?: string[]}>>}
+   */
+  async function rechercherParNom(nom, maxRequetes = 5) {
+    exigerConfiguration();
+    const trouves = [];
+    let pageToken = null;
+    let requetes = 0;
+
+    do {
+      const parametres = new URLSearchParams({
+        q: `name = '${String(nom).replace(/'/g, "\\'")}' and trashed = false`,
+        fields: 'nextPageToken, files(id, name, mimeType, parents, modifiedTime)',
+        pageSize: '200',
+        supportsAllDrives: 'true',
+        includeItemsFromAllDrives: 'true',
+      });
+      if (pageToken) parametres.set('pageToken', pageToken);
+
+      const reponse = await requete(`${BASE_DRIVE}/files?${parametres.toString()}`, {
+        method: 'GET',
+        headers: await entetes(),
+      });
+      const corps = await lireCorps(reponse);
+      if (!reponse.ok) throw erreurDrive(reponse.status, corps, configuration.dossierId);
+
+      let charge;
+      try {
+        charge = JSON.parse(corps);
+      } catch {
+        throw new ErreurDrive({
+          diagnostic: DIAGNOSTICS.PANNE,
+          message: MESSAGES.panne,
+          detail: `recherche illisible : ${String(corps).slice(0, 200)}`,
+          piste: PISTES.panne,
+        });
+      }
+      for (const fichier of charge.files || []) trouves.push(fichier);
+      pageToken = charge.nextPageToken || null;
+      requetes += 1;
+    } while (pageToken && requetes < maxRequetes);
+
+    return trouves;
+  }
+
+  /**
    * Télécharge le contenu d'un fichier, en texte.
    * @param {string} idFichier
    * @returns {Promise<string>}
@@ -691,6 +757,40 @@ export function creerClientDrive({
           publications_trouvees: 0,
           ...horodatage(),
         };
+      }
+
+      /* ── ON DEMANDE AVANT DE FOUILLER ────────────────────────────────────
+         Une requête à Google : « où sont les fichiers nommés publication.json ? »
+         S'il en existe, la question du sondage est réglée, et aucun parcours
+         n'est nécessaire.
+
+         Pourquoi ce raccourci a été ajouté. Le 18/09/2026, l'écran affichait
+         « 3 fichiers trouvés, aucun ne contient publication.json » alors que 77
+         publications attendaient deux niveaux plus bas. Le parcours en largeur
+         épuisait son budget au DEUXIÈME niveau : 4 semaines × 7 jours font déjà
+         28 dossiers avant d'atteindre celui qui porte le manifeste. Relever le
+         budget ne réglait rien — chaque semaine déposée en rajoute sept.
+
+         L'échec de la recherche n'est PAS une panne : on retombe simplement sur
+         le parcours, qui sait dire pourquoi. ────────────────────────────────── */
+      try {
+        const manifestes = await rechercherParNom(NOM_MANIFESTE);
+        if (manifestes.length > 0) {
+          return {
+            diagnostic: DIAGNOSTICS.OK,
+            message: `${MESSAGES.ok} ${manifestes.length} publication(s) trouvée(s) dans le Drive.`,
+            piste: null,
+            detail: null,
+            dossier_id: configuration.dossierId,
+            sous_dossiers: racine.filter((x) => x.mimeType === MIME_DOSSIER).length,
+            fichiers: racine.filter((x) => x.mimeType !== MIME_DOSSIER).length,
+            publications_trouvees: manifestes.length,
+            ...horodatage(),
+          };
+        }
+      } catch {
+        // La recherche n'a pas abouti : le parcours ci-dessous prend le relais
+        // et produira un diagnostic, ce que la recherche seule ne sait pas faire.
       }
 
       let sousDossiers = 0;
@@ -1015,6 +1115,7 @@ export function creerClientDrive({
     configuration,
     jeton,
     listerDossier,
+    rechercherParNom,
     telechargerFichier,
     sonder,
     lirePublications,

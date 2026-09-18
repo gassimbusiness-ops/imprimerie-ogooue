@@ -73,7 +73,7 @@ function env(cle = CLE_VRAIS_SAUTS, { email = EMAIL, dossier = DOSSIER } = {}) {
    Le faux Google. Il route par URL et enregistre TOUT ce qui sort.
    ═══════════════════════════════════════════════════════════════════════════ */
 
-function fauxGoogle({ jeton = null, listes = {}, fichiers = {}, expireIn = 3600 } = {}) {
+function fauxGoogle({ jeton = null, listes = {}, fichiers = {}, recherche = null, expireIn = 3600 } = {}) {
   const appels = [];
   const impl = async (url, options = {}) => {
     const u = String(url);
@@ -106,6 +106,19 @@ function fauxGoogle({ jeton = null, listes = {}, fichiers = {}, expireIn = 3600 
         return { ok: false, status: 404, async text() { return JSON.stringify({ error: { code: 404, message: 'File not found' } }); } };
       }
       return { ok: true, status: 200, async text() { return contenu; } };
+    }
+
+    /* ── La RECHERCHE PAR NOM ────────────────────────────────────────────
+       `name = 'publication.json'`, sans `in parents`. Le vrai Google la sert
+       sur tout ce que le robot peut voir ; le faux la sert depuis `recherche`. */
+    const qBrut = decodeURIComponent(((u.match(/[?&]q=([^&]*)/) || [])[1] || '').replace(/\+/g, ' '));
+    const parNom = qBrut.match(/^name = '([^']+)' and trashed = false$/);
+    if (parNom) {
+      if (recherche && recherche.statut) {
+        return { ok: false, status: recherche.statut, async text() { return JSON.stringify(recherche.corps ?? {}); } };
+      }
+      const trouves = (recherche && recherche[parNom[1]]) || [];
+      return { ok: true, status: 200, async text() { return JSON.stringify({ files: trouves }); } };
     }
 
     /* ── Le listing d'un dossier ─────────────────────────────────────────── */
@@ -983,4 +996,70 @@ test('un publication.json qui ne se télécharge pas n emporte pas les autres', 
   assert.equal(lot.publications.length, 1, 'la publication lisible doit survivre');
   assert.equal(lot.ecartees.length, 1);
   assert.match(lot.ecartees[0].motif, /illisible|inaccessible|404/i);
+});
+
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ON DEMANDE AVANT DE FOUILLER — la recherche par nom
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+test('le sondage DEMANDE ou sont les publication.json au lieu de tout fouiller', async () => {
+  viderCacheJeton();
+  // L'arborescence reelle du 18/09 : 4 semaines de 7 jours. Le parcours en
+  // largeur epuise n'importe quel budget avant d'atteindre les manifestes,
+  // qui vivent au TROISIEME niveau.
+  const listes = { [DOSSIER]: [] };
+  for (let s = 0; s < 4; s += 1) {
+    const idSem = `sem${s}`;
+    listes[DOSSIER].push(d(idSem, `WEEK_${s}`));
+    listes[idSem] = [];
+    for (let j = 0; j < 7; j += 1) {
+      const idJour = `sem${s}j${j}`;
+      listes[idSem].push(d(idJour, `Jour_${j}`));
+      listes[idJour] = [d(`${idJour}p`, '1_POST_09H00')];
+      listes[`${idJour}p`] = [f(`${idJour}m`, 'publication.json', 'application/json')];
+    }
+  }
+  const g = fauxGoogle({
+    listes,
+    recherche: { 'publication.json': Array.from({ length: 28 }, (_, i) => ({ id: `m${i}`, name: 'publication.json' })) },
+  });
+
+  const etat = await sonderDrive({ env: env(), fetchImpl: g.impl });
+
+  assert.equal(etat.diagnostic, 'ok', `attendu « ok », recu « ${etat.diagnostic} » : ${etat.message}`);
+  assert.equal(etat.publications_trouvees, 28);
+
+  const recherches = g.appels.filter((a) => /name = /.test(decodeURIComponent(a.url.replace(/\+/g, ' '))));
+  const listings = g.appels.filter((a) => /in parents/.test(decodeURIComponent(a.url.replace(/\+/g, ' '))));
+  assert.equal(recherches.length, 1, 'une seule requete doit suffire a repondre');
+  assert.ok(listings.length <= 1, `le parcours ne doit plus servir : ${listings.length} listings`);
+});
+
+test('recherche muette : on retombe sur le parcours, qui sait dire POURQUOI', async () => {
+  viderCacheJeton();
+  // Le cas du 18/09 : des fichiers, aucun manifeste. La recherche ne rend rien,
+  // et ce n'est PAS « dossier vide » — c'est un depot hors format.
+  const g = fauxGoogle({
+    listes: { [DOSSIER]: [f('a', 'LISEZ-MOI.md', 'text/markdown'), f('b', 'APERCU.jpg')] },
+    recherche: { 'publication.json': [] },
+  });
+  const etat = await sonderDrive({ env: env(), fetchImpl: g.impl });
+  assert.equal(etat.diagnostic, 'rien_de_conforme',
+    'des fichiers sans manifeste ne doivent JAMAIS etre annonces comme un dossier vide');
+  assert.match(etat.message, /2 fichier/);
+});
+
+test('recherche en panne : le parcours prend le relais sans faire echouer le sondage', async () => {
+  viderCacheJeton();
+  const g = fauxGoogle({
+    listes: {
+      [DOSSIER]: [d('p1', '1_POST_09H00')],
+      p1: [f('j1', 'publication.json', 'application/json')],
+    },
+    recherche: { statut: 500, corps: { error: { code: 500, message: 'backend error' } } },
+  });
+  const etat = await sonderDrive({ env: env(), fetchImpl: g.impl });
+  assert.equal(etat.diagnostic, 'ok', 'une recherche en panne ne doit pas casser le sondage');
+  assert.equal(etat.publications_trouvees, 1, 'le parcours doit retrouver ce que la recherche a manque');
 });
