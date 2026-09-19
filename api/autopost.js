@@ -362,6 +362,21 @@ export function creerGestionnaireAutopost({
           controle,
           mode_global: modeGlobalDemande(),
           jeton_meta_present: Boolean((process.env.META_PAGE_ACCESS_TOKEN || '').trim()),
+          /* ⛔ LE 19/09/2026 : les passages planifiés n'ont JAMAIS tourné, et
+             personne ne pouvait le voir. Le journal ne portait que les
+             pressions manuelles du bouton.
+
+             Vercel n'envoie « Authorization: Bearer … » à une tâche planifiée
+             QUE si CRON_SECRET est posée. Sans elle, `autorisationTick()`
+             refuse — et un refus de tâche planifiée est SILENCIEUX : pas de
+             journal, pas d'écran, rien. Un auto-poster qui ne se déclenche
+             jamais tout seul et qui n'a pas l'air en panne est pire qu'un
+             auto-poster en panne.
+
+             Ce booléen ne dit QUE si la variable est posée. Jamais sa valeur,
+             ni aucun fragment : c'est un secret, et un secret ne traverse pas
+             cette réponse. */
+          secret_taches_planifiees_pose: Boolean((process.env.CRON_SECRET || '').trim()),
           // ⚠️ Ce booléen dit seulement que TROIS VARIABLES SONT POSÉES. Il ne
           //    dit RIEN de ce que le robot peut lire — c'était le faux témoin
           //    du 18/09 : le voyant passait au vert sans qu'aucune ligne de

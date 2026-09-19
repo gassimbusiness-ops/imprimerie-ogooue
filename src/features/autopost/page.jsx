@@ -308,6 +308,13 @@ function Bandeau({ etat }) {
           ouiTexte="Jeton Meta présent."
           nonTexte="Jeton Meta absent — c'est normal aujourd'hui. Tant qu'il manque, tout reste en simulation."
         />
+        <Voyant
+          actif={etat?.secret_taches_planifiees_pose}
+          Icone={etat?.secret_taches_planifiees_pose ? CheckCircle2 : AlertTriangle}
+          ouiTexte="Passages planifiés armés : 09 h 00 et 18 h 00, heure de Moanda."
+          nonTexte={'Passages planifiés INACTIFS : la variable CRON_SECRET n\'est pas posée dans Vercel. '
+            + 'Rien ne se déclenche tout seul — seul le bouton « Relire le Drive » agit, à la main.'}
+        />
         <VoyantDrive drive={etat?.drive} configure={etat?.acces_drive_configure} />
       </CardContent>
       <LigneApprobationAutomatique controle={etat?.controle} />
