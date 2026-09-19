@@ -67,6 +67,10 @@
       "destination": "/api/autopost?voie=etat"
     },
     {
+      "source": "/api/autopost-approuver",
+      "destination": "/api/autopost?voie=approuver"
+    },
+    {
       "source": "/api/chatgpt-inventaire",
       "destination": "/api/chatgpt?voie=inventaire"
     },

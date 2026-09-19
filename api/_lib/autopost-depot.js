@@ -197,6 +197,54 @@ export function depotSupabaseAutopost(supabase) {
       return (data || []).length === 1;
     },
 
+    /* ═══════════════════════════════════════════════════════════════════════
+       L'APPROBATION — deux gestes, et aucun d'eux ne publie
+       ═══════════════════════════════════════════════════════════════════════
+
+       ⚠️ `lireEtatComplet()` ne rend PAS la colonne `publication` : l'écran n'en
+       a pas besoin, et un manifeste complet par ligne × 200 lignes est un
+       transfert inutile. Or l'approbation porte l'empreinte du manifeste : elle
+       ne peut donc pas être calculée à partir de ce que l'écran affiche.
+
+       C'est une propriété, pas une gêne. Le navigateur envoie une CLÉ, et rien
+       d'autre ; le serveur relit le manifeste qu'il a lui-même rangé et calcule
+       l'empreinte dessus. Un navigateur ne peut pas faire approuver un contenu
+       qu'il aurait composé lui-même. */
+
+    /** Tout ce qu'il faut pour fabriquer une approbation — manifeste compris. */
+    async lirePourApprobation(cle) {
+      const { data, error } = await supabase
+        .from(TABLE_FILE)
+        .select('cle_idempotence, publication_id, version_contenu, canal, surface, '
+          + 'instant_utc, etat, id_distant, publication, approbation')
+        .eq('cle_idempotence', cle)
+        .limit(1);
+      if (error) throw new Error(`lecture ${TABLE_FILE} (approbation) : ${error.message}`);
+      return (data || [])[0] || null;
+    },
+
+    /**
+     * Écrit (ou retire) l'approbation d'une ligne.
+     *
+     * ⛔ MÊMES CONDITIONS QUE `mettreAJourDepuisDepot` : la ligne doit être
+     * encore modifiable et n'avoir AUCUN témoin de publication. Approuver ou
+     * désapprouver ce qui est déjà parti ne changerait rien au monde réel — ça
+     * ne ferait que mentir sur l'état de la ligne. Et les conditions sont DANS
+     * l'instruction SQL : entre une lecture et une écriture de l'appelant, un
+     * passage horaire a le temps de prendre la ligne.
+     */
+    async ecrireApprobation(cle, approbation) {
+      const { data, error } = await supabase
+        .from(TABLE_FILE)
+        .update({ approbation, updated_at: formaterInstantUtc(new Date()) })
+        .eq('cle_idempotence', cle)
+        .in('etat', [...ETATS_MODIFIABLES])
+        .is('id_distant', null)
+        .select('cle_idempotence');
+      if (error) throw new Error(`approbation ${TABLE_FILE} : ${error.message}`);
+      return (data || []).length === 1;
+    },
+
     /**
      * ⛔ LE COMPARE-AND-SWAP. La seule chose qui empêche deux instances
      * serverless simultanées de publier deux fois le même post.

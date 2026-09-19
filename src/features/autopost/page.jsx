@@ -35,6 +35,7 @@ import { Button } from '@/components/ui/button';
 import {
   CalendarClock, CheckCircle2, XCircle, AlertTriangle, RefreshCw,
   PauseCircle, PlayCircle, Eye, EyeOff, HardDriveDownload, ImageOff,
+  ShieldCheck, ShieldOff, KeyRound,
 } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -111,6 +112,19 @@ const DETAILS_APPROBATION = {
   creneau_modifie_depuis_approbation: 'l\'horaire a changé depuis l\'approbation',
   signature_approbation_invalide: 'signature d\'approbation invalide',
 };
+
+/**
+ * ⛔ LES ÉTATS SUR LESQUELS L'APPROBATION PEUT ENCORE CHANGER QUELQUE CHOSE.
+ *
+ * Reprise de `ETATS_MODIFIABLES` (`api/_lib/autopost-alimentation.js`). La
+ * liste est ici EN DOUBLE, et c'est assumé : un écran de navigateur ne peut pas
+ * importer un module `api/_lib` (il charge `node:crypto`). Ce doublon ne décide
+ * de rien — il ne fait que MASQUER un bouton. Ce qui refuse réellement, c'est
+ * la même condition posée dans l'instruction SQL de `ecrireApprobation()` :
+ * même si cette liste dérivait, aucune ligne partie ou en vol ne pourrait être
+ * approuvée.
+ */
+const ETATS_APPROBABLES = ['draft', 'scheduled', 'failed', 'expired', 'suspended'];
 
 function heureDeMoanda(instantUtc) {
   const rendu = formaterInstantLocal(instantUtc);
@@ -279,7 +293,108 @@ function Bandeau({ etat }) {
 
 /* ─── UNE LIGNE DE LA FILE ─── */
 
-function Ligne({ l }) {
+/**
+ * ⛔ LE GESTE D'APPROBATION, SUR LA LIGNE QUI LE PORTE.
+ *
+ * Avant le 19/09/2026, `signerApprobation()` n'avait AUCUN appelant dans tout
+ * le dépôt : l'écran d'approbation annoncé par les commentaires n'existait pas.
+ * La sélection écartait donc chaque ligne avec `non_approuve`, et personne ne
+ * pouvait lever ce refus. C'est ce bouton, et rien d'autre, qui manquait.
+ *
+ * Trois choses qu'il dit, et qui ne doivent pas disparaître :
+ *
+ *   1. ce qu'il fait, en toutes lettres — « Approuver » et « Retirer
+ *      l'approbation », pas une case à cocher muette. Approuver n'est pas
+ *      publier : la publication partira au passage horaire suivant son créneau,
+ *      et seulement si la chaîne est en marche ;
+ *   2. ce qu'il vaut. Sans `AUTOPOST_CLE_APPROBATION`, l'approbation est
+ *      enregistrée SANS signature. On l'écrit, au lieu d'un voyant vert ;
+ *   3. qu'une approbation se défait. Approuver par erreur à 08 h 55 doit pouvoir
+ *      s'annuler avant 09 h 00, au même endroit et en un clic.
+ */
+function BlocApprobation({ l, peutApprouver, enCours, surApprobation }) {
+  const a = l.approbation;
+  const approuve = a?.approuve === true;
+  const retiree = a && a.approuve !== true && a.retire_le_utc;
+  const modifiable = !l.id_distant && ETATS_APPROBABLES.includes(l.etat);
+
+  return (
+    <div className="mt-2 rounded border border-slate-200 bg-slate-50 p-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-start gap-1.5 text-sm">
+          {approuve
+            ? <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-emerald-600" />
+            : <ShieldOff className="mt-0.5 h-4 w-4 shrink-0 text-orange-500" />}
+          <div>
+            {approuve && (
+              <div className="text-emerald-800">
+                Approuvé pour {(a.canaux_approuves || []).join(', ') || l.canal}
+                {a.approuve_par && <> par <strong>{a.approuve_par}</strong></>}
+                {a.approuve_le_utc && <> le {heureDeMoanda(a.approuve_le_utc)}</>}.
+              </div>
+            )}
+            {!approuve && retiree && (
+              <div className="text-orange-800">
+                Approbation retirée{a.retire_par && <> par <strong>{a.retire_par}</strong></>}
+                {a.retire_le_utc && <> le {heureDeMoanda(a.retire_le_utc)}</>}.
+                Cette publication ne partira pas.
+              </div>
+            )}
+            {!approuve && !retiree && (
+              <div className="text-orange-800">
+                Pas approuvé. Rien ne part sans approbation, même une fois l&apos;heure passée.
+              </div>
+            )}
+            {approuve && (
+              <div className="mt-0.5 text-xs text-slate-500">
+                L&apos;approbation porte l&apos;empreinte du contenu approuvé. Si la légende,
+                l&apos;image, l&apos;heure ou le compte changent, elle ne vaut plus et il faut
+                approuver à nouveau.
+              </div>
+            )}
+          </div>
+        </div>
+
+        {peutApprouver && modifiable && (
+          <Button
+            size="sm"
+            variant={approuve ? 'outline' : 'default'}
+            disabled={enCours}
+            onClick={() => surApprobation(l, !approuve)}
+          >
+            {approuve
+              ? (enCours ? 'Retrait…' : 'Retirer l\'approbation')
+              : (enCours ? 'Approbation…' : 'Approuver cette publication')}
+          </Button>
+        )}
+      </div>
+
+      {/* 🔴 CE QUE L'APPROBATION VAUT, DIT À CÔTÉ D'ELLE.
+          Un voyant vert sans signature serait le quatrième faux témoin de la
+          semaine. Tant que la clé n'est pas posée, une approbation déposée dans
+          le Drive vaut exactement autant que celle-ci. */}
+      {approuve && a.signature === 'absente' && (
+        <div className="mt-2 flex items-start gap-1.5 text-xs text-amber-800">
+          <KeyRound className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span>
+            Enregistrée <strong>sans signature</strong> : la clé de signature des approbations
+            n&apos;est pas posée sur le serveur. L&apos;empreinte du contenu, elle, est bien
+            contrôlée. Ce qui manque, c&apos;est la preuve que l&apos;approbation vient de
+            l&apos;application plutôt que d&apos;un fichier déposé dans le Drive.
+          </span>
+        </div>
+      )}
+      {approuve && a.signature === 'hmac_sha256' && (
+        <div className="mt-2 flex items-start gap-1.5 text-xs text-slate-500">
+          <KeyRound className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+          <span>Approbation signée.</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Ligne({ l, peutApprouver = false, enCours = false, surApprobation = () => {} }) {
   const etat = ETATS[l.etat] || { label: l.etat, couleur: 'bg-slate-100 text-slate-700' };
   const erreur = l.derniere_erreur;
   const approuve = Boolean(l.approbation?.approuve);
@@ -309,6 +424,13 @@ function Ligne({ l }) {
           <span className="text-slate-400">· tolérance {l.tolerance_minutes} min</span>
         )}
       </div>
+
+      <BlocApprobation
+        l={l}
+        peutApprouver={peutApprouver}
+        enCours={enCours}
+        surApprobation={surApprobation}
+      />
 
       {l.id_distant && (
         <div className="mt-1 text-sm text-emerald-700">
@@ -363,6 +485,8 @@ export default function Autopost() {
   const [passageEnCours, setPassageEnCours] = useState(false);
   const [relectureEnCours, setRelectureEnCours] = useState(false);
   const [alimentation, setAlimentation] = useState(null);
+  // La clé de la ligne dont l'approbation est en cours d'écriture, ou null.
+  const [approbationEnCours, setApprobationEnCours] = useState(null);
 
   const charger = useCallback(async () => {
     setChargement(true);
@@ -413,6 +537,42 @@ export default function Autopost() {
    * Il ne publie RIEN : il lit le Drive et écrit dans la file. Les deux gestes
    * sont séparés, et celui-ci ne touche à aucun des cinq verrous.
    */
+  /**
+   * ⛔ APPROUVER, OU RETIRER L'APPROBATION.
+   *
+   * Le navigateur n'envoie QU'UNE CLÉ. Il n'envoie ni empreinte, ni manifeste,
+   * ni « approuvé par » : le serveur relit le `publication.json` qu'il a
+   * lui-même rangé dans la ligne, recalcule l'empreinte dessus, et lit le nom
+   * de l'approbateur dans le jeton de session signé. Un navigateur ne peut donc
+   * pas faire approuver un contenu qu'il aurait composé lui-même, ni signer à
+   * la place de quelqu'un d'autre.
+   *
+   * Et ce bouton NE PUBLIE PAS. Il lève le seul refus que le gérant peut lever ;
+   * l'interrupteur général, le mode réel et le jeton Meta restent où ils sont.
+   */
+  const changerApprobation = async (ligne, approuve) => {
+    setApprobationEnCours(ligne.cle_idempotence);
+    try {
+      const res = await apiFetch('/api/autopost-approuver', {
+        method: 'POST',
+        body: JSON.stringify({ cle_idempotence: ligne.cle_idempotence, approuve }),
+      });
+      const corps = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(corps.detail || corps.error || `Réponse ${res.status}`);
+      toast.success(approuve
+        ? `${ligne.publication_id} approuvée pour ${ligne.canal}.`
+          + (corps.signature === 'absente' ? ' Enregistrée sans signature.' : '')
+        : `Approbation retirée pour ${ligne.publication_id} (${ligne.canal}).`);
+      await charger();
+    } catch (e) {
+      // On DIT l'échec. Un bouton qui redevient cliquable en silence laisserait
+      // croire que l'approbation est passée.
+      toast.error(e?.message || 'Approbation impossible');
+    } finally {
+      setApprobationEnCours(null);
+    }
+  };
+
   const relireLeDrive = async () => {
     setRelectureEnCours(true);
     try {
@@ -540,7 +700,15 @@ export default function Autopost() {
           </h2>
           {prevus.length === 0
             ? <p className="text-sm text-slate-500">Rien en attente dans la file.</p>
-            : prevus.map((l) => <Ligne key={l.cle_idempotence} l={l} />)}
+            : prevus.map((l) => (
+              <Ligne
+                key={l.cle_idempotence}
+                l={l}
+                peutApprouver={user?.role === 'admin'}
+                enCours={approbationEnCours === l.cle_idempotence}
+                surApprobation={(ligne, approuve) => void changerApprobation(ligne, approuve)}
+              />
+            ))}
         </CardContent>
       </Card>
 
@@ -551,7 +719,15 @@ export default function Autopost() {
           </h2>
           {partis.length === 0
             ? <p className="text-sm text-slate-500">Aucune publication partie pour l&apos;instant.</p>
-            : partis.map((l) => <Ligne key={l.cle_idempotence} l={l} />)}
+            : partis.map((l) => (
+              <Ligne
+                key={l.cle_idempotence}
+                l={l}
+                peutApprouver={user?.role === 'admin'}
+                enCours={approbationEnCours === l.cle_idempotence}
+                surApprobation={(ligne, approuve) => void changerApprobation(ligne, approuve)}
+              />
+            ))}
         </CardContent>
       </Card>
 
@@ -562,7 +738,15 @@ export default function Autopost() {
           </h2>
           {bloques.length === 0
             ? <p className="text-sm text-slate-500">Aucun blocage.</p>
-            : bloques.map((l) => <Ligne key={l.cle_idempotence} l={l} />)}
+            : bloques.map((l) => (
+              <Ligne
+                key={l.cle_idempotence}
+                l={l}
+                peutApprouver={user?.role === 'admin'}
+                enCours={approbationEnCours === l.cle_idempotence}
+                surApprobation={(ligne, approuve) => void changerApprobation(ligne, approuve)}
+              />
+            ))}
         </CardContent>
       </Card>
 
@@ -594,4 +778,4 @@ export default function Autopost() {
 }
 
 /** Exporté pour les tests de rendu et pour réemploi dans un futur écran. */
-export { RAISONS, DETAILS_APPROBATION, ETATS, MOTIFS_ALIMENTATION };
+export { RAISONS, DETAILS_APPROBATION, ETATS, MOTIFS_ALIMENTATION, ETATS_APPROBABLES };

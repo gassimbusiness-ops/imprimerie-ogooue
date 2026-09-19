@@ -25,7 +25,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { rendreEcran } from './outils/rendu-ecran.mjs';
+import { rendreEcran, texteVivant } from './outils/rendu-ecran.mjs';
 
 /** Une file aux formes reelles : un prevu non approuve, un parti, un echoue. */
 const ETAT = {
@@ -533,6 +533,189 @@ test('🔴 une adresse de media HEBERGE fait disparaitre l avertissement « medi
     assert.equal(r.erreurs.length, 0);
     assert.doesNotMatch(r.texte, /média non hébergé/i);
     assert.doesNotMatch(r.texte, /n'ont pas de média hébergé|n’ont pas de média hébergé/i);
+  } finally {
+    f.restaurer();
+    await r.demonter();
+  }
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ⛔ L'APPROBATION — LE GESTE QUI N'AVAIT AUCUN ECRAN
+
+   Au 19/09/2026, `signerApprobation()` n'avait AUCUN appelant dans tout le
+   depot. La selection ecartait chaque ligne avec `non_approuve`, et personne,
+   nulle part dans l'application, ne pouvait lever ce refus : la chaine etait
+   complete sauf le seul geste qu'elle exige d'un humain.
+
+   Ces tests montent l'ecran AVEC DES DONNEES — un bloc conditionne a
+   `lignes.length > 0` ne prouve rien s'il ne s'affiche jamais — et CLIQUENT.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/** Comme `installerFetchRoutee`, mais elle retient aussi les CORPS envoyes. */
+function installerFetchAvecCorps(routes) {
+  const appels = [];
+  const ancien = globalThis.fetch;
+  globalThis.fetch = async (url, options = {}) => {
+    const u = String(url);
+    let corps = null;
+    try { corps = options.body ? JSON.parse(options.body) : null; } catch { corps = options.body; }
+    appels.push({ url: u, methode: options.method || 'GET', corps });
+    const cle = Object.keys(routes).find((r) => u.includes(r));
+    const reponse = cle ? routes[cle] : { charge: {}, ok: false, status: 404 };
+    return { ok: reponse.ok !== false, status: reponse.status || 200, json: async () => reponse.charge };
+  };
+  return { appels, restaurer() { globalThis.fetch = ancien; } };
+}
+
+test('⛔ un administrateur voit un bouton qui DIT ce qu il va faire, sur la ligne non approuvee', async () => {
+  const f = installerFetchAvecCorps({ '/api/autopost-etat': { charge: ETAT } });
+  const r = await rendreEcran({ ecran: 'src/features/autopost/page.jsx', utilisateur: { role: 'admin' } });
+  try {
+    assert.equal(r.erreurs.length, 0, `exceptions au montage : ${r.erreurs.map((e) => e?.message).join(' · ')}`);
+    assert.match(r.texte, /Approuver cette publication/, 'le bouton manque : rien ne peut etre approuve');
+    // Il dit ce qui se passe, pas « OK ».
+    assert.match(r.texte, /Rien ne part sans approbation/);
+  } finally {
+    f.restaurer();
+    await r.demonter();
+  }
+});
+
+test('⛔ CLIQUER « Approuver » appelle la voie serveur, et n envoie QU UNE CLE', async () => {
+  const f = installerFetchAvecCorps({
+    '/api/autopost-etat': { charge: ETAT },
+    '/api/autopost-approuver': { charge: { ok: true, approuve: true, signature: 'absente' } },
+  });
+  const r = await rendreEcran({ ecran: 'src/features/autopost/page.jsx', utilisateur: { role: 'admin' } });
+  try {
+    await cliquerSur(r, 'Approuver cette publication');
+
+    const appel = f.appels.find((a) => a.url.includes('/api/autopost-approuver'));
+    assert.ok(appel, 'aucun appel a la voie d approbation');
+    assert.equal(appel.methode, 'POST');
+    assert.deepEqual(appel.corps, {
+      cle_idempotence: 'PUB-2026-S39-1-01|v1|facebook|100|2026-09-21T08:00:00Z',
+      approuve: true,
+    });
+    // ⛔ Le navigateur n envoie NI empreinte, NI manifeste, NI « approuve_par » :
+    //    le serveur relit le manifeste qu il a range et lit le nom dans le jeton.
+    assert.equal(appel.corps.payload_sha256, undefined);
+    assert.equal(appel.corps.publication, undefined);
+    assert.equal(appel.corps.approuve_par, undefined);
+    // Et l ecran relit l etat : on n affiche pas un succes suppose.
+    assert.ok(f.appels.filter((a) => a.url.includes('/api/autopost-etat')).length >= 2,
+      'l ecran doit relire l etat apres le geste');
+    assert.equal(r.journal.ecritures.length, 0, 'aucune ecriture en base depuis le navigateur');
+  } finally {
+    f.restaurer();
+    await r.demonter();
+  }
+});
+
+test('⛔ L APPROBATION SE DEFAIT : la ligne approuvee porte « Retirer l approbation »', async () => {
+  const approuvee = {
+    ...ETAT,
+    file: [{
+      ...ETAT.file[0],
+      approbation: {
+        approuve: true,
+        canaux_approuves: ['facebook'],
+        approuve_par: 'u-admin',
+        approuve_le_utc: '2026-09-21T07:55:00Z',
+        signature: 'absente',
+        signature_hmac_sha256: null,
+      },
+    }],
+  };
+  const f = installerFetchAvecCorps({
+    '/api/autopost-etat': { charge: approuvee },
+    '/api/autopost-approuver': { charge: { ok: true, approuve: false } },
+  });
+  const r = await rendreEcran({ ecran: 'src/features/autopost/page.jsx', utilisateur: { role: 'admin' } });
+  try {
+    assert.match(r.texte, /Approuvé pour facebook/);
+    assert.match(r.texte, /u-admin/);
+    await cliquerSur(r, 'Retirer l\'approbation');
+
+    const appel = f.appels.find((a) => a.url.includes('/api/autopost-approuver'));
+    assert.ok(appel, 'le retrait doit appeler la meme voie');
+    assert.equal(appel.corps.approuve, false, 'retirer, ce n est pas re-approuver');
+  } finally {
+    f.restaurer();
+    await r.demonter();
+  }
+});
+
+test('🔴 une approbation SANS signature le dit — pas de voyant vert muet', async () => {
+  const approuvee = {
+    ...ETAT,
+    file: [{
+      ...ETAT.file[0],
+      approbation: {
+        approuve: true, canaux_approuves: ['facebook'], approuve_par: 'u-admin',
+        approuve_le_utc: '2026-09-21T07:55:00Z', signature: 'absente', signature_hmac_sha256: null,
+      },
+    }],
+  };
+  const f = installerFetchAvecCorps({ '/api/autopost-etat': { charge: approuvee } });
+  const r = await rendreEcran({ ecran: 'src/features/autopost/page.jsx', utilisateur: { role: 'admin' } });
+  try {
+    assert.match(r.texte, /sans signature/);
+    assert.match(r.texte, /L'empreinte du contenu, elle, est bien|L’empreinte du contenu, elle, est bien/);
+  } finally {
+    f.restaurer();
+    await r.demonter();
+  }
+});
+
+test('⛔ un EMPLOYE ne voit aucun bouton d approbation', async () => {
+  const f = installerFetchAvecCorps({ '/api/autopost-etat': { charge: ETAT } });
+  const r = await rendreEcran({ ecran: 'src/features/autopost/page.jsx', utilisateur: { role: 'employe' } });
+  try {
+    assert.ok(r.texte.length > 200, 'ecran blanc');
+    assert.doesNotMatch(r.texte, /Approuver cette publication/);
+    assert.doesNotMatch(r.texte, /Retirer l'approbation|Retirer l’approbation/);
+    // ⚠️ Et ce masquage n est PAS la serrure : celle-ci est dans
+    //    `api/autopost.js` (voie « approuver », 403 hors role admin), verifiee
+    //    par `tests/autopost-approbation.test.mjs`.
+    assert.match(r.texte, /Pas approuvé/, 'l employe doit quand meme VOIR l etat');
+  } finally {
+    f.restaurer();
+    await r.demonter();
+  }
+});
+
+test('⛔ une publication DEJA PARTIE n offre aucun bouton d approbation', async () => {
+  const f = installerFetchAvecCorps({
+    '/api/autopost-etat': { charge: { ...ETAT, file: [ETAT.file[1]] } },
+  });
+  const r = await rendreEcran({ ecran: 'src/features/autopost/page.jsx', utilisateur: { role: 'admin' } });
+  try {
+    assert.match(r.texte, /100_777/, 'la ligne partie doit bien etre affichee');
+    assert.doesNotMatch(r.texte, /Approuver cette publication/);
+    assert.doesNotMatch(r.texte, /Retirer l'approbation|Retirer l’approbation/);
+  } finally {
+    f.restaurer();
+    await r.demonter();
+  }
+});
+
+test('un refus du serveur est DIT, et rien n est affiche comme approuve', async () => {
+  const f = installerFetchAvecCorps({
+    '/api/autopost-etat': { charge: ETAT },
+    '/api/autopost-approuver': {
+      ok: false,
+      status: 403,
+      charge: { error: 'Réservé à un administrateur' },
+    },
+  });
+  const r = await rendreEcran({ ecran: 'src/features/autopost/page.jsx', utilisateur: { role: 'admin' } });
+  try {
+    await cliquerSur(r, 'Approuver cette publication');
+    const erreurs = r.toasts.filter((t) => t.niveau === 'error');
+    assert.ok(erreurs.length >= 1, 'un refus silencieux laisserait croire que c est passe');
+    assert.match(erreurs[erreurs.length - 1].message, /administrateur/);
+    assert.match(texteVivant(r), /Pas approuvé/, 'la ligne reste non approuvee');
   } finally {
     f.restaurer();
     await r.demonter();

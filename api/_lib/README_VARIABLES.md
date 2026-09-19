@@ -19,7 +19,7 @@
 | `BOT_META_MODE` | `live` pour que le bot Messenger / Instagram ENVOIE réellement ses réponses ; toute autre valeur = simulation | **simulation — le bot compose et journalise, il n'envoie rien** |
 | `META_PAGE_ID` · `META_INSTAGRAM_ID` | *facultatives.* Limiter le bot aux comptes de l'imprimerie — le jeton voit AUSSI la Page TopShop, dont les actifs sont dans le même portefeuille | le bot répond sur le compte qui a reçu le message, quel qu'il soit |
 | `AUTOPOST_MODE` | `live` pour publier réellement ; toute autre valeur = simulation | simulation |
-| `AUTOPOST_CLE_APPROBATION` | vérifier la signature HMAC des `APPROBATION.json` | la signature n'est pas contrôlée ; l'empreinte du contenu l'est toujours |
+| `AUTOPOST_CLE_APPROBATION` | signer les approbations données depuis l'écran (`api/_lib/autopost-approbation.js`) ET vérifier la signature HMAC des `APPROBATION.json` (`autopost-selection.js`) | la signature n'est **ni produite ni contrôlée** ; l'empreinte du contenu l'est toujours. L'approbation écrite porte alors `signature: 'absente'`, et l'écran l'affiche au lieu d'un voyant vert |
 | `CRON_SECRET` | authentifier les tâches planifiées Vercel sur `/api/autopost-tick` | **toute tâche planifiée est refusée — voulu** |
 | `GOOGLE_SERVICE_ACCOUNT_EMAIL` · `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY` · `DRIVE_DOSSIER_PUBLICATIONS_ID` | lire le dossier `10_PUBLICATIONS/` du Drive en lecture seule | pas de lecture du Drive ; le dépôt se fait depuis l'application |
 | `CHATGPT_BRIDGE_TOKEN` | ouvrir le pont de lecture `/api/chatgpt-*` à un GPT personnalisé (`api/chatgpt.js`) | **503 sur toutes les voies — le pont ne sert rien, y compris son schéma. Voulu.** |

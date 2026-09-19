@@ -318,3 +318,42 @@ export function signerApprobation(approbation, cleSignature) {
     .update(`${approbation.publication_id}|${approbation.version_contenu}|${approbation.payload_sha256}`, 'utf8')
     .digest('hex');
 }
+
+/**
+ * Marque de provenance d'une approbation donnée depuis l'écran d'administration
+ * de l'application (`api/_lib/autopost-approbation.js`).
+ *
+ * ⚠️ Ce n'est PAS une preuve d'origine : un `APPROBATION.json` déposé dans le
+ * Drive peut porter la même chaîne, c'est du texte. La seule chose qui
+ * distingue cryptographiquement un approbateur d'un autre est la signature
+ * HMAC, donc la présence de `AUTOPOST_CLE_APPROBATION`. Cette constante ne sert
+ * qu'à deux gestes honnêtes : l'afficher, et ne pas effacer par mégarde une
+ * approbation que l'application vient d'écrire (voir `approbationARetenir`).
+ */
+export const ORIGINE_ECRAN = 'ecran_administrateur';
+
+/**
+ * Ce que l'alimentation doit RANGER dans la colonne `approbation` d'une ligne
+ * de file déjà présente, quand elle réécrit cette ligne depuis le Drive.
+ *
+ * ⛔ Sans cette règle, l'écran d'approbation ne tiendrait pas une heure. La
+ * relecture du Drive réécrit la ligne avec l'approbation du dépôt — or ChatGPT
+ * a INTERDICTION de déposer `APPROBATION.json`, donc ce champ est presque
+ * toujours absent. Une approbation donnée à 08 h 55 serait effacée par le
+ * passage de 09 h 00, juste avant d'être lue.
+ *
+ * La règle : le dépôt gagne quand il apporte une approbation ; sinon on
+ * conserve celle qui vient de l'application. Ce n'est pas un contournement :
+ * l'approbation conservée porte `payload_sha256`, donc si le dépôt a modifié le
+ * contenu, `verifierApprobation()` la refuse d'elle-même avec
+ * `contenu_modifie_depuis_approbation`.
+ *
+ * @param {object|null} approbationDuDepot
+ * @param {object|null} approbationDeLaLigne
+ * @returns {object|null}
+ */
+export function approbationARetenir(approbationDuDepot, approbationDeLaLigne) {
+  if (approbationDuDepot) return approbationDuDepot;
+  if (approbationDeLaLigne?.origine === ORIGINE_ECRAN) return approbationDeLaLigne;
+  return null;
+}

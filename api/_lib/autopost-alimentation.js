@@ -160,7 +160,9 @@
  * fermer. Voir `autopost-depot.js`.
  */
 import crypto from 'node:crypto';
-import { validerManifeste, cleIdempotence, empreinteCanonique, CANAUX_PUBLIANTS } from './autopost-contrat.js';
+import {
+  validerManifeste, cleIdempotence, empreinteCanonique, CANAUX_PUBLIANTS, approbationARetenir,
+} from './autopost-contrat.js';
 import { erreurDeMedia, CODES_MEDIA, MOTIFS_MEDIA } from './autopost-medias.js';
 import { formaterInstantUtc, dateLocaleDepuisInstantUtc } from '../../src/lib/dates.js';
 
@@ -558,16 +560,27 @@ export async function alimenterFile({
       const tolerance = typeof pub.creneau.tolerance_minutes === 'number'
         ? pub.creneau.tolerance_minutes
         : TOLERANCE_PAR_DEFAUT;
+      /* ── 3.d LA LIGNE EXISTE-T-ELLE DÉJÀ, À CETTE CLÉ ? ───────────────── */
+      const existante = parCle.get(cle);
+
+      /* ⛔ L'APPROBATION DONNÉE DEPUIS L'APPLICATION SURVIT À CETTE RELECTURE.
+         Avant le 19/09/2026, cette boucle réécrivait `approbation` avec ce que
+         portait le dépôt — c'est-à-dire presque toujours `null`, puisque
+         ChatGPT a interdiction d'écrire `APPROBATION.json`. Une approbation
+         donnée à 08 h 55 était donc effacée par le passage de 09 h 00, juste
+         avant d'être lue : l'écran d'approbation n'aurait pas tenu une heure.
+         `approbationARetenir()` porte la règle, et son commentaire dit pourquoi
+         conserver n'est pas contourner. */
+      const approbationRetenue = approbationARetenir(depot_.approbation, existante?.approbation);
+
       const empreinte = empreinteDepot({
         publication: pub,
-        approbation: depot_.approbation,
+        approbation: approbationRetenue,
         legende,
         surface: canal.surface,
         tolerance,
       });
 
-      /* ── 3.d LA LIGNE EXISTE-T-ELLE DÉJÀ, À CETTE CLÉ ? ───────────────── */
-      const existante = parCle.get(cle);
       if (existante) {
         if (!ETATS_MODIFIABLES.includes(existante.etat)) {
           ecarter(pub, canal,
@@ -615,7 +628,8 @@ export async function alimenterFile({
             tolerance_minutes: tolerance,
             legende,
             publication: pub,
-            approbation: depot_.approbation ?? null,
+            // ⛔ Pas `depot_.approbation ?? null` : voir `approbationARetenir()`.
+            approbation: approbationRetenue,
             ...(champsMedia || {}),
           });
         if (fait) {

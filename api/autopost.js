@@ -127,17 +127,23 @@ import { depotSupabaseAutopost } from './_lib/autopost-depot.js';
 import { creerClientMeta } from './_lib/autopost-meta.js';
 import { executerPassage, modeGlobalDemande } from './_lib/autopost-executeur.js';
 import { alimenterFile } from './_lib/autopost-alimentation.js';
+import { traiterApprobation, cleSignatureApprobation } from './_lib/autopost-approbation.js';
 import { creerHebergeurMedias, stockageSupabase } from './_lib/autopost-medias.js';
 import { sonderDrive, lireConfigurationDrive, creerClientDrive, DIAGNOSTICS, MESSAGES } from './_lib/drive.js';
 
 /** Voies servies par ce point d'entrée. */
-export const VOIES_AUTOPOST = Object.freeze(['tick', 'etat', 'alimenter']);
+export const VOIES_AUTOPOST = Object.freeze(['tick', 'etat', 'alimenter', 'approuver']);
 
 /** Chemins publics historiques → voie (voir `api/_lib/routage.js`). */
 export const CHEMINS_AUTOPOST = Object.freeze({
   '/api/autopost-tick': 'tick',
   '/api/autopost-etat': 'etat',
   '/api/autopost-alimenter': 'alimenter',
+  // ⚠️ `approuver` est une VOIE DE PLUS DANS CE FICHIER, jamais un 13e fichier
+  //    dans `api/` : `ls api/*.js | wc -l` doit rendre 12. Le 17/09/2026, un 13e
+  //    fichier a fait échouer le déploiement à l'étape « Deploying outputs »,
+  //    build vert compris, et plus rien ne se déployait.
+  '/api/autopost-approuver': 'approuver',
 });
 
 /**
@@ -151,6 +157,24 @@ export function voieAutopost(req) {
     voies: VOIES_AUTOPOST,
     defaut: null,
   });
+}
+
+/**
+ * Le corps JSON d'une requête d'écriture.
+ *
+ * Vercel analyse déjà `application/json` et pose l'objet sur `req.body` ; les
+ * tests le posent directement. On tolère la chaîne pour les exécutions locales
+ * où l'analyse n'a pas eu lieu — et un JSON illisible rend `null`, ce que
+ * l'appelant refuse en disant quoi envoyer.
+ */
+function corpsJson(req) {
+  const brut = req?.body;
+  if (brut === undefined || brut === null || brut === '') return null;
+  if (typeof brut === 'string') {
+    try { return JSON.parse(brut); } catch { return null; }
+  }
+  if (typeof brut === 'object') return brut;
+  return null;
 }
 
 /**
@@ -309,6 +333,57 @@ export function creerGestionnaireAutopost({
         // Dire la panne. Un écran vide qui ressemble à « rien de prévu » est
         // exactement le piège documenté dans `src/services/db.js`.
         return res.status(503).json({ error: 'État indisponible', detail: err?.message });
+      }
+    }
+
+    /* ── VOIE « approuver » : le geste humain, et lui seul ───────────────
+       ⛔ CETTE VOIE N'ACCEPTE PAS LE SECRET DE LA TÂCHE PLANIFIÉE.
+       C'est la différence de fond avec `tick` et `alimenter`. `CRON_SECRET` est
+       posé dans Vercel : une machine le présente seize fois par jour. Si on
+       l'acceptait ici, la chaîne pourrait s'approuver elle-même — exactement ce
+       que tout le dossier interdit, et pour quoi `APPROBATION.json` est un
+       fichier séparé que ChatGPT n'a pas le droit d'écrire.
+
+       ⛔ ET CE N'EST PAS « UN BOUTON CACHÉ ». L'écran masque le bouton aux
+       non-administrateurs pour ne pas leur proposer un geste qu'ils n'ont pas ;
+       ce qui REFUSE, c'est ce bloc, côté serveur : jeton de session signé
+       (HMAC, `api/_lib/session.js`), rôle relu DANS le jeton et non dans le
+       corps de la requête. Un navigateur qui rétablirait le bouton, ou qui
+       appellerait l'URL à la main, reçoit 401 ou 403. */
+    if (voie === 'approuver') {
+      if (req.method !== 'POST') {
+        res.setHeader('Allow', 'POST');
+        return res.status(405).json({ error: 'Méthode non autorisée' });
+      }
+      if (limiteDepassee(req, { max: 30, fenetreMs: 60_000, portee: 'autopost-approuver' })) {
+        return res.status(429).json({ error: 'Trop de requêtes' });
+      }
+      const session = exigerSession(req, res);
+      if (!session) return undefined;
+      if (session.role !== 'admin') {
+        return res.status(403).json({ error: 'Réservé à un administrateur' });
+      }
+
+      const corps = corpsJson(req);
+      if (!corps) return res.status(400).json({ error: 'Corps JSON attendu' });
+      if (typeof corps.approuve !== 'boolean') {
+        return res.status(400).json({ error: 'approuve doit valoir true (approuver) ou false (retirer)' });
+      }
+
+      try {
+        const depot = depotFourni || depotSupabaseAutopost(supabaseAdmin());
+        const issue = await traiterApprobation({
+          depot,
+          cle: corps.cle_idempotence,
+          approuve: corps.approuve,
+          parQui: session.sub,
+          instant: maintenant(),
+          cleSignature: cleSignatureApprobation(),
+        });
+        return res.status(issue.statut).json(issue.corps);
+      } catch (err) {
+        console.error('[autopost] approbation impossible :', err?.message);
+        return res.status(500).json({ error: 'Approbation impossible', detail: err?.message });
       }
     }
 

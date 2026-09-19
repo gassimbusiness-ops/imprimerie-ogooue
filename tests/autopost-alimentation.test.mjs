@@ -1266,3 +1266,106 @@ test('⛔ le plafond du plan Hobby est tenu : api/ compte 12 fichiers, pas 13', 
   assert.equal(fonctions.length, 12,
     `13 fonctions font échouer le déploiement, build vert compris : ${fonctions.join(', ')}`);
 });
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   12. L'APPROBATION DONNÉE DEPUIS L'APPLICATION SURVIT À LA RELECTURE
+
+   ⛔ Le passage horaire ALIMENTE AVANT DE SÉLECTIONNER. Tant que cette boucle
+   réécrivait `approbation` avec ce que portait le dépôt — c'est-à-dire presque
+   toujours `null`, puisque ChatGPT a INTERDICTION de déposer
+   `APPROBATION.json` — une approbation donnée à 08 h 55 était effacée par le
+   passage de 09 h 00, juste avant d'être lue. L'écran d'approbation n'aurait
+   pas tenu une heure.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+test('⛔ une approbation donnée dans l application n est PAS effacée par la relecture du Drive', async () => {
+  const pub = manifeste();
+  const approbationEcran = {
+    approuve: true,
+    publication_id: pub.publication_id,
+    version_contenu: pub.version_contenu,
+    canaux_approuves: ['facebook'],
+    payload_sha256: empreinteCanonique(pub),
+    creneau_approuve: { date_locale: pub.creneau.date_locale, heure_locale: pub.creneau.heure_locale },
+    signature_hmac_sha256: null,
+    signature: 'absente',
+    origine: 'ecran_administrateur',
+    approuve_par: 'u-admin',
+    approuve_le_utc: '2026-09-21T05:55:00Z',
+  };
+  const depot = depotFactice({
+    lignes: [ligneExistante(pub, { approbation: approbationEcran, url_media: 'https://x/y.jpg' })],
+  });
+  // Le dépôt du Drive ne porte AUCUNE approbation — le cas normal.
+  const client = clientFactice({ publications: [deposee(pub, { approbation: null })] });
+
+  await passage(depot, client, hebergeurFactice());
+
+  const l = [...depot.file.values()][0];
+  assert.equal(l.approbation?.approuve, true, 'la relecture du Drive a effacé l approbation');
+  assert.equal(l.approbation.approuve_par, 'u-admin');
+});
+
+test('une approbation DÉPOSÉE dans le Drive reste prioritaire sur celle de l application', async () => {
+  const pub = manifeste();
+  const duDrive = approbationDe(pub);
+  const depot = depotFactice({
+    lignes: [ligneExistante(pub, {
+      approbation: { approuve: true, origine: 'ecran_administrateur', approuve_par: 'u-admin' },
+      url_media: 'https://x/y.jpg',
+    })],
+  });
+  const client = clientFactice({ publications: [deposee(pub, { approbation: duDrive })] });
+
+  await passage(depot, client, hebergeurFactice());
+
+  const l = [...depot.file.values()][0];
+  assert.equal(l.approbation.payload_sha256, duDrive.payload_sha256);
+  assert.equal(l.approbation.origine, undefined, 'c est bien le dépôt qui est rangé');
+});
+
+test('⛔ RIEN NE S AUTO-APPROUVE : une ligne NEUVE sans APPROBATION.json entre non approuvée', async () => {
+  const pub = manifeste();
+  const depot = depotFactice();
+  const client = clientFactice({ publications: [deposee(pub, { approbation: null })] });
+
+  await passage(depot, client, hebergeurFactice());
+
+  const l = [...depot.file.values()][0];
+  assert.equal(l.approbation, null, 'l alimentation ne doit JAMAIS fabriquer une approbation');
+});
+
+test('⛔ une approbation conservée devient invalide si le dépôt a CHANGÉ le contenu', async () => {
+  const v1 = manifeste();
+  const approbationEcran = {
+    approuve: true,
+    publication_id: v1.publication_id,
+    version_contenu: v1.version_contenu,
+    canaux_approuves: ['facebook'],
+    payload_sha256: empreinteCanonique(v1),
+    creneau_approuve: { date_locale: v1.creneau.date_locale, heure_locale: v1.creneau.heure_locale },
+    origine: 'ecran_administrateur',
+    approuve_par: 'u-admin',
+  };
+  const depot = depotFactice({
+    lignes: [ligneExistante(v1, { approbation: approbationEcran, url_media: 'https://x/y.jpg' })],
+  });
+
+  // MÊME clé (même version, même créneau, même canal, même compte) mais la
+  // légende a changé : la ligne est réécrite, l'approbation est conservée…
+  const corrige = manifeste();
+  corrige.captions.facebook.sha256 = 'c'.repeat(64);
+  const client = clientFactice({ publications: [deposee(corrige, { approbation: null })] });
+
+  await passage(depot, client, hebergeurFactice());
+
+  const l = [...depot.file.values()][0];
+  assert.equal(l.approbation?.approuve, true, 'elle est conservée…');
+  // … et elle ne vaut plus rien, parce qu'elle porte l'empreinte du contenu
+  // approuvé. Conserver n'est pas contourner.
+  const { verifierApprobation } = await import('../api/_lib/autopost-contrat.js');
+  assert.equal(
+    verifierApprobation({ publication: l.publication, approbation: l.approbation, canal: 'facebook' }).raison,
+    'contenu_modifie_depuis_approbation',
+  );
+});

@@ -344,7 +344,7 @@ UPDATE autopost_controle SET actif = false, motif = 'arrêt manuel' WHERE id = '
 | `CRON_SECRET` | Production | **les tâches planifiées sont refusées** — poser celle-ci en premier |
 | `META_PAGE_ACCESS_TOKEN` | Production | simulation permanente (état actuel, assumé) |
 | `AUTOPOST_MODE` | Production | `dry_run` |
-| `AUTOPOST_CLE_APPROBATION` | Production | la signature des approbations n'est pas vérifiée (l'empreinte du contenu l'est toujours) |
+| `AUTOPOST_CLE_APPROBATION` | Production | les approbations sont **écrites sans signature et acceptées sans signature** (l'empreinte du contenu, elle, est toujours contrôlée). Concrètement : un `APPROBATION.json` déposé dans le Drive vaut alors autant qu'une approbation donnée depuis l'écran. Ce qui protège en attendant : la voie `/api/autopost-approuver` réservée à un administrateur connecté, et la policy « rôle de service » sur `autopost_file`. |
 | `GOOGLE_SERVICE_ACCOUNT_EMAIL` · `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY` · `DRIVE_DOSSIER_PUBLICATIONS_ID` | Production | pas de lecture du Drive ; dépôt depuis l'application |
 
 ⛔ Aucune de ces variables ne porte le préfixe `VITE_`. Le jeton de Page Meta porte
