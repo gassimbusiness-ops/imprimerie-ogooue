@@ -186,6 +186,118 @@ function normaliserInstant(instant) {
  * @param {object} canal
  * @returns {string}
  */
+/**
+ * 🔴 LES VALEURS QUI RESSEMBLENT À UNE DONNÉE ET N'EN SONT PAS.
+ *
+ * Le 19/09/2026 au matin, quatre lignes ont été écartées parce que
+ * `publication.json` annonçait la chaîne littérale `"undefined"` comme nom de
+ * fichier de légende. Ce n'est pas un nom : c'est le résultat d'une
+ * concaténation JavaScript ratée chez l'émetteur, arrivé jusqu'au disque.
+ *
+ * Le refus était le bon comportement, et il le reste. Mais depuis que les
+ * légendes peuvent aussi être EN LIGNE (voir `lireDeclarationLegende()`), la
+ * même chaîne pourrait passer non plus comme nom de fichier mais comme TEXTE —
+ * et « undefined » partirait sur la page Facebook de l'imprimerie. On refuse
+ * donc ces valeurs des DEUX côtés, à un seul endroit.
+ */
+export const VALEURS_FANTOMES = Object.freeze(['undefined', 'null', 'none', 'nan', 'nil', '[object object]']);
+
+/** Une chaîne qui n'est ni vide ni un fantôme d'émetteur. */
+function chaineReelle(valeur) {
+  if (typeof valeur !== 'string') return null;
+  const propre = valeur.trim();
+  if (propre === '') return null;
+  if (VALEURS_FANTOMES.includes(propre.toLowerCase())) return null;
+  return valeur;
+}
+
+/**
+ * Un texte de légende est-il publiable ?
+ *
+ * ⛔ Sert aussi au texte TÉLÉCHARGÉ, pas seulement au texte déclaré en ligne :
+ *    un `caption_facebook.txt` qui ne contient que le mot « undefined » est
+ *    exactement le même accident, arrivé par l'autre chemin — et il partirait
+ *    sur la page de l'imprimerie.
+ *
+ * @param {*} texte
+ * @returns {boolean}
+ */
+export function legendeUtilisable(texte) {
+  return chaineReelle(texte) !== null;
+}
+
+/**
+ * ⛔ CE QU'UNE ENTRÉE DE `captions` DÉCLARE — les DEUX formes, pas une.
+ *
+ * ════════════════════════════════════════════════════════════════════════════
+ * POURQUOI DEUX FORMES, ET POURQUOI ON N'EN CHOISIT PAS UNE
+ * ════════════════════════════════════════════════════════════════════════════
+ *
+ * Deux documents de référence se contredisent : le 31 décrit un OBJET qui
+ * désigne un fichier du dossier, le 37 montre une CHAÎNE qui est la légende
+ * elle-même. ChatGPT a suivi le 37, fidèlement, et le code n'attendait que la
+ * forme du 31 : `declaration?.chemin_relatif` valait `undefined`, la ligne
+ * était écartée en `legende_absente`, et une publication prévue ne pouvait pas
+ * partir.
+ *
+ * Trancher pour une seule forme voudrait dire, soit casser ce que ChatGPT
+ * dépose aujourd'hui, soit renoncer aux légendes en fichier que d'autres dépôts
+ * utilisent déjà. On accepte donc les deux, et c'est ICI — un seul endroit —
+ * qu'on dit laquelle est laquelle.
+ *
+ * ⚠️ Et la forme en ligne n'est pas qu'une tolérance : elle SUPPRIME un
+ *    téléchargement par canal et par publication. C'est le même sujet que le
+ *    temps de lecture, pas un chantier à part.
+ *
+ * Quatre issues, jamais de réparation :
+ *
+ *   `{ forme: 'en_ligne', texte }`       la légende est là, rien à télécharger ;
+ *   `{ forme: 'fichier', chemin_relatif }` un fichier du dossier la porte ;
+ *   `{ forme: 'absente' }`               rien n'est déclaré pour ce canal ;
+ *   `{ forme: 'invalide', detail }`      quelque chose est déclaré, et ce
+ *                                        quelque chose n'est pas utilisable.
+ *
+ * ⛔ « invalide » n'est PAS « absente » : le gérant doit savoir qu'il y a
+ *    quelque chose à corriger dans le dépôt, pas croire qu'il manque une ligne.
+ *
+ * @param {*} declaration la valeur de `publication.captions[canal]`
+ * @returns {{forme: string, texte?: string, chemin_relatif?: string, detail?: string}}
+ */
+export function lireDeclarationLegende(declaration) {
+  if (declaration === null || declaration === undefined) return { forme: 'absente' };
+
+  /* ── La forme EN LIGNE : la légende est la valeur elle-même ───────────── */
+  if (typeof declaration === 'string') {
+    const texte = chaineReelle(declaration);
+    if (texte === null) {
+      return {
+        forme: 'invalide',
+        detail: `la légende déclarée en ligne vaut « ${declaration.trim() || '(vide)'} » : `
+          + 'ce n\'est pas un texte publiable',
+      };
+    }
+    return { forme: 'en_ligne', texte };
+  }
+
+  /* ── La forme FICHIER : un nom, qui doit être dans le dossier ─────────── */
+  if (typeof declaration === 'object' && !Array.isArray(declaration)) {
+    const nom = chaineReelle(declaration.chemin_relatif);
+    if (nom !== null) return { forme: 'fichier', chemin_relatif: nom };
+    const brut = declaration.chemin_relatif;
+    return {
+      forme: 'invalide',
+      detail: brut === undefined || brut === null
+        ? 'la légende déclarée ne dit ni un texte ni un chemin_relatif'
+        : `« ${String(brut).trim() || '(vide)'} » n'est pas un nom de fichier utilisable`,
+    };
+  }
+
+  return {
+    forme: 'invalide',
+    detail: `une légende se déclare par un texte ou par un chemin_relatif, pas par ${typeof declaration}`,
+  };
+}
+
 export function cleIdempotence(pub, canal) {
   return [
     pub?.publication_id ?? '',
@@ -227,8 +339,22 @@ export function chargeCanonique(pub) {
       || String(a?.chemin_relatif).localeCompare(String(b?.chemin_relatif)))
     .forEach((m) => lignes.push(String(m?.sha256 ?? '')));
 
+  /* 🔴 LA LÉGENDE ENTRE DANS LE SCEAU — LES DEUX FORMES.
+     Forme fichier : c'est le `sha256` déclaré à côté du nom, comme depuis le
+     début. Forme EN LIGNE : le texte EST la légende, et il n'a pas de `sha256`
+     à côté de lui — `?.sha256` y vaudrait `undefined`, donc la chaîne vide, et
+     on pourrait alors réécrire entièrement une légende SANS invalider
+     l'approbation qui la couvre. On scelle donc l'empreinte du texte.
+     ⚠️ Aucune approbation existante n'en est affectée : jusqu'au 19/09/2026 au
+     soir, une légende en ligne faisait ÉCARTER la ligne — aucune n'est jamais
+     entrée en file, donc aucune n'a jamais été approuvée. */
   Object.keys(pub?.captions || {}).sort().forEach((nom) => {
-    lignes.push(String(pub.captions[nom]?.sha256 ?? ''));
+    const declaration = pub.captions[nom];
+    if (typeof declaration === 'string') {
+      lignes.push(crypto.createHash('sha256').update(declaration, 'utf8').digest('hex'));
+      return;
+    }
+    lignes.push(String(declaration?.sha256 ?? ''));
   });
 
   lignes.push(String(pub?.cta ?? ''));

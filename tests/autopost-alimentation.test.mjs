@@ -43,6 +43,7 @@ import {
   ETATS_MODIFIABLES,
 } from '../api/_lib/autopost-alimentation.js';
 import { cleIdempotence, empreinteCanonique } from '../api/_lib/autopost-contrat.js';
+import { cheminObjet } from '../api/_lib/autopost-medias.js';
 import { instantUtcDepuisCreneau } from '../src/lib/dates.js';
 
 const PAGE_ID = '100000000000001';
@@ -246,9 +247,21 @@ function hebergeurFactice({ resultat = null, dejaLa = false } = {}) {
       const pub = depose?.publication;
       appels.push(`${pub?.publication_id}|${canal}`);
       if (resultat) return resultat;
+      // ⛔ Le chemin est celui du VRAI module, calculé par `cheminObjet()` sur
+      //    le md5 que la doublure de `drive.js` rend. Une doublure qui
+      //    inventerait un chemin à elle serait une doublure qui ment : c'est
+      //    exactement ce qui a laissé passer la perte des six adresses du
+      //    19/09/2026 — la décision « l'objet est-il encore le bon ? » se prend
+      //    sur ce chemin, et un test bâti sur un autre ne l'exerce pas.
+      const chemin = cheminObjet({
+        publicationId: pub.publication_id,
+        version: pub.version_contenu,
+        empreinte: (depose?.medias || [])[0]?.md5,
+        nom: pub.medias[0].chemin_relatif,
+      });
       return {
-        url: `${RACINE_BUCKET}/${pub.publication_id}/v${pub.version_contenu}/objet.jpg`,
-        chemin: `${pub.publication_id}/v${pub.version_contenu}/objet.jpg`,
+        url: `${RACINE_BUCKET}/${chemin}`,
+        chemin,
         deja_present: dejaLa,
         televerse: !dejaLa,
         motif: null,
@@ -257,6 +270,16 @@ function hebergeurFactice({ resultat = null, dejaLa = false } = {}) {
       };
     },
   };
+}
+
+/** L'adresse que l'hébergement RÉEL produirait pour ce dépôt. */
+function urlHebergee(pub, { md5 = 'd'.repeat(32) } = {}) {
+  return `${RACINE_BUCKET}/${cheminObjet({
+    publicationId: pub.publication_id,
+    version: pub.version_contenu,
+    empreinte: md5,
+    nom: pub.medias[0].chemin_relatif,
+  })}`;
 }
 
 /** Raccourci : une ligne de file déjà en place, telle que l'alimentation l'écrit. */
@@ -835,7 +858,7 @@ test('🔴 le média hébergé entre dans la ligne, et rien d autre n y entre', 
   const bilan = await passage(depot, client, medias);
 
   const ligne = [...depot.file.values()][0];
-  assert.equal(ligne.url_media, `${RACINE_BUCKET}/PUB-2026-S39-1-01/v1/objet.jpg`);
+  assert.equal(ligne.url_media, `${urlHebergee(pub)}`);
   assert.equal(ligne.derniere_erreur, null);
   assert.equal(bilan.medias.heberges, 1);
   assert.equal(bilan.medias.hebergement, 'cable');
@@ -913,7 +936,7 @@ test('🔴 une ligne DÉJÀ en file sans média reçoit son adresse au passage s
   assert.equal(bilan.mises_a_jour, 1);
   assert.equal(bilan.medias.heberges, 1);
   const ligne = [...depot.file.values()][0];
-  assert.equal(ligne.url_media, `${RACINE_BUCKET}/PUB-2026-S39-1-01/v1/objet.jpg`);
+  assert.equal(ligne.url_media, `${urlHebergee(pub)}`);
 });
 
 test('un motif de média qui disparaît est EFFACÉ — mais jamais l erreur de l exécuteur', async () => {
@@ -1052,7 +1075,7 @@ test('🔴 un dépôt dont le CONTENU a changé fait redemander une adresse', as
   assert.deepEqual(medias.appels, ['PUB-2026-S39-1-01|facebook'],
     'le contenu a changé : on redemande l adresse au lieu de garder l ancienne');
   assert.equal([...depot.file.values()][0].url_media,
-    `${RACINE_BUCKET}/PUB-2026-S39-1-01/v1/objet.jpg`);
+    `${urlHebergee(pub)}`);
 });
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -1302,7 +1325,7 @@ test('⛔ une approbation donnée dans l application n est PAS effacée par la r
     approuve_le_utc: '2026-09-21T05:55:00Z',
   };
   const depot = depotFactice({
-    lignes: [ligneExistante(pub, { approbation: approbationEcran, url_media: 'https://x/y.jpg' })],
+    lignes: [ligneExistante(pub, { approbation: approbationEcran, url_media: urlHebergee(pub) })],
   });
   // Le dépôt du Drive ne porte AUCUNE approbation — le cas normal.
   const client = clientFactice({ publications: [deposee(pub, { approbation: null })] });
@@ -1320,7 +1343,7 @@ test('une approbation DÉPOSÉE dans le Drive reste prioritaire sur celle de l a
   const depot = depotFactice({
     lignes: [ligneExistante(pub, {
       approbation: { approuve: true, origine: 'ecran_administrateur', approuve_par: 'u-admin' },
-      url_media: 'https://x/y.jpg',
+      url_media: urlHebergee(pub),
     })],
   });
   const client = clientFactice({ publications: [deposee(pub, { approbation: duDrive })] });
@@ -1356,7 +1379,7 @@ test('⛔ une approbation conservée devient invalide si le dépôt a CHANGÉ le
     approuve_par: 'u-admin',
   };
   const depot = depotFactice({
-    lignes: [ligneExistante(v1, { approbation: approbationEcran, url_media: 'https://x/y.jpg' })],
+    lignes: [ligneExistante(v1, { approbation: approbationEcran, url_media: urlHebergee(v1) })],
   });
 
   // MÊME clé (même version, même créneau, même canal, même compte) mais la
@@ -1576,7 +1599,7 @@ test('🔴 les lignes DÉJÀ EN FILE sont rattrapées — sinon il faudrait cliq
   // reprendre à la main, et le changement ne servirait à rien ce matin-là.
   const pub = manifeste();
   const depot = depotFactice({
-    lignes: [ligneExistante(pub, { approbation: null, url_media: 'https://x/y.jpg' })],
+    lignes: [ligneExistante(pub, { approbation: null, url_media: urlHebergee(pub) })],
   });
   const client = clientFactice({ publications: [deposee(pub, { approbation: null })] });
 
@@ -1593,7 +1616,7 @@ test('une approbation automatique DÉJÀ VALIDE n est pas reposée à chaque pas
   // neuf : `updated_at` ne dirait plus quand la ligne a vraiment changé.
   const pub = manifeste();
   const depot = depotFactice({
-    lignes: [ligneExistante(pub, { approbation: null, url_media: 'https://x/y.jpg' })],
+    lignes: [ligneExistante(pub, { approbation: null, url_media: urlHebergee(pub) })],
   });
   const client = clientFactice({ publications: [deposee(pub, { approbation: null })] });
 
@@ -1612,7 +1635,7 @@ test('une approbation automatique DÉJÀ VALIDE n est pas reposée à chaque pas
 test('⛔ contenu modifié après approbation automatique → l approbation TOMBE', async () => {
   const v1 = manifeste();
   const depot = depotFactice({
-    lignes: [ligneExistante(v1, { approbation: null, url_media: 'https://x/y.jpg' })],
+    lignes: [ligneExistante(v1, { approbation: null, url_media: urlHebergee(v1) })],
   });
   const client = clientFactice({ publications: [deposee(v1, { approbation: null })] });
   await passageAuto(depot, client, hebergeurFactice());
@@ -1661,7 +1684,7 @@ test('⛔⛔ UN RETRAIT HUMAIN SURVIT À TROIS RELECTURES DU DRIVE', async () =>
     approbation_retiree: null,
   };
   const depot = depotFactice({
-    lignes: [ligneExistante(pub, { approbation: retraitHumain, url_media: 'https://x/y.jpg' })],
+    lignes: [ligneExistante(pub, { approbation: retraitHumain, url_media: urlHebergee(pub) })],
   });
   const client = clientFactice({ publications: [deposee(pub, { approbation: null })] });
 
@@ -1693,7 +1716,7 @@ test('une APPROBATION humaine (et pas seulement un retrait) n est pas réécrite
     approuve_le_utc: '2026-09-21T05:55:00Z',
   };
   const depot = depotFactice({
-    lignes: [ligneExistante(pub, { approbation: humaine, url_media: 'https://x/y.jpg' })],
+    lignes: [ligneExistante(pub, { approbation: humaine, url_media: urlHebergee(pub) })],
   });
   const client = clientFactice({ publications: [deposee(pub, { approbation: null })] });
 
@@ -1870,4 +1893,334 @@ test('⛔ approuver n est pas publier : l alimentation ne touche ni actif ni mod
   assert.equal(l.approbation?.approuve, true);
   assert.equal(l.etat, 'scheduled', 'approuvée, oui — partie, non');
   assert.equal(l.id_distant, null, 'aucun témoin d effet ne doit naître d une approbation');
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   13. 🔴 LE DÉFAUT DU 19/09/2026 À 13 H 29 — la file ne convergeait pas
+
+   Mesuré en production, sur la base réelle :
+
+     avant le passage : 42 lignes ·  0 approuvée · 9 avec url_media · 6 objets
+     après le passage : 44 lignes · 44 approuvées · 3 avec url_media · 8 objets
+
+   Six adresses perdues, et AUCUN objet retiré du bucket (6 → 8). L'approbation
+   automatique, en s'ajoutant aux 42 lignes, faisait changer l'empreinte de la
+   LIGNE ; le code lisait ce changement comme « le contenu déposé a changé »,
+   redemandait un hébergement, le budget était épuisé, l'hébergement était
+   REPORTÉ — et la règle « dépôt changé + réhébergement reporté ⇒ l'adresse
+   tombe » effaçait une adresse parfaitement valable.
+
+   Chaque passage défaisait donc le travail du précédent. Ces tests exigent la
+   distinction qui manquait : « le MÉDIA a changé » n'est pas « la ligne a été
+   réécrite ».
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+test('🔴🔴 média INCHANGÉ + hébergement REPORTÉ : l adresse est GARDÉE', async () => {
+  // Le cas exact de 13 h 29 : la ligne est réécrite parce qu'une approbation
+  // automatique vient s'y ajouter, et le budget de téléversements est épuisé.
+  // Aucun fichier n'a bougé : l'objet du bucket est toujours le bon.
+  const pub = manifeste();
+  const adresse = urlHebergee(pub);
+  const depot = depotFactice({
+    lignes: [ligneExistante(pub, { approbation: null, url_media: adresse })],
+  });
+  const client = clientFactice({ publications: [deposee(pub, { approbation: null })] });
+  const medias = hebergeurFactice();
+
+  const bilan = await passageAuto(depot, client, medias, { televersementsMax: 0 });
+
+  const l = [...depot.file.values()][0];
+  assert.equal(l.url_media, adresse,
+    '⛔ l adresse d un média inchangé ne se perd pas parce que la ligne a été réécrite');
+  assert.equal(l.approbation?.approuve, true, 'et l approbation a bien été posée');
+  assert.deepEqual(medias.appels, [],
+    'le chemin attendu est déjà celui de l adresse : rien à redemander au stockage');
+  assert.equal(bilan.medias.reportes, 0,
+    'on ne REPORTE pas un hébergement qu on n a aucune raison de demander');
+});
+
+test('🔴 média CHANGÉ + hébergement REPORTÉ : l ancienne adresse TOMBE (règle d origine)', async () => {
+  // La règle de la nuit du 19/09 tient toujours, et c est elle qui empêche de
+  // publier la vieille affiche sous la nouvelle légende. Ici les octets ont
+  // vraiment changé : Google rend une AUTRE empreinte pour le même nom.
+  const pub = manifeste();
+  const depot = depotFactice({
+    lignes: [ligneExistante(pub, { approbation: null, url_media: urlHebergee(pub) })],
+  });
+  const redepose = deposee(pub, { approbation: null });
+  redepose.medias[0].md5 = 'e'.repeat(32); // l affiche a été corrigée dans le Drive
+  const client = clientFactice({ publications: [redepose] });
+
+  const bilan = await passageAuto(depot, client, hebergeurFactice(), { televersementsMax: 0 });
+
+  const l = [...depot.file.values()][0];
+  assert.equal(l.url_media, null,
+    'une adresse qui pointe sur l image d avant la correction ne se garde pas');
+  assert.equal(bilan.medias.reportes, 1, 'l hébergement a bien été demandé, puis reporté');
+  assert.equal(l.derniere_erreur, null, 'un report volontaire n est pas une erreur');
+});
+
+test('🔴 média CHANGÉ sans que le MANIFESTE bouge : l adresse tombe quand même', async () => {
+  // Le cas que `version_contenu` ne verrait pas : ChatGPT remplace l image sans
+  // toucher publication.json. L empreinte de la LIGNE est identique, et
+  // pourtant l objet hébergé n est plus le bon. C est le md5 mesuré par Google
+  // qui tranche — pas un numéro de version que l émetteur peut oublier.
+  const pub = manifeste();
+  const depot = depotFactice({
+    lignes: [ligneExistante(pub, { approbation: null, url_media: urlHebergee(pub) })],
+  });
+  const redepose = deposee(pub, { approbation: null });
+  redepose.medias[0].md5 = 'f'.repeat(32);
+  const client = clientFactice({ publications: [redepose] });
+  const medias = hebergeurFactice();
+
+  // Passage SANS approbation automatique : rien d autre ne change sur la ligne.
+  await passage(depot, client, medias);
+
+  assert.deepEqual(medias.appels, ['PUB-2026-S39-1-01|facebook'],
+    'des octets différents doivent faire redemander une adresse, manifeste identique ou non');
+  assert.equal([...depot.file.values()][0].url_media, urlHebergee(pub, { md5: 'f'.repeat(32) }));
+});
+
+test('🔴🔴 DEUX PASSAGES SUCCESSIFS CONVERGENT : le second ne défait pas le premier', async () => {
+  // La forme EXACTE du 19/09 à 13 h 29 : des lignes DÉJÀ en file, aucune
+  // approuvée, une PARTIE déjà hébergée — et l'approbation automatique qui
+  // vient s'ajouter à toutes. Le budget n'en laisse héberger qu'une par
+  // passage : la file doit MONTER puis TENIR, jamais redescendre.
+  const pubs = ['09', '10', '11'].map((h, i) => manifeste({
+    id: `PUB-2026-S39-1-0${i + 1}`, heure: `${h}:00`,
+  }));
+  const deposes = pubs.map((p, i) => deposee(p, { dossier: `p${i}` }));
+  const depot = depotFactice({
+    lignes: pubs.map((p, i) => ligneExistante(p, {
+      approbation: null,
+      // La dernière est déjà hébergée — comme 9 des 42 lignes ce midi-là.
+      url_media: i === 2 ? urlHebergee(p) : null,
+    })),
+  });
+  const client = clientFactice({ publications: deposes });
+
+  const avecAdresse = () => [...depot.file.values()].filter((l) => l.url_media).length;
+  assert.equal(avecAdresse(), 1, 'point de départ : une seule ligne hébergée');
+
+  const vues = [];
+  for (let tour = 0; tour < 4; tour += 1) {
+    await passageAuto(depot, client, hebergeurFactice(), { televersementsMax: 1 });
+    vues.push(avecAdresse());
+  }
+
+  assert.deepEqual(vues, [2, 3, 3, 3],
+    `la file doit MONTER puis TENIR ; observé : 1 → ${vues.join(' → ')}`);
+  assert.equal(depot.file.size, 3, 'et toujours trois lignes, pas une de plus');
+  assert.equal([...depot.file.values()].every((l) => l.approbation?.approuve), true);
+});
+
+test('🔴 un passage qui ne change RIEN ne réécrit rien — même avec l approbation déjà posée', async () => {
+  const pub = manifeste();
+  const depot = depotFactice();
+  const client = clientFactice({ publications: [deposee(pub, { approbation: null })] });
+
+  await passageAuto(depot, client, hebergeurFactice());
+  const bilan2 = await passageAuto(depot, client, hebergeurFactice());
+
+  assert.equal(bilan2.inchangees, 1);
+  assert.equal(bilan2.mises_a_jour, 0);
+  assert.equal([...depot.file.values()][0].url_media, urlHebergee(pub));
+});
+
+test('⛔ empreinte md5 ABSENTE : on retombe sur la règle d avant, on ne devine pas', async () => {
+  // Sans empreinte, la question « est-ce le même fichier ? » n est pas
+  // décidable. `null` ne veut pas dire « inchangé » : le code retombe alors
+  // exactement sur la règle d avant (l empreinte de la ligne), qui est la plus
+  // prudente des deux. Ici le dépôt n a pas bougé : l adresse se garde.
+  const pub = manifeste();
+  const adresse = urlHebergee(pub);
+  const depot = depotFactice({
+    lignes: [ligneExistante(pub, { approbation: null, url_media: adresse })],
+  });
+  const sansEmpreinte = deposee(pub, { approbation: null });
+  sansEmpreinte.medias[0].md5 = null;
+  const client = clientFactice({ publications: [sansEmpreinte] });
+  const medias = hebergeurFactice();
+
+  await passage(depot, client, medias);
+
+  assert.equal([...depot.file.values()][0].url_media, adresse);
+  assert.deepEqual(medias.appels, [], 'dépôt inchangé : rien à redemander');
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   14. 🔴 LES DEUX FORMES DE LÉGENDE — la contradiction des documents 31 et 37
+
+   Le document 31 décrit `captions: { facebook: { chemin_relatif: "…" } }` :
+   un fichier du dossier. Le document 37 montre `captions: { facebook: "🎒 …" }` :
+   le texte lui-même. ChatGPT a suivi le 37, fidèlement, et le code n'attendait
+   que le 31 : `declaration?.chemin_relatif` valait `undefined`, la ligne était
+   écartée en `legende_absente`, et une publication prévue le lendemain matin ne
+   pouvait pas partir.
+
+   On accepte donc les DEUX. Et la forme en ligne n'est pas qu'une tolérance :
+   elle supprime un téléchargement par canal et par publication.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/** Le manifeste tel que ChatGPT le dépose depuis le document 37 : du texte. */
+function manifesteLegendeEnLigne(texte = '🎒 Rentrée : commençons par une liste claire\n\nFamilles, écoles…') {
+  return manifeste({ captions: { facebook: texte } });
+}
+
+test('🔴🔴 une légende EN LIGNE (une chaîne) entre en file, telle quelle', async () => {
+  const pub = manifesteLegendeEnLigne();
+  const depot = depotFactice();
+  // ⛔ Le dossier ne porte AUCUN fichier de légende : c'est tout l'intérêt.
+  const client = clientFactice({
+    publications: [deposee(pub, { captions: { facebook: { chemin_relatif: null, fichier_id: null, texte: pub.captions.facebook } } })],
+    fichiers: {},
+  });
+
+  const bilan = await passage(depot, client, hebergeurFactice());
+
+  assert.equal(bilan.creees, 1, `écartée : ${JSON.stringify(bilan.ecartees)}`);
+  assert.equal([...depot.file.values()][0].legende, pub.captions.facebook,
+    'la légende doit être celle du manifeste, au caractère près');
+  assert.equal(client.appels.filter((a) => a.startsWith('telecharger:')).length, 0,
+    '🔴 une légende déjà là ne coûte AUCUN téléchargement');
+});
+
+test('la forme FICHIER continue de marcher exactement comme avant', async () => {
+  const pub = manifeste(); // captions = { facebook: { chemin_relatif: … } }
+  const depot = depotFactice();
+  const client = clientFactice({ publications: [deposee(pub)] });
+
+  const bilan = await passage(depot, client, hebergeurFactice());
+
+  assert.equal(bilan.creees, 1);
+  assert.match([...depot.file.values()][0].legende, /Flocage textile/);
+  assert.deepEqual(client.appels.filter((a) => a.startsWith('telecharger:')), ['telecharger:cap-fb']);
+});
+
+test('⛔⛔ la chaîne littérale « undefined » est REFUSÉE comme légende', async () => {
+  // Elle ne vient pas d'un humain : c'est une concaténation ratée chez
+  // l'émetteur, arrivée jusqu'au disque. La publier, ce serait poster le mot
+  // « undefined » sur la page Facebook de l'imprimerie.
+  for (const fantome of ['undefined', 'null', 'None', '   ', '']) {
+    const pub = manifeste({ captions: { facebook: fantome } });
+    const depot = depotFactice();
+    const client = clientFactice({
+      publications: [deposee(pub, { captions: { facebook: { chemin_relatif: null, fichier_id: null, texte: null, invalide: 'x' } } })],
+    });
+
+    const bilan = await passage(depot, client, hebergeurFactice());
+
+    assert.equal(bilan.creees, 0, `« ${fantome} » ne doit JAMAIS entrer en file`);
+    assert.equal(bilan.ecartees[0].motif, MOTIFS.LEGENDE_INVALIDE,
+      `« ${fantome} » : le motif doit dire qu il y a à corriger, pas qu il manque une ligne`);
+  }
+});
+
+test('⛔ « undefined » comme NOM DE FICHIER est refusé aussi, et avec son motif', async () => {
+  // Le cas mesuré ce matin-là sur PUB-2026-S38-6-01 et PUB-2026-S38-7-01.
+  const pub = manifeste({ captions: { facebook: { chemin_relatif: 'undefined' } } });
+  const depot = depotFactice();
+  const client = clientFactice({ publications: [deposee(pub, { captions: { facebook: {} } })] });
+
+  const bilan = await passage(depot, client, hebergeurFactice());
+
+  assert.equal(bilan.creees, 0);
+  assert.equal(bilan.ecartees[0].motif, MOTIFS.LEGENDE_INVALIDE);
+  assert.match(bilan.ecartees[0].detail, /undefined/,
+    'le motif doit NOMMER ce qui a été déclaré — sinon on cherche au mauvais endroit');
+});
+
+test('⛔ un FICHIER de légende qui ne contient que « undefined » est refusé', async () => {
+  // Le même accident, par l'autre chemin. Le fichier existe, il se lit, et ce
+  // qu'il dit n'est pas publiable.
+  const pub = manifeste();
+  const depot = depotFactice();
+  const client = clientFactice({
+    publications: [deposee(pub)],
+    fichiers: { 'cap-fb': 'undefined' },
+  });
+
+  const bilan = await passage(depot, client, hebergeurFactice());
+
+  assert.equal(bilan.creees, 0);
+  assert.equal(bilan.ecartees[0].motif, MOTIFS.LEGENDE_INVALIDE);
+});
+
+test('⛔ une légende déclarée par un nombre est refusée — on ne la convertit pas', async () => {
+  const pub = manifeste({ captions: { facebook: 42 } });
+  const depot = depotFactice();
+  const client = clientFactice({ publications: [deposee(pub, { captions: { facebook: {} } })] });
+
+  const bilan = await passage(depot, client, hebergeurFactice());
+  assert.equal(bilan.creees, 0);
+  assert.equal(bilan.ecartees[0].motif, MOTIFS.LEGENDE_INVALIDE);
+});
+
+test('🔴 une légende EN LIGNE modifiée INVALIDE l approbation qui la couvrait', async () => {
+  // Sans ça, une légende en ligne pourrait être entièrement réécrite après
+  // approbation et partir quand même : elle n a pas de `sha256` à côté d elle,
+  // donc le sceau doit porter l empreinte du TEXTE.
+  const { verifierApprobation } = await import('../api/_lib/autopost-contrat.js');
+  const v1 = manifesteLegendeEnLigne('Rentrée : listes scolaires, devis en 24 h.');
+  const approbation = approbationDe(v1);
+  assert.equal(
+    verifierApprobation({ publication: v1, approbation, canal: 'facebook' }).approuve, true,
+  );
+
+  const corrige = manifesteLegendeEnLigne('Rentrée : PROMO -50 %, aujourd hui seulement !');
+  assert.equal(
+    verifierApprobation({ publication: corrige, approbation, canal: 'facebook' }).raison,
+    'contenu_modifie_depuis_approbation',
+    'une légende en ligne réécrite ne doit pas passer sous un accord ancien');
+});
+
+test('un canal de REMISE sans légende n est toujours pas écarté', async () => {
+  // La règle d avant : personne ne publie sur un canal de remise, donc
+  // l absence de texte n empêche rien. La forme en ligne ne l a pas changée.
+  const pub = manifeste({
+    canaux: [{ canal: 'whatsapp_handoff', compte_cible_id: null, surface: 'feed' }],
+    captions: {},
+  });
+  const depot = depotFactice();
+  const client = clientFactice({ publications: [deposee(pub, { captions: {} })] });
+
+  const bilan = await passage(depot, client, hebergeurFactice());
+  assert.equal(bilan.creees, 1, `écartée : ${JSON.stringify(bilan.ecartees)}`);
+  assert.equal([...depot.file.values()][0].legende, null);
+});
+
+test('🔴 DEUX CANAUX, UNE SEULE AFFICHE : le stockage n est interrogé qu une fois', async () => {
+  // Facebook et Instagram publient la même image : même fichier, même md5, donc
+  // le MÊME objet dans le bucket. Une question par canal, c était un
+  // aller-retour de plus par publication pour une réponse déjà connue.
+  const pub = manifeste({
+    canaux: [
+      { canal: 'facebook', compte_cible_id: PAGE_ID, surface: 'feed' },
+      { canal: 'instagram', compte_cible_id: IG_ID, surface: 'feed' },
+    ],
+    captions: {
+      facebook: 'Flocage textile à Moanda — OG-01-S39',
+      instagram: 'Flocage textile à Moanda ✨ — OG-01-S39',
+    },
+  });
+  const depot = depotFactice();
+  const client = clientFactice({
+    publications: [deposee(pub, {
+      captions: {
+        facebook: { chemin_relatif: null, fichier_id: null, texte: pub.captions.facebook },
+        instagram: { chemin_relatif: null, fichier_id: null, texte: pub.captions.instagram },
+      },
+    })],
+  });
+  const medias = hebergeurFactice();
+
+  const bilan = await passage(depot, client, medias);
+
+  assert.equal(bilan.creees, 2, `écartées : ${JSON.stringify(bilan.ecartees)}`);
+  assert.equal(medias.appels.length, 1,
+    `une seule question au stockage pour un seul objet : ${medias.appels.join(', ')}`);
+  // ⛔ Et les DEUX lignes portent bien l adresse : partager la réponse ne doit
+  //    pas priver le second canal de son média.
+  assert.equal([...depot.file.values()].filter((l) => l.url_media === urlHebergee(pub)).length, 2);
 });

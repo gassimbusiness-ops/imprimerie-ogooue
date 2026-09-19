@@ -70,7 +70,8 @@
  */
 import crypto from 'node:crypto';
 import { formaterInstantUtc, dateLocaleDepuisInstantUtc } from '../../src/lib/dates.js';
-import { validerManifeste } from './autopost-contrat.js';
+import { validerManifeste, lireDeclarationLegende } from './autopost-contrat.js';
+import { enParalleleBorne, CONCURRENCE_PAR_DEFAUT } from './concurrence.js';
 
 /* ═══════════════════════════════════════════════════════════════════════════
    CONSTANTES
@@ -133,6 +134,21 @@ const DUREE_JWT_S = 3600;
  */
 const PROFONDEUR_MAX = 4;
 const REQUETES_MAX = 150;
+
+/**
+ * 🔴 COMBIEN DE DOSSIERS DE PUBLICATION ON EXAMINE À LA FOIS.
+ *
+ * Ce n'est PAS une optimisation de confort : c'est la correction du défaut
+ * mesuré le 19/09/2026 à 13 h 29 — 51 714 ms de lecture pour 16 publications,
+ * dans une fonction plafonnée à 60 s. Le temps venait d'une file indienne :
+ * chaque dossier attendait que le précédent ait rendu son manifeste, alors
+ * qu'aucun ne dépend d'aucun autre.
+ *
+ * Le nombre d'appels ne change pas d'un seul : c'est leur PROFONDEUR qui tombe.
+ * Voir `api/_lib/concurrence.js` pour pourquoi la borne existe (les quotas
+ * Drive) et `tests/autopost-cout-lecture.test.mjs` pour la mesure avant/après.
+ */
+const CONCURRENCE_DRIVE = CONCURRENCE_PAR_DEFAUT;
 
 /**
  * Combien de dossiers-FEUILLES sans manifeste la lecture par recherche accepte
@@ -406,6 +422,10 @@ function resumerEchec(statut, corps) {
  * @param {Function} [arg.maintenant]
  * @param {number} [arg.profondeurMax]
  * @param {number} [arg.requetesMax]
+ * @param {number} [arg.concurrence] dossiers examinés à la fois — voir
+ *   `CONCURRENCE_DRIVE`. `1` reproduit exactement la file indienne d'avant le
+ *   19/09/2026 au soir : c'est ce que le banc de coût utilise pour mesurer
+ *   l'AVANT sans avoir à garder deux versions du code.
  * @returns {object}
  */
 export function creerClientDrive({
@@ -416,10 +436,13 @@ export function creerClientDrive({
   requetesMax = REQUETES_MAX,
   sondageListingsMax = SONDAGE_LISTINGS_MAX,
   feuillesMax = INSPECTION_FEUILLES_MAX,
+  concurrence = CONCURRENCE_DRIVE,
 } = {}) {
   const configuration = lireConfigurationDrive(env);
   const appeler = fetchImpl || globalThis.fetch;
   let requetes = 0;
+  /** Demandes de jeton en cours, par clé. Voir `jeton()`. */
+  const jetonEnVol = new Map();
 
   function exigerConfiguration() {
     if (!configuration.configure) {
@@ -473,6 +496,21 @@ export function creerClientDrive({
       return enCache.valeur;
     }
 
+    /* 🔴 UN SEUL JETON, MÊME QUAND SIX APPELS PARTENT ENSEMBLE.
+       Depuis que les dossiers sont examinés en parallèle, six appels peuvent
+       trouver le cache vide au même instant. Sans ce verrou, ils demanderaient
+       six jetons à Google — six requêtes pour rien, et six chances de plus de
+       toucher le quota d'authentification. On retient donc la PROMESSE en
+       cours, pas seulement le résultat : le premier demande, les autres
+       attendent la même réponse. */
+    if (jetonEnVol.has(cle)) return jetonEnVol.get(cle);
+    const promesse = obtenirJeton(cle, maintenantMs).finally(() => jetonEnVol.delete(cle));
+    jetonEnVol.set(cle, promesse);
+    return promesse;
+  }
+
+  /** L'aller-retour réel vers Google. Appelé par `jeton()`, une fois à la fois. */
+  async function obtenirJeton(cle, maintenantMs) {
     // `construireJwt` lève un `cle_refusee` AVANT tout appel réseau si la clé
     // est illisible : inutile de déranger Google pour l'apprendre.
     const assertion = construireJwt({
@@ -1006,14 +1044,51 @@ export function creerClientDrive({
        l'écarte avec un motif plutôt que de publier une affiche sans un mot. */
     const captions = {};
     for (const [canal, declaration] of Object.entries(publication.captions || {})) {
-      const nom = declaration?.chemin_relatif;
-      const fichier = nom ? parNom.get(nom) : null;
+      /* 🔴 DEUX FORMES ADMISES, et c'est le contrat qui dit laquelle est
+         laquelle — pas ce fichier. Une légende EN LIGNE est déjà là : elle ne
+         coûte aucun téléchargement, ni ici ni à l'alimentation. C'est la forme
+         que ChatGPT dépose depuis que le document 37 la lui a montrée, et
+         celle qui, à 16 publications × 3 canaux, retire jusqu'à 48 appels
+         réseau d'un passage. Voir `lireDeclarationLegende()`. */
+      const lue = lireDeclarationLegende(declaration);
+
+      if (lue.forme === 'en_ligne') {
+        captions[canal] = {
+          chemin_relatif: null,
+          fichier_id: null,
+          taille: null,
+          // ⛔ Le TEXTE, rendu tel quel. Ce module ne le retaille pas, ne le
+          //    nettoie pas et n'y ajoute rien : une légende modifiée ici serait
+          //    une légende que personne n'a approuvée.
+          texte: lue.texte,
+        };
+        continue;
+      }
+
+      if (lue.forme === 'absente') {
+        captions[canal] = { chemin_relatif: null, fichier_id: null, taille: null, texte: null };
+        continue;
+      }
+
+      if (lue.forme === 'invalide') {
+        // ⛔ On ne DEVINE pas une légende. Le fait est rendu à l'appelant, qui
+        //    écarte ce canal-là avec son motif — et le dépôt entier survit.
+        captions[canal] = {
+          chemin_relatif: null, fichier_id: null, taille: null, texte: null, invalide: lue.detail,
+        };
+        avertissementsLegendes.push(`la légende annoncée pour ${canal} est inutilisable : ${lue.detail}`);
+        continue;
+      }
+
+      const nom = lue.chemin_relatif;
+      const fichier = parNom.get(nom);
       captions[canal] = {
-        chemin_relatif: nom ?? null,
+        chemin_relatif: nom,
         fichier_id: fichier?.id ?? null,
         taille: fichier?.size ? Number(fichier.size) : null,
+        texte: null,
       };
-      if (nom && !fichier) {
+      if (!fichier) {
         avertissementsLegendes.push(`la légende « ${nom} » annoncée pour ${canal} n'est pas dans le dossier`);
       }
     }
@@ -1231,6 +1306,13 @@ export function creerClientDrive({
       if (!dossiers.has(parent)) dossiers.set(parent, manifeste);
     }
 
+    /* ── QUELS DOSSIERS, ET OÙ ILS SONT — hors ligne quand l'index répond ──
+       `situerDossier()` remonte la filiation dans l'index : aucun appel dans le
+       cas normal. On le fait AVANT la phase parallèle pour que la mémoire des
+       dossiers (`memoireDossiers`) se remplisse sans course, et pour que le
+       repli `files.get` reste une file indienne — il est rare, et six `files.get`
+       simultanés sur un index absent ne rendraient pas la lecture plus juste. */
+    const aExaminer = [];
     for (const id of dossiers.keys()) {
       const situation = await situerDossier(id, racine, index);
       // Hors périmètre : la recherche voit tout ce qui est partagé avec le
@@ -1239,40 +1321,50 @@ export function creerClientDrive({
       // d'exclusion : dans le doute, on garde la publication.
       const filiationConnue = situation.chemin !== '';
       if (!situation.sousRacine && filiationConnue && index) continue;
+      aExaminer.push({ id, nom: situation.nom, chemin: situation.chemin });
+    }
 
-      const noeud = { id, nom: situation.nom, chemin: situation.chemin };
+    /* 🔴 LES DOSSIERS SONT EXAMINÉS EN PARALLÈLE, PAR PAQUETS BORNÉS.
+       Chaque dossier coûte deux allers-retours qui ne dépendent d'aucun autre
+       dossier : le listing, puis le téléchargement du manifeste. Les enchaîner
+       en file indienne, c'est ce qui a fait 51 714 ms pour 16 publications le
+       19/09/2026. Le nombre d'appels est le MÊME ; c'est leur profondeur qui
+       tombe. La borne existe pour les quotas Drive — voir `concurrence.js`.
 
+       ⚠️ L'ORDRE est préservé : chaque dossier rend son issue à SA place, et on
+       range ensuite. L'écran du gérant ne doit pas changer d'ordre d'un passage
+       à l'autre sans que rien n'ait changé dans le Drive. */
+    const issues = await enParalleleBorne(aExaminer, concurrence, async (noeud) => {
       let entrees;
       try {
-        entrees = await listerDossier(id);
+        entrees = await listerDossier(noeud.id);
       } catch (err) {
-        ecartees.push({
-          dossier_id: id,
-          dossier_nom: noeud.nom,
-          chemin: noeud.chemin,
-          motif: `dossier inaccessible : ${err?.detail || err?.message || err}`,
-        });
-        continue;
+        return {
+          ecartee: {
+            dossier_id: noeud.id,
+            dossier_nom: noeud.nom,
+            chemin: noeud.chemin,
+            motif: `dossier inaccessible : ${err?.detail || err?.message || err}`,
+          },
+        };
       }
 
       if (!entrees.some((x) => x.name === NOM_MANIFESTE)) {
         // Le manifeste a disparu entre la recherche et le listing. On le DIT.
         const fichiers = entrees.filter((x) => x.mimeType !== MIME_DOSSIER);
-        if (fichiers.length > 0) {
-          ecartees.push({
-            dossier_id: id,
+        if (fichiers.length === 0) return {};
+        return {
+          ecartee: {
+            dossier_id: noeud.id,
             dossier_nom: noeud.nom,
             chemin: noeud.chemin,
             motif: motifSansManifeste(fichiers),
-          });
-        }
-        continue;
+          },
+        };
       }
 
       try {
-        const issue = await examinerDossierPublication(noeud, entrees);
-        if (issue.publication) publications.push(issue.publication);
-        else ecartees.push(issue.ecartee);
+        return await examinerDossierPublication(noeud, entrees);
       } catch (err) {
         // Même règle que le parcours : un manifeste qu'on n'arrive pas à
         // TÉLÉCHARGER n'emporte pas les autres ; une clé refusée ou une panne
@@ -1280,13 +1372,20 @@ export function creerClientDrive({
         if (err?.diagnostic === DIAGNOSTICS.CLE_REFUSEE
           || err?.diagnostic === DIAGNOSTICS.NON_CONFIGURE
           || err?.diagnostic === DIAGNOSTICS.PANNE) throw err;
-        ecartees.push({
-          dossier_id: id,
-          dossier_nom: noeud.nom,
-          chemin: noeud.chemin,
-          motif: `${NOM_MANIFESTE} inaccessible : ${err?.detail || err?.message || err}`,
-        });
+        return {
+          ecartee: {
+            dossier_id: noeud.id,
+            dossier_nom: noeud.nom,
+            chemin: noeud.chemin,
+            motif: `${NOM_MANIFESTE} inaccessible : ${err?.detail || err?.message || err}`,
+          },
+        };
       }
+    });
+
+    for (const issue of issues) {
+      if (issue?.publication) publications.push(issue.publication);
+      else if (issue?.ecartee) ecartees.push(issue.ecartee);
     }
 
     await inspecterFeuilles(racine, index, new Set(dossiers.keys()), ecartees);

@@ -146,10 +146,15 @@
  *      Sinon les lignes entrées avant l'hébergement resteraient à jamais sans
  *      média, et la file serait pleine de publications qui ne peuvent pas
  *      partir.
- *   3. **Un dépôt dont le contenu a changé fait REDEMANDER l'adresse**, même
+ *   3. **Un MÉDIA dont les octets ont changé fait REDEMANDER l'adresse**, même
  *      si la ligne en portait déjà une : le chemin de l'objet contient
  *      l'empreinte du fichier, donc une image corrigée a une autre adresse.
  *      Sans ce point, on publierait l'ancienne image sous le contenu nouveau.
+ *      ⛔ Et la réciproque compte autant : une ligne réécrite pour une AUTRE
+ *      raison (une approbation qui vient s'y ajouter) GARDE son adresse. Le
+ *      19/09/2026 à 13 h 29, avoir confondu les deux a fait tomber 9 lignes
+ *      hébergées à 3 alors qu'aucun objet n'avait quitté le bucket — et chaque
+ *      passage recommençait. Voir `mediaAChange()`.
  *
  * Sans hébergeur injecté, le comportement d'avant revient à l'identique : la
  * ligne entre sans média, et le bilan le DIT (`medias.hebergement: "absent"`)
@@ -176,6 +181,7 @@ import crypto from 'node:crypto';
 import {
   validerManifeste, cleIdempotence, empreinteCanonique, CANAUX_PUBLIANTS, approbationARetenir,
   verifierApprobation, estDecisionHumaine, ORIGINE_AUTOMATIQUE,
+  lireDeclarationLegende, legendeUtilisable,
 } from './autopost-contrat.js';
 // ⚠️ Import CROISÉ avec `autopost-approbation.js`, qui lit `ETATS_MODIFIABLES`
 //    ici. Il est sûr parce qu'aucun des deux ne DÉRÉFÉRENCE l'autre au moment
@@ -184,7 +190,10 @@ import {
 //    UN SEUL endroit dans tout le dépôt. Deux fabricants, ce seraient deux
 //    formes d'approbation, et un jour l'une des deux ne serait plus vérifiable.
 import { construireApprobationAutomatique } from './autopost-approbation.js';
-import { erreurDeMedia, CODES_MEDIA, MOTIFS_MEDIA } from './autopost-medias.js';
+import {
+  erreurDeMedia, CODES_MEDIA, MOTIFS_MEDIA, cheminAttendu, urlPorteChemin,
+} from './autopost-medias.js';
+import { enParalleleBorne, CONCURRENCE_PAR_DEFAUT } from './concurrence.js';
 import { formaterInstantUtc, dateLocaleDepuisInstantUtc } from '../../src/lib/dates.js';
 
 /**
@@ -309,6 +318,9 @@ export const MOTIFS = Object.freeze({
   VERSION_ANTERIEURE: 'version_anterieure_a_la_file',
   LEGENDE_ABSENTE: 'legende_absente',
   LEGENDE_INTROUVABLE: 'legende_introuvable',
+  /* 🔴 Déclarée, et inutilisable. Distinct d'« absente » : il y a quelque chose
+     à corriger dans le dépôt, et le gérant doit le lire comme tel. */
+  LEGENDE_INVALIDE: 'legende_invalide',
   DEPOT_ILLISIBLE: 'depot_illisible',
 });
 
@@ -359,21 +371,31 @@ function normaliserInstant(instant) {
  * @param {object|null} media      résultat de `heberger()`, ou `null` si non tenté
  * @param {object} existante       la ligne telle qu'elle est en base
  * @param {string} instantUtc
+ * @param {object} [options]
+ * @param {boolean} [options.mediaChange] le FICHIER a changé — pas la ligne.
+ *   Voir `mediaAChange()` : c'est la distinction qui a coûté six adresses le
+ *   19/09/2026 à 13 h 29.
  * @returns {object|null}
  */
-function champsDuMedia(media, existante, instantUtc, { contenuChange = false } = {}) {
+function champsDuMedia(media, existante, instantUtc, { mediaChange = false } = {}) {
   const champs = {};
   const nouvelle = media?.url ?? null;
   const ancienneUrl = existante?.url_media ?? null;
 
-  if (contenuChange) {
+  if (mediaChange) {
     /* 🔴 LE CAS QUI PUBLIERAIT LA MAUVAISE IMAGE.
-       Le contenu déposé a changé, donc l'adresse d'avant pointe sur l'image
+       Le FICHIER déposé a changé, donc l'adresse d'avant pointe sur l'image
        d'avant — l'adresse porte l'empreinte du fichier. `url_media` vaut donc
        EXACTEMENT ce que cet hébergement-ci a rendu : une adresse fraîche, ou
        RIEN. Garder l'ancienne « en attendant », ce serait publier la vieille
        affiche sous la nouvelle légende, et personne n'aurait approuvé ça.
-       Une ligne sans adresse ne part pas ; c'est le bon échec. */
+       Une ligne sans adresse ne part pas ; c'est le bon échec.
+
+       ⛔ Et la réciproque, qui est le défaut corrigé le 19/09 au soir : tant
+       que le fichier n'a PAS changé, cette branche ne doit pas s'ouvrir, même
+       si la ligne est réécrite pour une tout autre raison (une approbation qui
+       vient s'y ajouter, par exemple). Sinon chaque passage efface le travail
+       d'hébergement du précédent et la file ne converge jamais. */
     if (nouvelle !== ancienneUrl) champs.url_media = nouvelle;
   } else if (nouvelle && nouvelle !== ancienneUrl) {
     champs.url_media = nouvelle;
@@ -396,6 +418,65 @@ function champsDuMedia(media, existante, instantUtc, { contenuChange = false } =
   }
 
   return Object.keys(champs).length > 0 ? champs : null;
+}
+
+/**
+ * 🔴 « LE MÉDIA A CHANGÉ » ≠ « LA LIGNE A ÉTÉ RÉÉCRITE ». La distinction qui
+ * manquait, et ce qu'elle a coûté.
+ *
+ * ════════════════════════════════════════════════════════════════════════════
+ * LA MESURE, D'ABORD
+ * ════════════════════════════════════════════════════════════════════════════
+ *
+ * Passage du 19/09/2026 à 13 h 29 (heure de Libreville). Avant : 42 lignes,
+ * 9 avec `url_media`, 6 objets dans le bucket. Après : 44 lignes, 44 approuvées,
+ * **3 avec `url_media`**, 8 objets. Six adresses perdues, et AUCUN objet
+ * supprimé — les octets étaient toujours là, seule la ligne ne savait plus où.
+ *
+ * ════════════════════════════════════════════════════════════════════════════
+ * CE QUI S'EST PASSÉ
+ * ════════════════════════════════════════════════════════════════════════════
+ *
+ * La règle « dépôt changé + réhébergement reporté ⇒ l'ancienne adresse tombe »
+ * est juste et elle est GARDÉE. Mais elle se déclenchait sur `empreinteDepot()`,
+ * qui compare la ligne ENTIÈRE : manifeste, légende, créneau, tolérance,
+ * surface **et approbation**. Quand l'approbation automatique est venue
+ * s'ajouter aux 42 lignes, l'empreinte a changé pour les 42 — sans qu'un seul
+ * fichier ait bougé. Chaque ligne a donc redemandé un hébergement, le budget
+ * était épuisé (voir le défaut du temps), le réhébergement a été reporté, et
+ * l'adresse est tombée. Le passage suivant recommençait : mouvement perpétuel.
+ *
+ * ════════════════════════════════════════════════════════════════════════════
+ * LA QUESTION JUSTE, ET COMMENT ELLE SE TRANCHE SANS RIEN DEMANDER
+ * ════════════════════════════════════════════════════════════════════════════
+ *
+ * Le chemin de l'objet est `publications/<id>/v<version>/<md5>-<nom>`, et ce
+ * md5 est celui que GOOGLE a calculé sur les octets stockés — mesuré, pas
+ * déclaré, et déjà rendu par le listing. Donc :
+ *
+ *   - chemin attendu **identique** à celui que porte `url_media`
+ *       → c'est le même fichier, l'objet est encore bon, **l'adresse se garde**
+ *         même si l'hébergement est reporté, et on ne redemande rien ;
+ *   - chemin attendu **différent**
+ *       → le fichier a bougé : la règle d'origine s'applique, l'adresse tombe ;
+ *   - chemin **indécidable** (`null` : pas de média pour ce canal, fichier
+ *     absent du dossier, empreinte non rendue par Google)
+ *       → on ne devine pas. On retombe sur la règle d'avant (« le dépôt
+ *         a-t-il changé ? »), qui n'a jamais perdu une adresse sans raison
+ *         quand l'empreinte manquait.
+ *
+ * @param {object} arg
+ * @param {object} arg.depose        la publication telle que `drive.js` la rend
+ * @param {string} arg.canal
+ * @param {object} arg.existante     la ligne en base
+ * @param {boolean} arg.depotInchange le repli quand l'empreinte du média manque
+ * @returns {boolean}
+ */
+function mediaAChange({ depose, canal, existante, depotInchange }) {
+  const attendu = cheminAttendu({ depose, canal });
+  // Indécidable : la règle d'avant, ni plus stricte ni plus laxiste.
+  if (attendu === null) return !depotInchange;
+  return !urlPorteChemin(existante?.url_media ?? null, attendu);
 }
 
 /**
@@ -468,6 +549,9 @@ function approbationPourLaLigne({
  *   Absent, les lignes entrent sans média joignable — et le bilan le dit.
  * @param {number} [arg.televersementsMax] voir `TELEVERSEMENTS_MAX_PAR_PASSAGE`
  * @param {number} [arg.budgetHebergementMs] voir `BUDGET_HEBERGEMENT_MS`
+ * @param {number} [arg.concurrenceLegendes] légendes téléchargées à la fois.
+ *   `1` reproduit la file indienne d'avant le 19/09/2026 au soir — c'est ce que
+ *   le banc de coût utilise pour mesurer l'AVANT.
  * @param {Function} [arg.horloge] chronomètre monotone, injecté pour les tests
  * @param {boolean} [arg.approbationAutomatique] réglage `autopost_controle.approbation_automatique`.
  *   ⛔ DÉFAUT `false`, et ce défaut est voulu : ce module ne décide pas de la
@@ -487,6 +571,7 @@ export async function alimenterFile({
   medias = null,
   televersementsMax = TELEVERSEMENTS_MAX_PAR_PASSAGE,
   budgetHebergementMs = BUDGET_HEBERGEMENT_MS,
+  concurrenceLegendes = CONCURRENCE_PAR_DEFAUT,
   horloge = () => Date.now(),
   approbationAutomatique = false,
   cleSignature = null,
@@ -578,7 +663,16 @@ export async function alimenterFile({
   let televersements = 0;
   const hebergerPour = async (depose, canal) => {
     if (!medias) return null;
-    const cleH = `${depose?.publication?.publication_id ?? ''}|${canal}`;
+    /* 🔴 LA CLÉ DU CACHE EST LE CHEMIN DE L'OBJET, PAS LE CANAL.
+       Facebook et Instagram publient presque toujours la MÊME affiche : même
+       fichier, même md5, donc même objet dans le bucket. Avec une clé par
+       canal, le second canal reposait au stockage une question à laquelle le
+       premier venait de répondre — un aller-retour par canal supplémentaire et
+       par publication, pour rien. Quand le chemin n'est pas calculable (pas de
+       média pour ce canal, empreinte absente), on retombe sur la clé par canal :
+       le motif d'échec, lui, parle bien du canal. */
+    const cleH = cheminAttendu({ depose, canal })
+      ?? `${depose?.publication?.publication_id ?? ''}|${canal}`;
     if (hebergements.has(cleH)) return hebergements.get(cleH);
 
     /* 🔴 LE BUDGET, DANS CET ORDRE.
@@ -680,7 +774,37 @@ export async function alimenterFile({
   }
 
   const clesVues = new Set();
-  const legendesLues = new Map(); // fichier_id → texte, pour ne télécharger qu'une fois
+  /* ── 2 bis. LES LÉGENDES, TOUTES D'UN COUP ET PAR PAQUETS BORNÉS ───────
+     🔴 Ce bloc est la seconde moitié de la correction du 19/09/2026 au soir.
+     Avant lui, chaque canal téléchargeait sa légende à son tour, au fil de la
+     boucle : 16 publications × 2 canaux = 32 allers-retours EN FILE INDIENNE,
+     en plein milieu du budget de temps. Or aucune de ces lectures ne dépend
+     d'une autre — elles ne dépendent que du listing, qui est déjà fait.
+
+     On les demande donc ensemble, au plus `concurrenceLegendes` à la fois (les
+     quotas Drive : voir `concurrence.js`). Le nombre de téléchargements ne
+     change pas d'un seul, et un fichier cité deux fois n'est toujours lu
+     qu'une fois — c'est le `Set` qui le garantit, comme la Map le faisait.
+
+     ⛔ Une légende illisible reste un fait par CANAL, pas une panne globale :
+     la valeur retenue est `null`, et la boucle écarte cette ligne-là avec son
+     motif, exactement comme avant. */
+  const legendesLues = new Map(); // fichier_id → texte (ou null), lu une seule fois
+  const aLire = new Set();
+  for (const d of deposees) {
+    for (const canal of d?.publication?.canaux || []) {
+      const fichierId = d?.captions?.[canal?.canal]?.fichier_id;
+      if (fichierId) aLire.add(fichierId);
+    }
+  }
+  await enParalleleBorne([...aLire], concurrenceLegendes, async (fichierId) => {
+    try {
+      legendesLues.set(fichierId, await client.telechargerFichier(fichierId));
+    } catch (err) {
+      legendesLues.set(fichierId, null);
+      tracer('[autopost] légende illisible (%s) : %s', fichierId, err?.message || err);
+    }
+  });
 
   /* ── 3. UNE PUBLICATION À LA FOIS ─────────────────────────────────────── */
   for (const depot_ of deposees) {
@@ -722,11 +846,16 @@ export async function alimenterFile({
         continue;
       }
 
-      /* ── 3.c La légende, lue dans le Drive — jamais fabriquée ────────── */
-      const declaree = pub.captions?.[canal.canal];
+      /* ── 3.c La légende — DEUX FORMES, jamais fabriquée ────────────────
+         `lireDeclarationLegende()` (le contrat) dit laquelle : un TEXTE posé
+         directement dans `publication.json`, ou le NOM d'un fichier du dossier.
+         Le texte en ligne ne coûte aucun téléchargement — c'est ce qui retire
+         jusqu'à 48 appels d'un passage de 16 publications sur trois canaux. */
+      const lue = lireDeclarationLegende(pub.captions?.[canal.canal]);
       const resolue = depot_?.captions?.[canal.canal];
       let legende = null;
-      if (!declaree) {
+
+      if (lue.forme === 'absente') {
         // Pour un canal publiant, une légende vide n'est pas « presque bon » :
         // ce serait une affiche postée sans un mot. Pour une remise à un
         // humain, l'absence de texte n'empêche rien : personne ne publie.
@@ -735,24 +864,37 @@ export async function alimenterFile({
             `aucune légende déclarée pour « ${canal.canal} » dans publication.json`);
           continue;
         }
+      } else if (lue.forme === 'invalide') {
+        /* ⛔ QUELQUE CHOSE EST DÉCLARÉ, ET CE QUELQUE CHOSE N'EST PAS UNE
+           LÉGENDE. Le cas mesuré : ChatGPT a écrit la chaîne « undefined ».
+           On ne la publie pas, on ne devine rien à sa place, et on ne la range
+           pas non plus dans « absente » — le gérant doit savoir qu'il y a à
+           corriger dans le dépôt, pas croire qu'il manque une ligne. */
+        ecarter(pub, canal, MOTIFS.LEGENDE_INVALIDE, lue.detail);
+        continue;
+      } else if (lue.forme === 'en_ligne') {
+        // La légende EST dans le manifeste. Aucun appel réseau.
+        legende = lue.texte;
       } else if (!resolue?.fichier_id) {
         ecarter(pub, canal, MOTIFS.LEGENDE_INTROUVABLE,
-          `la légende « ${declaree.chemin_relatif} » annoncée par publication.json n'est pas `
+          `la légende « ${lue.chemin_relatif} » annoncée par publication.json n'est pas `
           + 'dans le dossier de la publication');
         continue;
       } else {
-        if (!legendesLues.has(resolue.fichier_id)) {
-          try {
-            legendesLues.set(resolue.fichier_id, await client.telechargerFichier(resolue.fichier_id));
-          } catch (err) {
-            legendesLues.set(resolue.fichier_id, null);
-            tracer('[autopost] légende illisible (%s) : %s', resolue.chemin_relatif, err?.message || err);
-          }
-        }
+        // Déjà lue au bloc 2 bis, en parallèle borné. Rien ne part d'ici.
         legende = legendesLues.get(resolue.fichier_id);
         if (legende === null || legende === undefined) {
           ecarter(pub, canal, MOTIFS.LEGENDE_INTROUVABLE,
-            `la légende « ${declaree.chemin_relatif} » n'a pas pu être lue dans le Drive`);
+            `la légende « ${lue.chemin_relatif} » n'a pas pu être lue dans le Drive`);
+          continue;
+        }
+        // ⛔ Le fichier existe et se lit — encore faut-il qu'il dise quelque
+        //    chose. Un fichier vide, ou qui ne contient que « undefined »,
+        //    partirait tel quel sur la page de l'imprimerie.
+        if (!legendeUtilisable(legende)) {
+          ecarter(pub, canal, MOTIFS.LEGENDE_INVALIDE,
+            `la légende « ${lue.chemin_relatif} » ne contient pas de texte publiable `
+            + `(« ${String(legende).trim().slice(0, 30) || '(vide)'} »)`);
           continue;
         }
       }
@@ -825,17 +967,20 @@ export async function alimenterFile({
         /* 🔴 LE MÉDIA D'UNE LIGNE DÉJÀ EN FILE.
            Deux raisons de (re)demander une adresse :
              - la ligne n'en a pas — elle ne partira jamais sans ;
-             - le dépôt a changé — l'adresse porte l'empreinte du fichier, donc
+             - le FICHIER a changé — l'adresse porte son empreinte, donc
                l'ancienne pointerait sur l'image d'avant la correction.
-           Et une seule raison de ne rien faire : la ligne a une adresse ET le
-           dépôt n'a pas bougé. C'est le cas le plus fréquent, et il ne coûte
-           alors ni appel à Google ni appel au stockage. */
-        const media = (existante.url_media && depotInchange)
+           Et une seule raison de ne rien faire : l'adresse que la ligne porte
+           désigne déjà l'objet attendu. Ce cas-là ne coûte ni appel à Google ni
+           appel au stockage — et c'est aussi ce qui fait CONVERGER la file :
+           voir `mediaAChange()` pour ce que confondre « média changé » et
+           « ligne réécrite » a coûté le 19/09/2026. */
+        const mediaChange = mediaAChange({
+          depose: depot_, canal: canal.canal, existante, depotInchange,
+        });
+        const media = (existante.url_media && !mediaChange)
           ? null
           : await hebergerPour(depot_, canal.canal);
-        const champsMedia = champsDuMedia(media, existante, instantUtc, {
-          contenuChange: !depotInchange,
-        });
+        const champsMedia = champsDuMedia(media, existante, instantUtc, { mediaChange });
 
         if (depotInchange && !champsMedia) {
           // Le cas de très loin le plus fréquent : le passage horaire relit un

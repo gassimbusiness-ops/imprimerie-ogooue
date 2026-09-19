@@ -88,6 +88,8 @@ const MOTIFS_ALIMENTATION = {
   version_anterieure_a_la_file: 'Le dépôt propose une version plus ancienne que celle déjà en file.',
   legende_absente: 'Aucune légende déclarée pour ce canal : une affiche ne part pas sans un mot.',
   legende_introuvable: 'La légende annoncée n\'est pas dans le dossier de la publication.',
+  legende_invalide: 'Une légende est déclarée pour ce canal, mais elle n\'est pas publiable : '
+    + 'ni un texte, ni le nom d\'un fichier du dossier. À corriger dans le dépôt.',
   depot_illisible: 'Ce dossier du Drive n\'a pas pu être lu.',
 
   /* Hébergement du média. La SOURCE DE VÉRITÉ des codes est `MOTIFS_MEDIA` dans

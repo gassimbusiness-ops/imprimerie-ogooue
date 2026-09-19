@@ -230,6 +230,98 @@ export function choisirMedia(pub, canal) {
   return ordonnes[0];
 }
 
+/**
+ * Le média d'un canal, DÉCLARÉ par le manifeste et RÉSOLU par `drive.js`.
+ *
+ * ⛔ Cette fonction existe pour qu'il n'y ait qu'UNE façon de répondre à
+ *    « quel fichier ce canal publie-t-il ? ». `heberger()` s'en sert pour
+ *    téléverser, `cheminAttendu()` pour décider hors ligne si l'objet déjà
+ *    hébergé est encore le bon. Deux recopies de cette résolution, ce seraient
+ *    deux vérités : un jour l'une dirait « inchangé » là où l'autre téléverse
+ *    autre chose, et on servirait la mauvaise affiche (leçon du 19/09 : quand
+ *    deux fonctions répondent à la même question sur la même source, elles
+ *    partagent le code ou elles divergent).
+ *
+ * @param {object} depose la publication telle que `drive.js` la rend
+ * @param {string} canal
+ * @returns {{declare: object|null, resolu: object|null}}
+ */
+export function resoudreMedia(depose, canal) {
+  const declare = choisirMedia(depose?.publication, canal);
+  if (!declare) return { declare: null, resolu: null };
+  const resolu = (depose?.medias || [])
+    .find((m) => m?.chemin_relatif === declare.chemin_relatif) || null;
+  return { declare, resolu };
+}
+
+/**
+ * 🔴 LE CHEMIN QUE CE DÉPÔT AURAIT DANS LE BUCKET — calculé HORS LIGNE.
+ *
+ * ════════════════════════════════════════════════════════════════════════════
+ * POURQUOI CETTE FONCTION EXISTE — LE DÉFAUT DU 19/09/2026 À 13 H 29
+ * ════════════════════════════════════════════════════════════════════════════
+ *
+ * L'alimentation savait retirer l'adresse d'une ligne « dont le dépôt a
+ * changé ». La règle est juste : l'adresse porte l'empreinte du fichier, donc
+ * garder l'ancienne quand le fichier a bougé, c'est publier la vieille affiche
+ * sous la nouvelle légende.
+ *
+ * Mais « le dépôt a changé » y voulait dire « l'empreinte de la LIGNE a
+ * changé » — or cette empreinte porte aussi l'approbation, la légende, le
+ * créneau. Le jour où l'approbation automatique est venue s'ajouter aux 42
+ * lignes de la file, les 42 ont été déclarées « changées » alors qu'aucun
+ * fichier n'avait bougé : 9 lignes hébergées sont tombées à 3, et chaque
+ * passage effaçait le travail du précédent. Un mouvement perpétuel qui ne
+ * converge jamais.
+ *
+ * La question à poser n'est donc pas « la ligne a-t-elle été réécrite ? » mais
+ * **« le MÉDIA a-t-il changé ? »** — et elle se tranche sans rien demander à
+ * personne : le chemin de l'objet porte le `md5Checksum` mesuré par Google.
+ * Si le chemin attendu est celui que l'adresse porte déjà, le fichier est le
+ * même, l'objet est encore bon, et l'adresse se GARDE.
+ *
+ * Rend `null` quand la question n'est PAS décidable (aucun média pour ce canal,
+ * fichier non retrouvé dans le dossier, empreinte absente). `null` ne veut pas
+ * dire « inchangé » : il veut dire « je ne sais pas », et c'est à l'appelant de
+ * retomber sur sa règle d'avant plutôt que d'inventer une réponse.
+ *
+ * ⛔ AUCUN APPEL RÉSEAU. C'est de l'arithmétique sur ce que le listing du Drive
+ *    a déjà rendu.
+ *
+ * @param {object} arg
+ * @param {object} arg.depose
+ * @param {string} arg.canal
+ * @returns {string|null} le chemin d'objet attendu, ou `null` si indécidable
+ */
+export function cheminAttendu({ depose, canal }) {
+  const { declare, resolu } = resoudreMedia(depose, canal);
+  if (!declare || !resolu?.fichier_id || !resolu.md5) return null;
+  return cheminObjet({
+    publicationId: depose?.publication?.publication_id,
+    version: depose?.publication?.version_contenu,
+    empreinte: resolu.md5,
+    nom: declare.chemin_relatif,
+  });
+}
+
+/**
+ * L'adresse rendue par le stockage désigne-t-elle EXACTEMENT cet objet ?
+ *
+ * On compare la fin du chemin d'URL, pas une sous-chaîne quelconque : une
+ * comparaison par `includes` dirait « oui » pour un homonyme partiel, et la
+ * question posée ici décide si une adresse se garde ou se perd.
+ *
+ * @param {string|null} url
+ * @param {string|null} chemin
+ * @param {string} [bucket]
+ * @returns {boolean}
+ */
+export function urlPorteChemin(url, chemin, bucket = BUCKET) {
+  if (!url || !chemin) return false;
+  const sansQuete = String(url).split('?')[0].split('#')[0];
+  return sansQuete.endsWith(`/${bucket}/${chemin}`);
+}
+
 /** Résultat d'échec, de forme constante. Jamais une exception. */
 function echec(motif, detail, extra = {}) {
   return {
@@ -266,15 +358,15 @@ export function creerHebergeurMedias({ stockage, client, tracer = () => {} }) {
    */
   async function heberger({ depose, canal }) {
     const pub = depose?.publication;
-    const declare = choisirMedia(pub, canal);
+    // ⛔ La MÊME résolution que `cheminAttendu()` — partagée, jamais recopiée.
+    //    Le média RÉSOLU est celui que `drive.js` a joint au nom annoncé : sans
+    //    lui, on n'a qu'un nom, et un nom ne se télécharge pas.
+    const { declare, resolu } = resoudreMedia(depose, canal);
     if (!declare) {
       return echec(MOTIFS_MEDIA.AUCUN_MEDIA,
         `aucun média de publication.json ne cible le canal « ${canal} »`);
     }
 
-    // Le média RÉSOLU : c'est `drive.js` qui a joint le fichier réel au nom
-    // annoncé. Sans lui, on n'a qu'un nom, et un nom ne se télécharge pas.
-    const resolu = (depose?.medias || []).find((m) => m?.chemin_relatif === declare.chemin_relatif);
     if (!resolu?.fichier_id) {
       return echec(MOTIFS_MEDIA.MEDIA_INTROUVABLE,
         `le média « ${declare.chemin_relatif} » n'a pas été retrouvé dans le dossier de la publication`);
@@ -302,12 +394,13 @@ export function creerHebergeurMedias({ stockage, client, tracer = () => {} }) {
         + 'décider si l\'objet hébergé correspond encore à ce fichier');
     }
 
-    const chemin = cheminObjet({
-      publicationId: pub.publication_id,
-      version: pub.version_contenu,
-      empreinte: resolu.md5,
-      nom: declare.chemin_relatif,
-    });
+    /* ⛔ Le chemin vient de `cheminAttendu()`, la MÊME fonction dont
+       l'alimentation se sert pour décider hors ligne si l'objet déjà hébergé
+       est encore le bon. Le recalculer ici serait rouvrir la porte à deux
+       réponses différentes à la même question. Les quatre garde-fous ci-dessus
+       (média déclaré, fichier retrouvé, type, empreinte) garantissent qu'il
+       n'est pas `null`. */
+    const chemin = cheminAttendu({ depose, canal });
 
     /* ── 1. L'OBJET EST-IL DÉJÀ LÀ ? ─────────────────────────────────────
        La question se pose au bucket, pas à une colonne « déjà téléversé » :
