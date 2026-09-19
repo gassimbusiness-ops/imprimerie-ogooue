@@ -2,6 +2,9 @@
   "functions": {
     "api/chatgpt.js": {
       "includeFiles": "api/_lib/chatgpt-openapi.json"
+    },
+    "api/autopost.js": {
+      "maxDuration": 60
     }
   },
   "headers": [

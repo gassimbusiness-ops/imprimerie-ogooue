@@ -129,3 +129,59 @@ test('🔴 la lecture d écran rapporte url_media : une file pleine n est pas un
   assert.match(supabase.requetes[0].colonnes, /url_media/,
     'sans cette colonne, l écran ne peut pas dire que rien ne peut partir');
 });
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   LE RÉGLAGE « APPROBATION AUTOMATIQUE » — LU SANS EXIGER LA MIGRATION 014
+
+   Le code part AVANT que la colonne n'existe. Une lecture qui exigerait
+   `approbation_automatique` ferait échouer la lecture de l'interrupteur, donc
+   le passage entier, donc la PUBLICATION. Ces trois tests tiennent ça.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+test('lireReglages demande approbation_automatique et rend ce que la base porte', async () => {
+  const supabase = supabaseFactice({
+    data: [{ actif: true, mode: 'live', plafond_journalier: 4, approbation_automatique: false }],
+    error: null,
+  });
+  const r = await depotSupabaseAutopost(supabase).lireReglages();
+
+  assert.match(supabase.requetes[0].colonnes, /approbation_automatique/);
+  assert.equal(r.approbation_automatique, false, 'un false en base doit gagner sur le défaut du code');
+  assert.equal(r.reglage_approbation, 'en_base');
+  assert.equal(r.actif, true, 'le reste de la ligne de contrôle est inchangé');
+});
+
+test('⛔ colonne absente (migration 014 non appliquée) : on relit SANS elle, on ne tombe pas', async () => {
+  let appel = 0;
+  const supabase = supabaseFactice(() => {
+    appel += 1;
+    // 42703 = undefined_column. Le premier appel le rend, le second réussit.
+    if (appel === 1) return { data: null, error: { code: '42703', message: 'column autopost_controle.approbation_automatique does not exist' } };
+    return { data: [{ actif: false, mode: 'dry_run', plafond_journalier: 4 }], error: null };
+  });
+  const r = await depotSupabaseAutopost(supabase).lireReglages();
+
+  assert.equal(appel, 2, 'la lecture doit être retentée sans la colonne');
+  assert.equal(r.approbation_automatique, true, 'le défaut du code s applique');
+  assert.equal(r.reglage_approbation, 'colonne_absente',
+    'l écran doit pouvoir dire « défaut appliqué » plutôt qu un réglage imaginaire');
+  assert.equal(r.actif, false, 'et l interrupteur reste lisible : c est tout l intérêt');
+});
+
+test('⛔ une AUTRE erreur de lecture est levée — on ne la confond pas avec la colonne manquante', async () => {
+  const supabase = supabaseFactice({ data: null, error: { code: '42P01', message: 'relation does not exist' } });
+  await assert.rejects(
+    () => depotSupabaseAutopost(supabase).lireReglages(),
+    /relation does not exist/,
+  );
+});
+
+test('lireArretGlobal et lireReglages lisent la MÊME ligne — deux noms, un seul état', async () => {
+  const supabase = supabaseFactice({
+    data: [{ actif: true, mode: 'live', plafond_journalier: 7, approbation_automatique: true }],
+    error: null,
+  });
+  const depot = depotSupabaseAutopost(supabase);
+  assert.deepEqual(await depot.lireArretGlobal(), await depot.lireReglages(),
+    'deux vérités sur le même interrupteur, ce serait une de trop');
+});

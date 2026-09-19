@@ -41,6 +41,28 @@ export const TABLE_FILE = 'autopost_file';
 export const TABLE_CONTROLE = 'autopost_controle';
 export const TABLE_JOURNAL = 'autopost_journal';
 
+/**
+ * 🔴 LE DÉFAUT DE L'APPROBATION AUTOMATIQUE, ET POURQUOI IL EST À `true`.
+ *
+ * Décision de Gassim du 19/09/2026 : « automatique tout de suite ». Le réglage
+ * vit dans `autopost_controle.approbation_automatique` (migration 014) pour
+ * qu'on puisse le renverser SANS redéployer — même raisonnement que
+ * l'interrupteur `actif` de la migration 008 : « un arrêt d'urgence qui exige un
+ * déploiement n'est pas un arrêt d'urgence ».
+ *
+ * ⚠️ Ce défaut sert aussi TANT QUE LA COLONNE N'EXISTE PAS. C'est volontaire et
+ * il faut le savoir : si la migration 014 n'est pas appliquée, l'approbation est
+ * automatique et le seul retour arrière disponible est l'interrupteur global
+ * (`UPDATE autopost_controle SET actif = false`), qui arrête TOUTE la chaîne.
+ * Pour récupérer le réglage fin, appliquer la 014.
+ */
+export const APPROBATION_AUTOMATIQUE_PAR_DEFAUT = true;
+
+/** Codes PostgREST/PostgreSQL d'une colonne qui n'existe pas encore. */
+function colonneInconnue(error) {
+  return error?.code === '42703' || /approbation_automatique/i.test(error?.message || '');
+}
+
 /** Colonnes lues pour un travail : tout ce dont la sélection a besoin. */
 const COLONNES = 'cle_idempotence, publication_id, version_contenu, canal, compte_cible_id, '
   + 'surface, instant_utc, date_locale, tolerance_minutes, etat, tentatives, tentatives_max, '
@@ -54,24 +76,61 @@ const COLONNES = 'cle_idempotence, publication_id, version_contenu, canal, compt
 export function depotSupabaseAutopost(supabase) {
   return {
     /**
-     * L'interrupteur, lu à CHAQUE passage. Absent → on considère la chaîne
-     * ARRÊTÉE : un auto-poster dont on ne trouve pas l'interrupteur ne publie
-     * pas « par défaut », il se tait.
+     * 🔴 LA LIGNE DE CONTRÔLE ENTIÈRE — interrupteur ET politique d'approbation.
+     *
+     * Ligne absente → on considère la chaîne ARRÊTÉE : un auto-poster dont on
+     * ne trouve pas l'interrupteur ne publie pas « par défaut », il se tait.
+     *
+     * Deux noms pour une seule lecture, et ce n'est pas un doublon :
+     *   - `lireArretGlobal()` est le nom que l'exécuteur donne à ce qu'il en
+     *     regarde — « est-ce que je publie ? » ;
+     *   - `lireReglages()` est le nom que `api/autopost.js` donne à ce qu'il en
+     *     regarde avant d'alimenter — « est-ce que j'approuve ? ».
+     *
+     * ⛔ Les garder distincts n'est pas cosmétique : approuver n'est pas
+     *    publier, et l'écrire jusque dans les noms évite qu'un jour l'un serve
+     *    d'autorisation pour l'autre.
      */
-    async lireArretGlobal() {
-      const { data, error } = await supabase
+    async lireReglages() {
+      const lire = (colonnes) => supabase
         .from(TABLE_CONTROLE)
-        .select('actif, mode, plafond_journalier')
+        .select(colonnes)
         .eq('id', 'global')
         .limit(1);
+
+      /* ⛔ LA LECTURE QUI SURVIT À UNE MIGRATION NON APPLIQUÉE.
+         Le code part AVANT la migration 014 : demander une colonne qui n'existe
+         pas ferait échouer la lecture de l'interrupteur, donc le passage entier,
+         donc la publication. On retente sans la colonne et on dit lequel des
+         deux chemins a servi — `reglage_approbation` — pour que l'écran affiche
+         « (colonne absente, défaut appliqué) » plutôt qu'un réglage imaginaire. */
+      let reglagePresent = true;
+      let { data, error } = await lire('actif, mode, plafond_journalier, approbation_automatique');
+      if (error && colonneInconnue(error)) {
+        reglagePresent = false;
+        ({ data, error } = await lire('actif, mode, plafond_journalier'));
+      }
       if (error) throw new Error(`lecture ${TABLE_CONTROLE} : ${error.message}`);
+
       const ligne = (data || [])[0];
-      if (!ligne) return { actif: false, mode: 'dry_run', plafond: 0 };
+      const reglage = {
+        approbation_automatique: reglagePresent && typeof ligne?.approbation_automatique === 'boolean'
+          ? ligne.approbation_automatique
+          : APPROBATION_AUTOMATIQUE_PAR_DEFAUT,
+        reglage_approbation: reglagePresent ? 'en_base' : 'colonne_absente',
+      };
+      if (!ligne) return { actif: false, mode: 'dry_run', plafond: 0, ...reglage };
       return {
         actif: ligne.actif === true,
         mode: ligne.mode === 'live' ? 'live' : 'dry_run',
         plafond: typeof ligne.plafond_journalier === 'number' ? ligne.plafond_journalier : 4,
+        ...reglage,
       };
+    },
+
+    /** L'interrupteur, lu à CHAQUE passage — la même ligne, vue par l'exécuteur. */
+    async lireArretGlobal() {
+      return this.lireReglages();
     },
 
     async lireFile({ limite = 50 } = {}) {

@@ -721,3 +721,146 @@ test('un refus du serveur est DIT, et rien n est affiche comme approuve', async 
     await r.demonter();
   }
 });
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   L'APPROBATION AUTOMATIQUE, MONTÉE POUR DE VRAI
+
+   Gassim a demandé l'automatique ET refusé l'interrupteur à l'écran. Le risque
+   est alors précis : 42 lignes passent au vert « approuvé » sans que personne
+   ne les ait lues, et l'écran ne dit pas d'où vient ce vert. Ces tests exigent
+   que l'écran réponde à deux questions — le réglage est-il actif, et QUI a
+   approuvé cette ligne-là.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/** Une file telle qu'elle sera ce matin : approuvée par la machine, et par un humain. */
+function etatAvecApprobationAutomatique(sur = {}) {
+  return {
+    ...ETAT,
+    controle: {
+      actif: true, mode: 'dry_run', plafond: 4,
+      approbation_automatique: true, reglage_approbation: 'en_base',
+      ...(sur.controle || {}),
+    },
+    file: [
+      {
+        ...ETAT.file[0],
+        cle_idempotence: 'PUB-2026-S39-1-01|v1|facebook|100|2026-09-21T08:00:00Z',
+        approbation: {
+          approuve: true,
+          publication_id: 'PUB-2026-S39-1-01',
+          version_contenu: 1,
+          canaux_approuves: ['facebook'],
+          payload_sha256: 'a'.repeat(64),
+          signature: 'absente',
+          signature_hmac_sha256: null,
+          origine: 'automatique',
+          approuve_par: null,
+          approuve_le_utc: '2026-09-19T07:00:00Z',
+        },
+      },
+      {
+        ...ETAT.file[0],
+        cle_idempotence: 'PUB-2026-S39-2-01|v1|instagram|178|2026-09-21T08:00:00Z',
+        publication_id: 'PUB-2026-S39-2-01',
+        canal: 'instagram',
+        approbation: {
+          approuve: true,
+          publication_id: 'PUB-2026-S39-2-01',
+          version_contenu: 1,
+          canaux_approuves: ['instagram'],
+          payload_sha256: 'b'.repeat(64),
+          signature: 'absente',
+          origine: 'ecran_administrateur',
+          approuve_par: 'gassim',
+          approuve_le_utc: '2026-09-19T07:30:00Z',
+        },
+      },
+    ],
+    ...sur,
+  };
+}
+
+test('🔴 l ecran DIT que l approbation automatique est activee — sans bouton', async () => {
+  const f = installerFetch(etatAvecApprobationAutomatique());
+  const r = await rendreEcran({ ecran: 'src/features/autopost/page.jsx' });
+  try {
+    assert.equal(r.erreurs.length, 0, `exceptions au montage : ${r.erreurs.map((e) => e?.message).join(' · ')}`);
+    assert.match(r.texte, /Approbation automatique/);
+    assert.match(r.texte, /activée/);
+    // ⛔ Gassim a explicitement refuse l'interrupteur a l'ecran. Un bouton qui
+    //    apparaitrait ici serait un geste qu'il n'a pas demande, sur un reglage
+    //    qui arrete la chaine.
+    const libelles = [...r.conteneur.querySelectorAll('button')]
+      .map((b) => b.textContent || '').join(' | ');
+    assert.doesNotMatch(libelles, /automatique/i,
+      `aucun bouton ne doit piloter ce reglage — il se change en base : ${libelles}`);
+  } finally {
+    f.restaurer();
+    await r.demonter();
+  }
+});
+
+test('🔴 l ecran distingue « approuve par la MACHINE » de « approuve par un HUMAIN »', async () => {
+  const f = installerFetch(etatAvecApprobationAutomatique());
+  const r = await rendreEcran({ ecran: 'src/features/autopost/page.jsx' });
+  try {
+    // La machine : dit automatiquement, et dit que personne n'a relu.
+    assert.match(r.texte, /automatiquement/);
+    assert.match(r.texte, /Personne ne l'a relue|Personne ne l’a relue/,
+      'un vert sans cette phrase laisserait croire a une relecture qui n a pas eu lieu');
+    // L'humain : c'est son nom qui s'affiche, pas « automatique ».
+    assert.match(r.texte, /gassim/);
+  } finally {
+    f.restaurer();
+    await r.demonter();
+  }
+});
+
+test('reglage desactive : l ecran le dit, et renvoie a l approbation a la main', async () => {
+  const f = installerFetch(etatAvecApprobationAutomatique({
+    controle: { approbation_automatique: false, reglage_approbation: 'en_base' },
+  }));
+  const r = await rendreEcran({ ecran: 'src/features/autopost/page.jsx' });
+  try {
+    assert.match(r.texte, /Approbation automatique : désactivée|Approbation automatique :\s*désactivée/);
+    assert.match(r.texte, /approuvée à la main/);
+  } finally {
+    f.restaurer();
+    await r.demonter();
+  }
+});
+
+test('⛔ migration 014 non appliquee : l ecran dit que c est le DEFAUT du code qui sert', async () => {
+  // Sans cette phrase, le gerant croirait lire un reglage choisi alors qu il
+  // lit une valeur de repli — et il chercherait en base une colonne absente.
+  const f = installerFetch(etatAvecApprobationAutomatique({
+    controle: { approbation_automatique: true, reglage_approbation: 'colonne_absente' },
+  }));
+  const r = await rendreEcran({ ecran: 'src/features/autopost/page.jsx' });
+  try {
+    assert.match(r.texte, /migration 014 non appliquée/);
+    assert.match(r.texte, /défaut du\s*code/);
+  } finally {
+    f.restaurer();
+    await r.demonter();
+  }
+});
+
+test('le bouton « Retirer l approbation » reste offert sur une ligne approuvee par la machine', async () => {
+  // C'est le seul contre-pouvoir du gerant sur une chaine qui s approuve toute
+  // seule. S il disparaissait, l automatique deviendrait irreversible ligne par
+  // ligne.
+  const f = installerFetch(etatAvecApprobationAutomatique());
+  const r = await rendreEcran({
+    ecran: 'src/features/autopost/page.jsx',
+    session: { role: 'admin', sub: 'u-admin' },
+  });
+  try {
+    assert.equal(r.erreurs.length, 0);
+    assert.match(r.texte, /aucun passage ne le réécrira|aucun passage ne le reecrira/,
+      'la promesse doit etre ecrite : un retrait tient face aux passages suivants');
+  } finally {
+    f.restaurer();
+    await r.demonter();
+  }
+});

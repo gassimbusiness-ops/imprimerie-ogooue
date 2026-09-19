@@ -62,7 +62,8 @@
  * (`signature: 'absente'`), et l'écran l'affiche au lieu d'un voyant vert.
  */
 import {
-  empreinteCanonique, signerApprobation, verifierApprobation, ORIGINE_ECRAN,
+  empreinteCanonique, signerApprobation, verifierApprobation,
+  ORIGINE_ECRAN, ORIGINE_AUTOMATIQUE,
 } from './autopost-contrat.js';
 import { ETATS_MODIFIABLES } from './autopost-alimentation.js';
 import { formaterInstantUtc } from '../../src/lib/dates.js';
@@ -122,10 +123,11 @@ export function cleSignatureApprobation() {
  * @param {string} arg.approuvePar  identifiant de session de l'administrateur
  * @param {Date|string} arg.instant
  * @param {string|null} [arg.cleSignature]
+ * @param {string} [arg.origine]  `ORIGINE_ECRAN` (défaut) ou `ORIGINE_AUTOMATIQUE`
  * @returns {object}
  */
 export function construireApprobation({
-  publication, canal, approuvePar, instant, cleSignature = null,
+  publication, canal, approuvePar, instant, cleSignature = null, origine = ORIGINE_ECRAN,
 }) {
   const c = publication?.creneau || {};
   const base = {
@@ -148,10 +150,69 @@ export function construireApprobation({
     //    signature vide mais valide. Et la mention en clair à côté.
     signature_hmac_sha256: cleSignature ? signerApprobation(base, cleSignature) : null,
     signature: cleSignature ? 'hmac_sha256' : 'absente',
-    origine: ORIGINE_ECRAN,
+    origine,
     approuve_par: approuvePar ?? null,
     approuve_le_utc: horodater(instant),
   };
+}
+
+/**
+ * ⛔ L'APPROBATION POSÉE PAR LA MACHINE, à l'entrée en file.
+ *
+ * ════════════════════════════════════════════════════════════════════════════
+ * CE QUE CETTE FONCTION CHANGE, ET CE QU'ELLE NE CHANGE PAS
+ * ════════════════════════════════════════════════════════════════════════════
+ *
+ * Décision de Gassim, 19/09/2026 : « automatique tout de suite ». Sa raison :
+ * ChatGPT vérifie déjà le manifeste avant de déposer, et l'objectif est de tout
+ * automatiser. La réserve lui a été dite — ChatGPT vérifie le FORMAT, pas le
+ * JUGEMENT — et il a tranché. C'est sa page Facebook.
+ *
+ * Ce qui change : plus personne n'a à cliquer 42 fois pour débloquer une file.
+ *
+ * Ce qui NE change PAS, et c'est tout l'intérêt :
+ *
+ *   1. **L'objet fabriqué est le MÊME** que celui du bouton, au champ `origine`
+ *      près. Il porte donc `payload_sha256` — l'empreinte du contenu approuvé —
+ *      et le créneau approuvé. `empreinteCanonique()` n'est pas court-circuitée.
+ *      Une affiche corrigée après coup fait diverger l'empreinte, et
+ *      `verifierApprobation()` refuse la ligne avec
+ *      `contenu_modifie_depuis_approbation` : le contenu qui part est exactement
+ *      celui qui a été approuvé, jamais un autre.
+ *
+ *      ⚠️ À dire en clair pour ne pas être découvert plus tard : au passage
+ *      SUIVANT, l'alimentation reposera une approbation automatique sur le
+ *      contenu corrigé. L'empreinte n'est donc pas ici une relecture humaine —
+ *      elle garantit qu'aucun octet ne part sous un accord qui ne le couvrait
+ *      pas, et elle écrit la correction au journal. C'est exactement ce que
+ *      « automatique » veut dire, et rien de plus.
+ *
+ *   2. **Elle ne gagne jamais contre un humain.** `estDecisionHumaine()` fait
+ *      gagner le bouton « Retirer l'approbation » : un retrait n'est pas
+ *      réécrit, même après trois relectures du Drive.
+ *
+ *   3. **`approuve_par` reste `null`.** Une machine n'a pas d'identifiant de
+ *      session, et lui en inventer un ferait de `approuve_par` un faux témoin
+ *      de plus. C'est `origine` qui répond à « qui a approuvé ».
+ *
+ * @param {object} arg
+ * @param {object} arg.publication
+ * @param {string} arg.canal
+ * @param {Date|string} arg.instant
+ * @param {string|null} [arg.cleSignature]
+ * @returns {object}
+ */
+export function construireApprobationAutomatique({
+  publication, canal, instant, cleSignature = null,
+}) {
+  return construireApprobation({
+    publication,
+    canal,
+    approuvePar: null,
+    instant,
+    cleSignature,
+    origine: ORIGINE_AUTOMATIQUE,
+  });
 }
 
 /**

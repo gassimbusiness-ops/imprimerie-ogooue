@@ -585,10 +585,18 @@ test('deux canaux identiques dans un même manifeste : le second est écarté, i
 });
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   5. RIEN NE S'AUTO-APPROUVE
+   5. RIEN NE S'AUTO-APPROUVE SANS CONSIGNE EXPLICITE
+
+   ⚠️ Depuis le 19/09/2026, l'alimentation SAIT approuver — mais seulement si
+   l'appelant le lui demande (`approbationAutomatique: true`, lu en base par
+   `api/autopost.js`). Ces tests appellent `passage()`, qui ne le demande PAS :
+   ils protègent donc le défaut du module, c'est-à-dire qu'aucun appelant
+   distrait — un script de reprise, un outil, un test — ne puisse approuver par
+   omission. La politique par défaut du SYSTÈME, elle, est `true` ; elle vit en
+   base et elle a sa propre section, la 14.
    ═══════════════════════════════════════════════════════════════════════════ */
 
-test('⛔ sans APPROBATION.json, la ligne entre en file et n est PAS approuvée', async () => {
+test('⛔ sans consigne, sans APPROBATION.json : la ligne entre en file et n est PAS approuvée', async () => {
   const pub = manifeste();
   const depot = depotFactice();
   const client = clientFactice({ publications: [deposee(pub, { approbation: null })] });
@@ -600,7 +608,7 @@ test('⛔ sans APPROBATION.json, la ligne entre en file et n est PAS approuvée'
   assert.equal(ligne.approbation, null, 'et elle n est pas approuvée');
 });
 
-test('⛔ AUCUNE ligne écrite par l alimentation ne porte une approbation que le Drive n a pas déposée', async () => {
+test('⛔ sans consigne, AUCUNE ligne ne porte une approbation que le Drive n a pas déposée', async () => {
   const pubs = [
     manifeste({ id: 'PUB-2026-S39-1-01' }),
     manifeste({ id: 'PUB-2026-S39-2-01', date: '2026-09-22' }),
@@ -1324,7 +1332,7 @@ test('une approbation DÉPOSÉE dans le Drive reste prioritaire sur celle de l a
   assert.equal(l.approbation.origine, undefined, 'c est bien le dépôt qui est rangé');
 });
 
-test('⛔ RIEN NE S AUTO-APPROUVE : une ligne NEUVE sans APPROBATION.json entre non approuvée', async () => {
+test('⛔ SANS CONSIGNE, rien ne s auto-approuve : une ligne NEUVE entre non approuvée', async () => {
   const pub = manifeste();
   const depot = depotFactice();
   const client = clientFactice({ publications: [deposee(pub, { approbation: null })] });
@@ -1368,4 +1376,498 @@ test('⛔ une approbation conservée devient invalide si le dépôt a CHANGÉ le
     verifierApprobation({ publication: l.publication, approbation: l.approbation, canal: 'facebook' }).raison,
     'contenu_modifie_depuis_approbation',
   );
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   13. LE BUDGET D'HÉBERGEMENT, COMPTÉ EN TEMPS
+
+   ⛔ CE QU'ON PROTÈGE ICI N'EST PAS L'ALIMENTATION, C'EST LA PUBLICATION.
+   L'alimentation tourne DANS la même fonction serverless que la publication, et
+   AVANT elle. Une alimentation qui fait expirer la fonction n'empêche pas
+   seulement d'alimenter : elle empêche de publier ce qui est DÉJÀ en file, et
+   ça, c'est un rendez-vous manqué sur la page de l'entreprise.
+
+   Le 19/09/2026, un plafond de SIX téléversements par passage avait été posé par
+   prudence, SANS mesure. Mesure faite la nuit suivante : 33 lignes sur 42
+   attendaient encore un média. Un plafond en nombre de fichiers ne dit rien du
+   temps consommé — six petites images ne coûtent pas ce que coûtent six vidéos.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+test('🔴 le budget de temps du code est EXACTEMENT le maxDuration déclaré dans vercel.json', async () => {
+  // Ce test existe parce que le chiffre d'origine (6) était une supposition.
+  // La documentation Vercel donne, avec fluid compute, un plan Hobby à 300 s ;
+  // sans fluid compute, 60 s. L'API Vercel ne dit pas lequel s'applique. On ne
+  // devine donc pas : `vercel.json` DÉCLARE 60 — accepté sous les deux régimes —
+  // et le code recopie ce chiffre. Si l'un des deux bouge sans l'autre, le
+  // budget serait calculé sur une durée qui n'existe pas.
+  const {
+    DUREE_MAX_FONCTION_MS, RESERVE_PUBLICATION_MS, BUDGET_HEBERGEMENT_MS,
+  } = await import('../api/_lib/autopost-alimentation.js');
+
+  const config = JSON.parse(readFileSync(
+    fileURLToPath(new URL('../vercel.json', import.meta.url)), 'utf8',
+  ));
+  const declare = config.functions?.['api/autopost.js']?.maxDuration;
+
+  assert.equal(typeof declare, 'number',
+    'sans maxDuration déclaré, la fonction tourne à un défaut que personne ne connaît');
+  assert.equal(DUREE_MAX_FONCTION_MS, declare * 1000,
+    `vercel.json déclare ${declare} s, le code calcule sur ${DUREE_MAX_FONCTION_MS} ms`);
+  assert.ok(declare <= 60,
+    '60 s est le plafond Hobby SANS fluid compute : au-delà, le déploiement peut refuser');
+  assert.ok(RESERVE_PUBLICATION_MS > BUDGET_HEBERGEMENT_MS,
+    'la marge gardée pour publier doit rester plus grande que le budget dépensé à héberger');
+  assert.equal(BUDGET_HEBERGEMENT_MS, DUREE_MAX_FONCTION_MS - RESERVE_PUBLICATION_MS);
+});
+
+/** Un chronomètre qu'on fait avancer à la main : aucun test ne dort. */
+function chronometre(pas = 0) {
+  let t = 0;
+  return { horloge: () => { const v = t; t += pas; return v; }, avancer: (ms) => { t += ms; } };
+}
+
+test('🔴 le budget de temps épuisé REPORTE proprement : la ligne entre, sans erreur', async () => {
+  const pubs = [
+    manifeste({ id: 'PUB-2026-S39-1-01' }),
+    manifeste({ id: 'PUB-2026-S39-2-01', date: '2026-09-22' }),
+    manifeste({ id: 'PUB-2026-S39-3-01', date: '2026-09-23' }),
+  ];
+  const depot = depotFactice();
+  const client = clientFactice({ publications: pubs.map((p) => deposee(p)) });
+  const medias = hebergeurFactice();
+
+  // Chaque lecture d'horloge avance de 4 s : le premier hébergement passe,
+  // les suivants tombent hors budget.
+  const bilan = await alimenterFile({
+    depot,
+    client,
+    medias,
+    instant: INSTANT,
+    tracer: muet,
+    budgetHebergementMs: 5_000,
+    horloge: chronometre(4_000).horloge,
+  });
+
+  assert.equal(bilan.creees, 3, 'les trois lignes entrent en file : héberger et alimenter sont deux gestes');
+  assert.ok(bilan.medias.reportes >= 1, 'au moins un média doit être reporté');
+  assert.equal(bilan.medias.motif_report, 'budget_temps_epuise',
+    'sans le motif, « 2 reporté(s) » ne dit pas s il faut allonger le budget ou lever le plafond');
+  assert.deepEqual(bilan.medias.ecartes, [],
+    'un report n est PAS un écartement : rien ne doit apparaître comme refusé');
+
+  // ⛔ LE POINT QUI COMPTE : un report ne pose AUCUNE erreur sur la ligne.
+  // Un bandeau rouge pour une décision volontaire est un faux témoin, dans
+  // l'autre sens — le gérant chercherait une panne qui n'existe pas.
+  const sansMedia = [...depot.file.values()].filter((l) => !l.url_media);
+  assert.ok(sansMedia.length >= 1, 'les lignes reportées entrent bien sans adresse');
+  for (const l of sansMedia) {
+    assert.equal(l.derniere_erreur, null, `${l.publication_id} porte une erreur pour un simple report`);
+  }
+});
+
+test('le plafond en NOMBRE reste la ceinture si le chronomètre ment (horloge gelée)', async () => {
+  const pubs = [
+    manifeste({ id: 'PUB-2026-S39-1-01' }),
+    manifeste({ id: 'PUB-2026-S39-2-01', date: '2026-09-22' }),
+    manifeste({ id: 'PUB-2026-S39-3-01', date: '2026-09-23' }),
+  ];
+  const depot = depotFactice();
+  const client = clientFactice({ publications: pubs.map((p) => deposee(p)) });
+
+  const bilan = await alimenterFile({
+    depot,
+    client,
+    medias: hebergeurFactice(),
+    instant: INSTANT,
+    tracer: muet,
+    // Horloge gelée : le budget de temps ne se déclenchera JAMAIS.
+    horloge: () => 0,
+    budgetHebergementMs: 25_000,
+    televersementsMax: 1,
+  });
+
+  assert.equal(bilan.medias.heberges, 1);
+  assert.equal(bilan.medias.reportes, 2);
+  assert.equal(bilan.medias.motif_report, 'plafond_televersements_atteint',
+    'le plafond en nombre est ce qui reste quand le chronomètre est inutilisable');
+});
+
+test('un passage qui tient dans son budget héberge TOUT — c est le cas nominal', async () => {
+  const pubs = Array.from({ length: 12 }, (_, i) => manifeste({
+    id: `PUB-2026-S39-${(i % 7) + 1}-0${Math.floor(i / 7) + 1}`,
+    date: `2026-09-${21 + (i % 5)}`,
+  }));
+  const depot = depotFactice();
+  const client = clientFactice({ publications: pubs.map((p) => deposee(p)) });
+
+  const bilan = await alimenterFile({
+    depot,
+    client,
+    medias: hebergeurFactice(),
+    instant: INSTANT,
+    tracer: muet,
+    // 200 ms par lecture d'horloge : douze hébergements restent loin du budget.
+    horloge: chronometre(200).horloge,
+  });
+
+  assert.equal(bilan.creees, 12);
+  assert.equal(bilan.medias.heberges, 12,
+    'douze fichiers doivent passer en un seul passage : c est tout l objet du changement');
+  assert.equal(bilan.medias.reportes, 0);
+  assert.equal(bilan.medias.motif_report, null);
+  assert.equal(bilan.medias.budget_ms, 25_000, 'le bilan dit le budget sur lequel il a compté');
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   14. L'APPROBATION AUTOMATIQUE
+
+   Décision de Gassim, 19/09/2026, mot pour mot : « automatique tout de suite ».
+   Sa raison : ChatGPT vérifie déjà le manifeste avant de déposer. La réserve lui
+   a été exposée — ChatGPT vérifie le FORMAT, pas le JUGEMENT — et il a tranché.
+
+   Ces tests ne rediscutent pas la décision. Ils tiennent les trois choses qui
+   font la différence entre « automatique » et « aveugle » :
+
+     1. l'empreinte du contenu est calculée et portée par l'approbation ;
+     2. une décision HUMAINE n'est JAMAIS réécrite par un passage suivant ;
+     3. l'objet écrit dit QUI a approuvé — machine ou humain.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+const passageAuto = (depot, client, medias = null, sur = {}) => alimenterFile({
+  depot, client, medias, instant: INSTANT, tracer: muet, approbationAutomatique: true, ...sur,
+});
+
+test('🔴 approbation automatique : une ligne NEUVE entre en file DÉJÀ approuvée', async () => {
+  const pub = manifeste();
+  const depot = depotFactice();
+  const client = clientFactice({ publications: [deposee(pub, { approbation: null })] });
+
+  const bilan = await passageAuto(depot, client, hebergeurFactice());
+
+  const l = [...depot.file.values()][0];
+  assert.equal(l.approbation?.approuve, true, 'elle doit entrer approuvée');
+  assert.equal(bilan.approbation_auto.posees, 1);
+  assert.equal(bilan.approbation_auto.reglage, 'activee');
+
+  // ⛔ L'EMPREINTE. C'est elle qui fait qu'« automatique » n'est pas « aveugle ».
+  assert.equal(l.approbation.payload_sha256, empreinteCanonique(pub),
+    'sans empreinte, l approbation couvrirait n importe quel contenu');
+  assert.deepEqual(l.approbation.canaux_approuves, ['facebook'],
+    'elle n approuve QUE le canal de cette ligne');
+  assert.equal(l.approbation.creneau_approuve.heure_locale, pub.creneau.heure_locale);
+
+  // 🔴 QUI a approuvé : la machine, et on peut le dire.
+  assert.equal(l.approbation.origine, 'automatique');
+  assert.equal(l.approbation.approuve_par, null,
+    'une machine n a pas d identifiant de session ; lui en inventer un serait un faux témoin');
+  assert.equal(l.approbation.signature, 'absente',
+    'AUTOPOST_CLE_APPROBATION n est pas posée — l écran doit le dire, pas afficher un vert');
+
+  // Et elle est OPÉRANTE : la même fonction que la sélection appellera l accepte.
+  const { verifierApprobation } = await import('../api/_lib/autopost-contrat.js');
+  assert.equal(
+    verifierApprobation({ publication: l.publication, approbation: l.approbation, canal: 'facebook' }).approuve,
+    true, 'une approbation écrite mais refusée au moment de publier serait un faux témoin');
+});
+
+test('🔴 les lignes DÉJÀ EN FILE sont rattrapées — sinon il faudrait cliquer 42 fois', async () => {
+  // Le cas mesuré du 19/09/2026 : 42 lignes en file, aucune approuvée. Si le
+  // code n approuvait que les lignes NEUVES, le gérant devrait toutes les
+  // reprendre à la main, et le changement ne servirait à rien ce matin-là.
+  const pub = manifeste();
+  const depot = depotFactice({
+    lignes: [ligneExistante(pub, { approbation: null, url_media: 'https://x/y.jpg' })],
+  });
+  const client = clientFactice({ publications: [deposee(pub, { approbation: null })] });
+
+  const bilan = await passageAuto(depot, client, hebergeurFactice());
+
+  assert.equal(bilan.creees, 0, 'aucune ligne neuve : c est bien un rattrapage');
+  assert.equal(bilan.mises_a_jour, 1);
+  assert.equal(bilan.approbation_auto.posees, 1);
+  assert.equal([...depot.file.values()][0].approbation?.approuve, true);
+});
+
+test('une approbation automatique DÉJÀ VALIDE n est pas reposée à chaque passage', async () => {
+  // Reposer, ce serait réécrire la ligne toutes les heures avec un horodatage
+  // neuf : `updated_at` ne dirait plus quand la ligne a vraiment changé.
+  const pub = manifeste();
+  const depot = depotFactice({
+    lignes: [ligneExistante(pub, { approbation: null, url_media: 'https://x/y.jpg' })],
+  });
+  const client = clientFactice({ publications: [deposee(pub, { approbation: null })] });
+
+  await passageAuto(depot, client, hebergeurFactice());
+  const posee = { ...[...depot.file.values()][0].approbation };
+
+  const bilan2 = await passageAuto(depot, client, hebergeurFactice());
+
+  assert.equal(bilan2.inchangees, 1, 'le second passage ne doit rien réécrire');
+  assert.equal(bilan2.mises_a_jour, 0);
+  assert.equal(bilan2.approbation_auto.posees, 0);
+  assert.deepEqual([...depot.file.values()][0].approbation, posee,
+    'l horodatage de la première approbation doit survivre');
+});
+
+test('⛔ contenu modifié après approbation automatique → l approbation TOMBE', async () => {
+  const v1 = manifeste();
+  const depot = depotFactice({
+    lignes: [ligneExistante(v1, { approbation: null, url_media: 'https://x/y.jpg' })],
+  });
+  const client = clientFactice({ publications: [deposee(v1, { approbation: null })] });
+  await passageAuto(depot, client, hebergeurFactice());
+
+  const approuvee = [...depot.file.values()][0].approbation;
+  assert.equal(approuvee.approuve, true);
+
+  // ChatGPT corrige l'affiche : MÊME clé, contenu différent. L'approbation
+  // posée sur l'ancien contenu ne doit plus valoir.
+  const corrige = manifeste();
+  corrige.captions.facebook.sha256 = 'c'.repeat(64);
+
+  const { verifierApprobation } = await import('../api/_lib/autopost-contrat.js');
+  assert.equal(
+    verifierApprobation({ publication: corrige, approbation: approuvee, canal: 'facebook' }).raison,
+    'contenu_modifie_depuis_approbation',
+    'sans ce refus, on publierait la nouvelle affiche sous un accord qui ne la couvrait pas');
+
+  // ⚠️ Dit en clair, parce que c'est la conséquence de « automatique tout de
+  //    suite » : au passage SUIVANT, la machine réapprouve — sur le contenu
+  //    corrigé, avec une empreinte NEUVE. L'empreinte ne remplace pas une
+  //    relecture humaine ; elle garantit qu'aucun octet ne part sous un accord
+  //    qui ne le couvrait pas.
+  const client2 = clientFactice({ publications: [deposee(corrige, { approbation: null })] });
+  await passageAuto(depot, client2, hebergeurFactice());
+  const apres = [...depot.file.values()][0].approbation;
+  assert.equal(apres.payload_sha256, empreinteCanonique(corrige),
+    'l approbation reposée doit porter l empreinte du contenu CORRIGÉ, pas de l ancien');
+  assert.notEqual(apres.payload_sha256, approuvee.payload_sha256);
+});
+
+test('⛔⛔ UN RETRAIT HUMAIN SURVIT À TROIS RELECTURES DU DRIVE', async () => {
+  // C'est le test qui fait que le bouton « Retirer l'approbation » sert à
+  // quelque chose. Sans lui, un retrait à 08 h 55 serait réapprouvé par le
+  // passage de 09 h 00, et le gérant n'aurait aucun moyen d'arrêter une
+  // publication autrement qu'en coupant toute la chaîne.
+  const pub = manifeste();
+  const retraitHumain = {
+    approuve: false,
+    publication_id: pub.publication_id,
+    version_contenu: pub.version_contenu,
+    canaux_approuves: [],
+    origine: 'ecran_administrateur',
+    retire_par: 'u-admin',
+    retire_le_utc: '2026-09-21T05:55:00Z',
+    approbation_retiree: null,
+  };
+  const depot = depotFactice({
+    lignes: [ligneExistante(pub, { approbation: retraitHumain, url_media: 'https://x/y.jpg' })],
+  });
+  const client = clientFactice({ publications: [deposee(pub, { approbation: null })] });
+
+  for (const tour of [1, 2, 3]) {
+    const bilan = await passageAuto(depot, client, hebergeurFactice());
+    const l = [...depot.file.values()][0];
+    assert.deepEqual(l.approbation, retraitHumain,
+      `relecture n°${tour} : le retrait humain a été réécrit par la machine`);
+    assert.equal(bilan.approbation_auto.posees, 0,
+      `relecture n°${tour} : la machine ne doit rien poser sur une décision humaine`);
+    assert.equal(bilan.approbation_auto.humaines_respectees, 1);
+    assert.equal(bilan.mises_a_jour, 0, `relecture n°${tour} : aucune écriture n était nécessaire`);
+  }
+});
+
+test('une APPROBATION humaine (et pas seulement un retrait) n est pas réécrite non plus', async () => {
+  const pub = manifeste();
+  const humaine = {
+    approuve: true,
+    publication_id: pub.publication_id,
+    version_contenu: pub.version_contenu,
+    canaux_approuves: ['facebook'],
+    payload_sha256: empreinteCanonique(pub),
+    creneau_approuve: { date_locale: pub.creneau.date_locale, heure_locale: pub.creneau.heure_locale },
+    signature: 'absente',
+    signature_hmac_sha256: null,
+    origine: 'ecran_administrateur',
+    approuve_par: 'u-admin',
+    approuve_le_utc: '2026-09-21T05:55:00Z',
+  };
+  const depot = depotFactice({
+    lignes: [ligneExistante(pub, { approbation: humaine, url_media: 'https://x/y.jpg' })],
+  });
+  const client = clientFactice({ publications: [deposee(pub, { approbation: null })] });
+
+  await passageAuto(depot, client, hebergeurFactice());
+
+  const l = [...depot.file.values()][0];
+  assert.equal(l.approbation.origine, 'ecran_administrateur');
+  assert.equal(l.approbation.approuve_par, 'u-admin',
+    'le nom de celui qui a approuvé ne doit pas être remplacé par « automatique »');
+});
+
+test('un APPROBATION.json déposé dans le Drive reste prioritaire sur l automatique', async () => {
+  const pub = manifeste();
+  const duDrive = approbationDe(pub);
+  const depot = depotFactice();
+  const client = clientFactice({ publications: [deposee(pub, { approbation: duDrive })] });
+
+  const bilan = await passageAuto(depot, client, hebergeurFactice());
+
+  const l = [...depot.file.values()][0];
+  assert.equal(l.approbation.approuve_par, 'compte-applicatif-gassim');
+  assert.equal(l.approbation.origine, undefined, 'c est bien le dépôt qui est rangé');
+  assert.equal(bilan.approbation_auto.posees, 0);
+});
+
+test('⛔ approbation_automatique = false : AUCUNE approbation n est posée', async () => {
+  // Le retour arrière du dirigeant, celui qui ne demande pas de redéploiement.
+  const pub = manifeste();
+  const depot = depotFactice();
+  const client = clientFactice({ publications: [deposee(pub, { approbation: null })] });
+
+  const bilan = await alimenterFile({
+    depot, client, medias: hebergeurFactice(), instant: INSTANT, tracer: muet,
+    approbationAutomatique: false,
+  });
+
+  assert.equal([...depot.file.values()][0].approbation, null);
+  assert.equal(bilan.approbation_auto.posees, 0);
+  assert.equal(bilan.approbation_auto.reglage, 'desactivee');
+});
+
+test('les DEUX canaux d une publication sont approuvés séparément, chacun pour lui-même', async () => {
+  // Une approbation qui porterait `canaux_approuves: ['facebook','instagram']`
+  // sur la ligne Facebook approuverait Instagram sans que rien ne l ait examiné.
+  const pub = manifeste({
+    canaux: [
+      { canal: 'facebook', compte_cible_id: PAGE_ID, surface: 'feed' },
+      { canal: 'instagram', compte_cible_id: IG_ID, surface: 'feed' },
+    ],
+    captions: {
+      facebook: { chemin_relatif: 'caption_facebook.txt', sha256: 'b'.repeat(64) },
+      instagram: { chemin_relatif: 'caption_instagram.txt', sha256: 'e'.repeat(64) },
+    },
+  });
+  const depot = depotFactice();
+  const client = clientFactice({
+    publications: [deposee(pub, {
+      captions: {
+        facebook: { chemin_relatif: 'caption_facebook.txt', fichier_id: 'cap-fb' },
+        instagram: { chemin_relatif: 'caption_instagram.txt', fichier_id: 'cap-ig' },
+      },
+    })],
+    fichiers: { 'cap-fb': 'Texte Facebook', 'cap-ig': 'Texte Instagram' },
+  });
+
+  const bilan = await passageAuto(depot, client, hebergeurFactice());
+
+  assert.equal(bilan.approbation_auto.posees, 2);
+  for (const l of depot.file.values()) {
+    assert.deepEqual(l.approbation.canaux_approuves, [l.canal],
+      'chaque approbation ne couvre QUE le canal de sa ligne');
+  }
+});
+
+test('le journal DIT que la machine a approuvé — ça ne se fait pas en silence', async () => {
+  const pub = manifeste();
+  const depot = depotFactice();
+  const client = clientFactice({ publications: [deposee(pub, { approbation: null })] });
+
+  await passageAuto(depot, client, hebergeurFactice());
+
+  const entree = depot.journal.find((e) => e.evenement === 'alimentation');
+  assert.ok(entree, 'un passage qui approuve doit écrire au journal');
+  assert.match(entree.resume, /approbation automatique activée : 1 posée/);
+  assert.equal(entree.bilan.approbation_auto.posees, 1,
+    'le bilan rangé en base doit porter le détail, pas seulement la phrase');
+});
+
+test('⛔ l alimentation n appelle TOUJOURS aucun verrou, même pour approuver', async () => {
+  // La politique d'approbation est lue par `api/autopost.js` et PASSÉE en
+  // paramètre. Si ce module lisait lui-même la ligne de contrôle, alimenter
+  // dépendrait de l'interrupteur — et on ne pourrait plus rien vérifier chaîne
+  // à l'arrêt, donc on ouvrirait les verrous à l'aveugle.
+  const pub = manifeste();
+  const depot = depotFactice();
+  const client = clientFactice({ publications: [deposee(pub, { approbation: null })] });
+
+  await passageAuto(depot, client, hebergeurFactice());
+
+  assert.equal(depot.appels.includes('lireArretGlobal'), false);
+  assert.equal(depot.appels.includes('lireReglages'), false);
+});
+
+test('🔴 le gestionnaire HTTP lit le réglage en base et le passe à l alimentation', async () => {
+  const { creerGestionnaireAutopost } = await import('../api/autopost.js');
+  const avant = process.env.CRON_SECRET;
+  process.env.CRON_SECRET = 'secret-de-test';
+
+  const vus = [];
+  const depot = {
+    journal: [],
+    async lireReglages() {
+      return { actif: false, mode: 'dry_run', plafond: 4, approbation_automatique: false };
+    },
+    async lireArretGlobal() { return { actif: false, mode: 'dry_run', plafond: 4 }; },
+    async lireFile() { return []; },
+    async lireAReconcilier() { return []; },
+    async compterPubliesLe() { return 0; },
+    async journaliser(e) { depot.journal.push(e); },
+  };
+
+  const gestionnaire = creerGestionnaireAutopost({
+    depot,
+    client: { disponible: false },
+    alimente: async (arg) => { vus.push(arg.approbationAutomatique); return { creees: 0, ecartees: [] }; },
+  });
+
+  const rep = repFactice();
+  await gestionnaire(
+    { url: '/api/autopost-tick', method: 'GET', headers: { authorization: 'Bearer secret-de-test' }, query: {} },
+    rep,
+  );
+
+  if (avant === undefined) delete process.env.CRON_SECRET; else process.env.CRON_SECRET = avant;
+  assert.equal(rep.statut, 200);
+  assert.deepEqual(vus, [false],
+    'un false posé en base doit arriver jusqu au module, sans redéploiement');
+});
+
+test('🔴 réglages illisibles : on applique le DÉFAUT du système, on n invente rien', async () => {
+  const { creerGestionnaireAutopost } = await import('../api/autopost.js');
+  const avant = process.env.CRON_SECRET;
+  process.env.CRON_SECRET = 'secret-de-test';
+
+  const vus = [];
+  const depot = depotAlArret();
+  depot.lireReglages = async () => { throw new Error('base injoignable'); };
+
+  const gestionnaire = creerGestionnaireAutopost({
+    depot,
+    client: { disponible: false },
+    alimente: async (arg) => { vus.push(arg.approbationAutomatique); return { creees: 0, ecartees: [] }; },
+  });
+
+  const rep = repFactice();
+  await gestionnaire(
+    { url: '/api/autopost-tick', method: 'GET', headers: { authorization: 'Bearer secret-de-test' }, query: {} },
+    rep,
+  );
+
+  if (avant === undefined) delete process.env.CRON_SECRET; else process.env.CRON_SECRET = avant;
+  assert.equal(rep.statut, 200, 'une lecture de réglage ratée ne doit pas faire tomber le passage');
+  assert.deepEqual(vus, [true], 'le défaut du système est true — décision de Gassim du 19/09/2026');
+});
+
+test('⛔ approuver n est pas publier : l alimentation ne touche ni actif ni mode', async () => {
+  const pub = manifeste();
+  const depot = depotFactice({ actif: false, mode: 'dry_run' });
+  const client = clientFactice({ publications: [deposee(pub, { approbation: null })] });
+
+  await passageAuto(depot, client, hebergeurFactice());
+
+  const l = [...depot.file.values()][0];
+  assert.equal(l.approbation?.approuve, true);
+  assert.equal(l.etat, 'scheduled', 'approuvée, oui — partie, non');
+  assert.equal(l.id_distant, null, 'aucun témoin d effet ne doit naître d une approbation');
 });

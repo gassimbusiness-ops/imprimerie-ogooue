@@ -333,6 +333,34 @@ export function signerApprobation(approbation, cleSignature) {
 export const ORIGINE_ECRAN = 'ecran_administrateur';
 
 /**
+ * Marque de provenance d'une approbation POSÉE PAR LA MACHINE, à l'entrée en
+ * file (`api/_lib/autopost-alimentation.js`, réglage `approbation_automatique`).
+ *
+ * 🔴 ELLE EXISTE POUR UNE SEULE RAISON : pouvoir toujours répondre à « qui a
+ * approuvé cette publication ? ». Une approbation automatique porte
+ * `origine: 'automatique'` et `approuve_par: null` ; une approbation humaine
+ * porte `origine: 'ecran_administrateur'` et l'identifiant de session de celui
+ * qui a cliqué. L'écran affiche l'un ou l'autre, jamais un vert indistinct.
+ *
+ * ⚠️ Comme `ORIGINE_ECRAN`, ce n'est pas une PREUVE : c'est du texte, qu'un
+ * `APPROBATION.json` déposé dans le Drive pourrait recopier. Ce qui prouve
+ * reste la signature HMAC — donc `AUTOPOST_CLE_APPROBATION`, toujours absente.
+ */
+export const ORIGINE_AUTOMATIQUE = 'automatique';
+
+/**
+ * Une approbation (ou un retrait) décidée par un HUMAIN depuis l'écran.
+ *
+ * ⛔ C'est le prédicat qui fait gagner le bouton « Retirer l'approbation »
+ * contre l'approbation automatique : tant qu'il rend `true`, aucun passage ne
+ * réécrit cette décision. Sans lui, un retrait à 08 h 55 serait réapprouvé par
+ * le passage de 09 h 00 — et le bouton ne servirait à rien.
+ */
+export function estDecisionHumaine(approbation) {
+  return approbation?.origine === ORIGINE_ECRAN;
+}
+
+/**
  * Ce que l'alimentation doit RANGER dans la colonne `approbation` d'une ligne
  * de file déjà présente, quand elle réécrit cette ligne depuis le Drive.
  *
@@ -348,12 +376,18 @@ export const ORIGINE_ECRAN = 'ecran_administrateur';
  * contenu, `verifierApprobation()` la refuse d'elle-même avec
  * `contenu_modifie_depuis_approbation`.
  *
+ * ⛔ Depuis le 19/09/2026, une approbation AUTOMATIQUE est conservée elle aussi.
+ * Sans ça, l'alimentation la reposerait à chaque passage avec un horodatage
+ * neuf : la file serait réécrite deux fois par jour pour rien, et `updated_at`
+ * ne dirait plus quand la ligne a réellement changé.
+ *
  * @param {object|null} approbationDuDepot
  * @param {object|null} approbationDeLaLigne
  * @returns {object|null}
  */
 export function approbationARetenir(approbationDuDepot, approbationDeLaLigne) {
   if (approbationDuDepot) return approbationDuDepot;
-  if (approbationDeLaLigne?.origine === ORIGINE_ECRAN) return approbationDeLaLigne;
+  const o = approbationDeLaLigne?.origine;
+  if (o === ORIGINE_ECRAN || o === ORIGINE_AUTOMATIQUE) return approbationDeLaLigne;
   return null;
 }

@@ -15,8 +15,21 @@
  * Ce module est ce chaînon, et RIEN d'autre :
  *
  *   ⛔ il ne publie pas. Il n'appelle ni Facebook, ni Instagram.
- *   ⛔ il n'approuve pas. Une ligne qui s'auto-approuverait serait le pire
- *      défaut possible de cette chaîne.
+ *   ⚠️ IL APPROUVE — depuis le 19/09/2026, et SEULEMENT si l'appelant le lui
+ *      demande. Ce paragraphe disait le contraire jusqu'à cette date : « une
+ *      ligne qui s'auto-approuverait serait le pire défaut possible de cette
+ *      chaîne ». Gassim a tranché autrement, en connaissant la réserve (ChatGPT
+ *      vérifie le FORMAT du manifeste, pas le JUGEMENT éditorial) : « automatique
+ *      tout de suite ». Le réglage vit en base (`autopost_controle.
+ *      approbation_automatique`, défaut `true`) pour qu'on puisse revenir en
+ *      arrière SANS redéployer. Trois choses restent, et elles font la
+ *      différence entre « automatique » et « aveugle » :
+ *        · l'empreinte du contenu est calculée et portée par l'approbation ;
+ *        · une décision HUMAINE (approbation ou retrait) n'est jamais réécrite ;
+ *        · l'objet écrit dit `origine: 'automatique'`, donc on sait toujours qui
+ *          a approuvé quoi.
+ *      Voir `approbationPourLaLigne()` plus bas, et
+ *      `construireApprobationAutomatique()` dans `autopost-approbation.js`.
  *   ⛔ il n'ouvre aucun verrou. Les cinq verrous restent où ils sont : alimenter
  *      n'est pas publier, et l'alimentation doit fonctionner CHAÎNE À L'ARRÊT —
  *      sinon on ne pourrait rien vérifier avant d'ouvrir les verrous, et on les
@@ -162,7 +175,15 @@
 import crypto from 'node:crypto';
 import {
   validerManifeste, cleIdempotence, empreinteCanonique, CANAUX_PUBLIANTS, approbationARetenir,
+  verifierApprobation, estDecisionHumaine, ORIGINE_AUTOMATIQUE,
 } from './autopost-contrat.js';
+// ⚠️ Import CROISÉ avec `autopost-approbation.js`, qui lit `ETATS_MODIFIABLES`
+//    ici. Il est sûr parce qu'aucun des deux ne DÉRÉFÉRENCE l'autre au moment
+//    de l'évaluation du module : les deux usages sont dans des corps de
+//    fonction. Et c'est le bon compromis : l'objet d'approbation est fabriqué à
+//    UN SEUL endroit dans tout le dépôt. Deux fabricants, ce seraient deux
+//    formes d'approbation, et un jour l'une des deux ne serait plus vérifiable.
+import { construireApprobationAutomatique } from './autopost-approbation.js';
 import { erreurDeMedia, CODES_MEDIA, MOTIFS_MEDIA } from './autopost-medias.js';
 import { formaterInstantUtc, dateLocaleDepuisInstantUtc } from '../../src/lib/dates.js';
 
@@ -186,27 +207,94 @@ export const ETAT_ENTREE = 'scheduled';
 export const TOLERANCE_PAR_DEFAUT = 90;
 
 /**
- * 🔴 LE BUDGET DE TÉLÉVERSEMENTS D'UN PASSAGE.
+ * 🔴 LE BUDGET D'HÉBERGEMENT D'UN PASSAGE — COMPTÉ EN TEMPS, PAS EN FICHIERS.
  *
- * Alimenter était jusqu'ici une affaire de listings et de quelques fichiers
- * texte. Depuis l'hébergement des médias, un passage peut avoir à descendre
- * puis remonter plusieurs mégaoctets — et les 14 publications qui attendent
- * dans le Drive en feraient une vingtaine d'un coup, au premier passage.
+ * ════════════════════════════════════════════════════════════════════════════
+ * LE PROBLÈME, ET LA MESURE QUI L'A MONTRÉ
+ * ════════════════════════════════════════════════════════════════════════════
  *
- * Or l'alimentation tourne DANS la même fonction serverless que la publication.
- * Une alimentation qui fait expirer la fonction n'empêche pas seulement
- * d'alimenter : elle empêche de PUBLIER ce qui est déjà en file. C'est
- * exactement la règle « alimenter et publier sont deux gestes », vue du côté du
- * temps.
+ * Alimenter était une affaire de listings et de fichiers texte. Depuis
+ * l'hébergement des médias, un passage descend puis remonte plusieurs
+ * mégaoctets. Le 19/09/2026, un plafond de SIX téléversements par passage a été
+ * posé par prudence, sans mesure. Résultat mesuré la nuit suivante : **33 lignes
+ * sur 42 attendaient encore un média**, et il aurait fallu presser le bouton
+ * cinq fois de plus. Un plafond en nombre de fichiers ne dit rien du temps
+ * consommé : six petites images ne coûtent pas ce que coûtent six vidéos.
  *
- * Au-delà de ce budget, les médias restants ne sont pas tentés : leur ligne
- * entre quand même en file, sans adresse, et le passage suivant les reprend —
- * ce qui est déjà hébergé ne coûte alors qu'une question au bucket. Un report
- * n'est PAS une erreur : il est compté (`medias.reportes`) et dit au journal,
- * mais il n'écrit rien dans `derniere_erreur`. Un bandeau rouge pour une
- * décision volontaire est un faux témoin, dans l'autre sens.
+ * ════════════════════════════════════════════════════════════════════════════
+ * 🔴 CE QU'ON PROTÈGE, ET POURQUOI C'EST LA PUBLICATION
+ * ════════════════════════════════════════════════════════════════════════════
+ *
+ * L'alimentation tourne DANS la même fonction serverless que la publication, et
+ * AVANT elle (voir `api/autopost.js`). Une alimentation qui fait expirer la
+ * fonction n'empêche pas seulement d'alimenter : elle empêche de PUBLIER ce qui
+ * est DÉJÀ en file, et ça, c'est un rendez-vous manqué sur la page de
+ * l'entreprise. C'est la règle « alimenter et publier sont deux gestes », vue du
+ * côté du temps — et c'est le second qui a la priorité.
+ *
+ * ════════════════════════════════════════════════════════════════════════════
+ * D'OÙ VIENT LE CHIFFRE — IL N'EST PAS DEVINÉ, IL EST DÉCLARÉ
+ * ════════════════════════════════════════════════════════════════════════════
+ *
+ * Ce qui a été vérifié le 19/09/2026 :
+ *
+ *   - `vercel.json` ne déclarait AUCUN `maxDuration` : la fonction tournait donc
+ *     au défaut du projet, c'est-à-dire à un chiffre que personne ici ne
+ *     connaissait ;
+ *   - la documentation Vercel (`/docs/functions/limitations#max-duration`) donne,
+ *     avec fluid compute — activé par défaut sur les nouveaux projets — un plan
+ *     Hobby à **300 s par défaut ET au maximum** ;
+ *   - sans fluid compute, le plafond Hobby est de **60 s**
+ *     (changelog « Vercel Functions for Hobby can now run up to 60 seconds ») ;
+ *   - l'API Vercel n'expose pas lequel des deux régimes s'applique à ce projet.
+ *
+ * Deviner entre 60 et 300 aurait été exactement l'erreur d'origine. On ne devine
+ * donc pas : `vercel.json` DÉCLARE désormais `maxDuration: 60` pour
+ * `api/autopost.js` — une valeur acceptée sous les DEUX régimes — et la constante
+ * ci-dessous recopie ce chiffre. `tests/autopost-alimentation.test.mjs` relit le
+ * `vercel.json` et refuse que les deux divergent : si Gassim passe à 300, le test
+ * le dit au lieu de laisser le code croire à 60.
  */
-export const TELEVERSEMENTS_MAX_PAR_PASSAGE = 6;
+export const DUREE_MAX_FONCTION_MS = 60_000;
+
+/**
+ * Ce qu'on GARDE pour la suite du passage : publier ce qui est déjà en file
+ * (jusqu'à `plafond_journalier` appels à Meta), écrire le journal, rendre la
+ * réponse. Une marge franche, volontairement plus grande que le budget lui-même :
+ * dépasser ne coûte pas l'alimentation, ça coûte la publication.
+ */
+export const RESERVE_PUBLICATION_MS = 35_000;
+
+/**
+ * Le budget réel : ~25 s. Tant qu'il reste du temps, on héberge. Au-delà, on
+ * n'ENGAGE plus de nouveau téléversement — celui qui est en cours va au bout,
+ * d'où la marge.
+ */
+export const BUDGET_HEBERGEMENT_MS = DUREE_MAX_FONCTION_MS - RESERVE_PUBLICATION_MS;
+
+/**
+ * 🔴 LE PLAFOND DE SÉCURITÉ, AU CAS OÙ LE CHRONOMÈTRE MENTIRAIT.
+ *
+ * Un chronomètre gelé (horloge non monotone, machine suspendue) rendrait le
+ * budget de temps inopérant et laisserait l'hébergement tourner sans fin. Ce
+ * plafond est la ceinture qui va avec les bretelles : plus haut que le besoin
+ * mesuré (14 fichiers distincts dans le Drive, les canaux d'une même publication
+ * partageant le même objet), assez bas pour rester borné.
+ */
+export const TELEVERSEMENTS_MAX_PAR_PASSAGE = 40;
+
+/**
+ * Pourquoi un média a été REPORTÉ. Un report n'est PAS une erreur : il est
+ * compté (`medias.reportes`) et dit au journal, mais il n'écrit rien dans
+ * `derniere_erreur`. Un bandeau rouge pour une décision volontaire serait un
+ * faux témoin, dans l'autre sens. La ligne entre quand même en file, sans
+ * adresse, et le passage suivant la reprend — ce qui est déjà hébergé ne coûte
+ * alors qu'une question au bucket.
+ */
+export const MOTIFS_REPORT = Object.freeze({
+  BUDGET_TEMPS: 'budget_temps_epuise',
+  PLAFOND_TELEVERSEMENTS: 'plafond_televersements_atteint',
+});
 
 /**
  * Pourquoi un canal n'est pas entré en file. Ces chaînes sont écrites dans le
@@ -311,6 +399,62 @@ function champsDuMedia(media, existante, instantUtc, { contenuChange = false } =
 }
 
 /**
+ * ⛔ CE QUE LA COLONNE `approbation` DOIT PORTER APRÈS CE PASSAGE.
+ *
+ * ════════════════════════════════════════════════════════════════════════════
+ * L'ORDRE DE PRÉSÉANCE, ET IL N'EST PAS NÉGOCIABLE
+ * ════════════════════════════════════════════════════════════════════════════
+ *
+ *   1. **Un humain d'abord.** Une approbation — ou un RETRAIT — venu de l'écran
+ *      gagne sur tout. C'est ce qui fait que le bouton « Retirer l'approbation »
+ *      sert à quelque chose : un retrait à 08 h 55 survit aux passages de 09 h,
+ *      10 h et 11 h. Sans cette branche, la machine réapprouverait ce qu'un
+ *      humain vient de refuser, et le bouton serait un décor.
+ *   2. **Puis le dépôt.** Un `APPROBATION.json` posé dans le Drive est repris
+ *      tel quel (règle d'avant, inchangée).
+ *   3. **Puis l'automatique DÉJÀ VALIDE.** On ne la repose pas : reposer, ce
+ *      serait réécrire la ligne à chaque passage avec un horodatage neuf, et
+ *      `updated_at` ne dirait plus quand la ligne a vraiment changé.
+ *   4. **Sinon, la machine approuve** — et seulement si le réglage le demande.
+ *
+ * ⛔ L'AUTO-CONTRÔLE DE LA MAISON EST GARDÉ : l'objet fabriqué repasse par
+ * `verifierApprobation()`, la MÊME fonction que la sélection appellera au moment
+ * de publier. Une approbation écrite mais inopérante serait un faux témoin — le
+ * gérant verrait « approuvé » et rien ne partirait. Si elle refuse, on n'écrit
+ * pas et le motif est rangé dans le bilan.
+ *
+ * @returns {{approbation: object|null, posee: boolean, humaine: boolean, refus: string|null}}
+ */
+function approbationPourLaLigne({
+  publication, canal, approbationDuDepot, approbationDeLaLigne,
+  automatique, instant, cleSignature,
+}) {
+  const retenue = approbationARetenir(approbationDuDepot, approbationDeLaLigne);
+  const humaine = estDecisionHumaine(retenue);
+  const inchange = { approbation: retenue, posee: false, humaine, refus: null };
+
+  if (!automatique) return inchange;
+  // 1. et 2. — l'humain, puis le dépôt. Tout ce qui n'est pas de la machine.
+  if (retenue && retenue.origine !== ORIGINE_AUTOMATIQUE) return inchange;
+  // 3. — une approbation automatique qui tient encore debout ne se repose pas.
+  if (retenue && verifierApprobation({
+    publication, approbation: retenue, canal, cleSignature,
+  }).approuve) return inchange;
+
+  // 4. — la machine approuve. L'empreinte du contenu est recalculée ici.
+  const neuve = construireApprobationAutomatique({
+    publication, canal, instant, cleSignature,
+  });
+  const controle = verifierApprobation({
+    publication, approbation: neuve, canal, cleSignature,
+  });
+  if (!controle.approuve) {
+    return { approbation: retenue, posee: false, humaine, refus: controle.raison };
+  }
+  return { approbation: neuve, posee: true, humaine: false, refus: null };
+}
+
+/**
  * ⛔ LE MAILLON. Lit les publications conformes du Drive et crée les lignes de
  * file correspondantes.
  *
@@ -323,6 +467,16 @@ function champsDuMedia(media, existante, instantUtc, { contenuChange = false } =
  * @param {object} [arg.medias] hébergeur de `autopost-medias.js` (`heberger`).
  *   Absent, les lignes entrent sans média joignable — et le bilan le dit.
  * @param {number} [arg.televersementsMax] voir `TELEVERSEMENTS_MAX_PAR_PASSAGE`
+ * @param {number} [arg.budgetHebergementMs] voir `BUDGET_HEBERGEMENT_MS`
+ * @param {Function} [arg.horloge] chronomètre monotone, injecté pour les tests
+ * @param {boolean} [arg.approbationAutomatique] réglage `autopost_controle.approbation_automatique`.
+ *   ⛔ DÉFAUT `false`, et ce défaut est voulu : ce module ne décide pas de la
+ *   politique d'approbation, il l'applique. Sans consigne explicite de
+ *   l'appelant, il n'approuve RIEN — c'est la garantie qu'un futur appelant
+ *   distrait (un script, un test, un outil de reprise) ne peut pas approuver
+ *   par omission. La valeur par défaut du SYSTÈME, elle, est `true` : elle est
+ *   en base, pas ici.
+ * @param {string|null} [arg.cleSignature] `AUTOPOST_CLE_APPROBATION`, si posée
  * @param {Date|string} [arg.instant]
  * @param {Function} [arg.tracer]
  * @returns {Promise<object>} bilan de l'alimentation
@@ -332,10 +486,21 @@ export async function alimenterFile({
   client,
   medias = null,
   televersementsMax = TELEVERSEMENTS_MAX_PAR_PASSAGE,
+  budgetHebergementMs = BUDGET_HEBERGEMENT_MS,
+  horloge = () => Date.now(),
+  approbationAutomatique = false,
+  cleSignature = null,
   instant = new Date(),
   tracer = (...a) => console.log(...a),
 }) {
   const instantUtc = typeof instant === 'string' ? instant : formaterInstantUtc(instant);
+  /* 🔴 Le chronomètre part ICI, pas au premier téléversement. L'alimentation est
+     la PREMIÈRE chose que fait un passage (`api/autopost.js`) : le temps déjà
+     consommé par le listing du Drive et par la lecture des légendes fait donc
+     bien partie du budget. Le compter à partir du premier téléversement
+     laisserait ce temps-là hors du compte, et la marge serait fausse. */
+  const debut = horloge();
+  const ecoule = () => horloge() - debut;
   const bilan = {
     instant_utc: instantUtc,
     // ⚠️ La date de MOANDA à cet instant, pas celle du serveur Vercel (UTC).
@@ -364,7 +529,28 @@ export async function alimenterFile({
       heberges: 0,
       deja_presents: 0,
       reportes: 0,
+      // Pourquoi le report a eu lieu, ou `null` s'il n'y en a pas eu. Sans ça,
+      // « 12 reporté(s) » ne dirait pas s'il faut allonger le budget ou lever
+      // le plafond — deux gestes différents.
+      motif_report: null,
+      budget_ms: budgetHebergementMs,
+      televersements_max: televersementsMax,
+      televerses: 0,
+      duree_ms: 0,
       ecartes: [],
+    },
+    /**
+     * L'approbation automatique, comptée à part — jamais mélangée aux médias ni
+     * aux écartements. Le gérant doit pouvoir lire, en une ligne du journal,
+     * combien de publications la machine a approuvées à sa place.
+     */
+    approbation_auto: {
+      reglage: approbationAutomatique ? 'activee' : 'desactivee',
+      posees: 0,
+      // Décisions humaines rencontrées et LAISSÉES EN PLACE. C'est le compteur
+      // qui prouve que le bouton « Retirer l'approbation » gagne.
+      humaines_respectees: 0,
+      refusees: [],
     },
   };
 
@@ -395,12 +581,23 @@ export async function alimenterFile({
     const cleH = `${depose?.publication?.publication_id ?? ''}|${canal}`;
     if (hebergements.has(cleH)) return hebergements.get(cleH);
 
-    // ⛔ Le budget se compte en TÉLÉVERSEMENTS RÉELS, pas en tentatives : un
-    //    média déjà hébergé ne coûte qu'une question au bucket et ne doit pas
-    //    consommer le droit de déposer celui qui suit.
-    if (televersements >= televersementsMax) {
+    /* 🔴 LE BUDGET, DANS CET ORDRE.
+       D'abord le TEMPS — c'est lui qui protège la publication. Puis le plafond
+       en nombre, la ceinture qui va avec les bretelles au cas où le chronomètre
+       mentirait (horloge gelée, machine suspendue).
+
+       ⛔ Le plafond se compte en TÉLÉVERSEMENTS RÉELS, pas en tentatives : un
+       média déjà hébergé ne coûte qu'une question au bucket et ne doit pas
+       consommer le droit de déposer celui qui suit. Le temps, lui, se compte
+       toujours : une question au bucket prend du temps elle aussi. */
+    const motifReport = ecoule() >= budgetHebergementMs
+      ? MOTIFS_REPORT.BUDGET_TEMPS
+      : (televersements >= televersementsMax ? MOTIFS_REPORT.PLAFOND_TELEVERSEMENTS : null);
+    if (motifReport) {
       bilan.medias.reportes += 1;
-      tracer('[autopost] média reporté au prochain passage (budget atteint) : %s', cleH);
+      bilan.medias.motif_report = bilan.medias.motif_report || motifReport;
+      tracer('[autopost] média reporté au prochain passage (%s, %d ms écoulées) : %s',
+        motifReport, ecoule(), cleH);
       return null;
     }
 
@@ -420,7 +617,10 @@ export async function alimenterFile({
       tracer('[autopost] hébergement impossible : %s', err?.message || err);
     }
 
-    if (resultat?.televerse) televersements += 1;
+    if (resultat?.televerse) {
+      televersements += 1;
+      bilan.medias.televerses = televersements;
+    }
 
     if (resultat?.url) {
       if (resultat.deja_present) bilan.medias.deja_presents += 1;
@@ -570,8 +770,32 @@ export async function alimenterFile({
          donnée à 08 h 55 était donc effacée par le passage de 09 h 00, juste
          avant d'être lue : l'écran d'approbation n'aurait pas tenu une heure.
          `approbationARetenir()` porte la règle, et son commentaire dit pourquoi
-         conserver n'est pas contourner. */
-      const approbationRetenue = approbationARetenir(depot_.approbation, existante?.approbation);
+         conserver n'est pas contourner.
+
+         🔴 Et depuis le 19/09/2026, la machine APPROUVE ici quand le réglage
+         `approbation_automatique` le demande — y compris pour les lignes DÉJÀ
+         en file : sans ça, les 42 lignes mesurées cette nuit-là seraient restées
+         à approuver une par une. `approbationPourLaLigne()` porte l'ordre de
+         préséance, et l'humain y passe devant la machine. */
+      const decision = approbationPourLaLigne({
+        publication: pub,
+        canal: canal.canal,
+        approbationDuDepot: depot_.approbation,
+        approbationDeLaLigne: existante?.approbation,
+        automatique: approbationAutomatique,
+        instant: instantUtc,
+        cleSignature,
+      });
+      const approbationRetenue = decision.approbation;
+      if (decision.posee) bilan.approbation_auto.posees += 1;
+      if (decision.humaine) bilan.approbation_auto.humaines_respectees += 1;
+      if (decision.refus) {
+        bilan.approbation_auto.refusees.push({
+          publication_id: pub.publication_id,
+          canal: canal.canal,
+          raison: decision.refus,
+        });
+      }
 
       const empreinte = empreinteDepot({
         publication: pub,
@@ -707,8 +931,12 @@ export async function alimenterFile({
         url_media: mediaNeuf?.url ?? null,
         derniere_erreur: erreurDeMedia(mediaNeuf, instantUtc),
         publication: pub,
-        // ⛔ Ce qui a été déposé, ou `null`. JAMAIS une approbation fabriquée.
-        approbation: depot_.approbation ?? null,
+        /* 🔴 Ce qui a été déposé, ou — si et seulement si `approbation_automatique`
+           est demandée — l'approbation posée par la machine à CETTE insertion.
+           Elle porte `origine: 'automatique'`, `approuve_par: null` et
+           l'empreinte du contenu : on peut toujours dire QUI a approuvé, et QUOI.
+           Réglage désactivé : `null`, comme avant, et rien ne s'auto-approuve. */
+        approbation: approbationRetenue,
       });
 
       if (issue?.insere) {
@@ -723,6 +951,7 @@ export async function alimenterFile({
     }
   }
 
+  bilan.medias.duree_ms = ecoule();
   await journaliserSiUtile({ depot, bilan, instantUtc });
   return bilan;
 }
@@ -741,8 +970,13 @@ async function journaliserSiUtile({ depot, bilan, instantUtc, force = false }) {
   // Un média nouvellement hébergé — ou refusé — est un changement : sans lui
   // dans ce calcul, le passage qui débloque enfin une publication resterait
   // muet au journal.
+  const a = bilan.approbation_auto || { reglage: 'desactivee', posees: 0, refusees: [] };
   const change = bilan.creees + bilan.mises_a_jour + bilan.remplacees
-    + (m.heberges || 0) + (m.ecartes?.length || 0);
+    + (m.heberges || 0) + (m.ecartes?.length || 0)
+    // Une approbation posée par la machine est un changement qui se dit, même
+    // si rien d'autre n'a bougé : c'est la chaîne qui décide à la place du
+    // gérant, et ça ne se fait pas en silence.
+    + (a.posees || 0) + (a.refusees?.length || 0);
   const pannne = bilan.diagnostic && !['ok', 'dossier_vide'].includes(bilan.diagnostic);
   if (!force && change === 0 && !pannne) return;
 
@@ -755,7 +989,16 @@ async function journaliserSiUtile({ depot, bilan, instantUtc, force = false }) {
       + (bilan.conflits ? `, ${bilan.conflits} conflit(s) d'écriture` : '')
       + ` · médias : ${m.heberges || 0} hébergé(s), ${m.deja_presents || 0} déjà là, `
       + `${m.ecartes?.length || 0} sans adresse`
-      + (m.reportes ? `, ${m.reportes} reporté(s) au prochain passage` : ''),
+      + (m.reportes
+        ? `, ${m.reportes} reporté(s) au prochain passage (${m.motif_report}, `
+          + `${m.duree_ms} ms sur un budget de ${m.budget_ms} ms)`
+        : '')
+      // Le journal est lu par le gérant, pas par une machine : la phrase est en
+      // français. Le code (`activee`) reste dans `bilan`, où il se relit.
+      + ` · approbation automatique ${a.reglage === 'activee' ? 'activée' : 'désactivée'}`
+      + ` : ${a.posees || 0} posée(s)`
+      + (a.humaines_respectees ? `, ${a.humaines_respectees} décision(s) humaine(s) respectée(s)` : '')
+      + (a.refusees?.length ? `, ${a.refusees.length} refusée(s) par le contrat` : ''),
     piste: pannne ? bilan.message : null,
     bilan,
   });

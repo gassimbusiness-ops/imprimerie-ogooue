@@ -255,6 +255,29 @@ function PanneauAlimentation({ alimentation }) {
             de publication.json.
           </p>
         )}
+
+        {/* 🔴 CE QUE LA MACHINE A APPROUVÉ À LA PLACE DU GÉRANT, compté à part.
+            Et le REPORT de médias, avec son motif : « 12 reporté(s) » sans
+            motif ne dirait pas s'il faut allonger le budget de temps ou lever
+            le plafond — deux gestes différents. Un report n'est PAS une erreur,
+            d'où le gris et non le rouge. */}
+        {a.approbation_auto && a.approbation_auto.posees > 0 && (
+          <p className="text-sm text-slate-700">
+            <strong>{a.approbation_auto.posees}</strong> publication(s) approuvée(s)
+            automatiquement à l&apos;entrée en file.
+            {a.approbation_auto.humaines_respectees > 0 && (
+              <> {a.approbation_auto.humaines_respectees} décision(s) humaine(s) laissée(s)
+                intacte(s).</>
+            )}
+          </p>
+        )}
+        {a.medias?.reportes > 0 && (
+          <p className="text-sm text-slate-600">
+            {a.medias.reportes} média(s) reporté(s) au prochain passage — le temps réservé à
+            l&apos;hébergement était écoulé ({a.medias.duree_ms} ms sur {a.medias.budget_ms} ms).
+            Ce n&apos;est pas une erreur : la publication de ce qui est déjà en file passe avant.
+          </p>
+        )}
       </CardContent>
     </Card>
   );
@@ -287,7 +310,50 @@ function Bandeau({ etat }) {
         />
         <VoyantDrive drive={etat?.drive} configure={etat?.acces_drive_configure} />
       </CardContent>
+      <LigneApprobationAutomatique controle={etat?.controle} />
     </Card>
+  );
+}
+
+/**
+ * ⛔ LE RÉGLAGE D'APPROBATION AUTOMATIQUE — UNE LIGNE DE TEXTE, SANS BOUTON.
+ *
+ * Gassim a demandé l'automatique et a explicitement refusé l'interrupteur à
+ * l'écran (« pas d'interrupteur […] on va pas utiliser »). Il n'y a donc PAS de
+ * bouton ici, et c'est volontaire.
+ *
+ * Mais un réglage qui décide à la place du gérant et qui ne se voit nulle part
+ * serait un faux témoin de plus : quelqu'un lirait « approuvé » sur 42 lignes
+ * sans savoir que personne ne les a lues. L'état est donc ÉCRIT, en clair, à
+ * côté des autres voyants. Le renverser se fait en base, sans redéployer :
+ *   UPDATE autopost_controle SET approbation_automatique = false WHERE id = 'global';
+ */
+function LigneApprobationAutomatique({ controle }) {
+  if (!controle) return null;
+  const active = controle.approbation_automatique !== false;
+  const sansColonne = controle.reglage_approbation === 'colonne_absente';
+
+  return (
+    <div className="border-t border-slate-200 px-4 py-2 text-sm text-slate-700">
+      <span className="inline-flex items-center gap-1.5">
+        {active
+          ? <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
+          : <ShieldOff className="h-3.5 w-3.5 shrink-0 text-slate-500" />}
+        <span>
+          Approbation automatique : <strong>{active ? 'activée' : 'désactivée'}</strong>
+          {active
+            ? ' — les publications entrent en file déjà approuvées par la machine.'
+            : ' — chaque publication doit être approuvée à la main, ci-dessous.'}
+        </span>
+      </span>
+      {sansColonne && (
+        <div className="mt-1 text-xs text-amber-800">
+          Réglage non encore créé en base (migration 014 non appliquée) : c&apos;est le défaut du
+          code qui s&apos;applique. Tant qu&apos;elle manque, le seul retour arrière est
+          l&apos;arrêt complet de la chaîne.
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -317,6 +383,9 @@ function BlocApprobation({ l, peutApprouver, enCours, surApprobation }) {
   const approuve = a?.approuve === true;
   const retiree = a && a.approuve !== true && a.retire_le_utc;
   const modifiable = !l.id_distant && ETATS_APPROBABLES.includes(l.etat);
+  // `ORIGINE_AUTOMATIQUE` de `api/_lib/autopost-contrat.js`. Recopiée ici plutôt
+  // qu'importée : rien de `api/` n'entre dans le bundle du navigateur.
+  const parLaMachine = a?.origine === 'automatique';
 
   return (
     <div className="mt-2 rounded border border-slate-200 bg-slate-50 p-2">
@@ -329,8 +398,22 @@ function BlocApprobation({ l, peutApprouver, enCours, surApprobation }) {
             {approuve && (
               <div className="text-emerald-800">
                 Approuvé pour {(a.canaux_approuves || []).join(', ') || l.canal}
-                {a.approuve_par && <> par <strong>{a.approuve_par}</strong></>}
+                {/* 🔴 QUI A APPROUVÉ — la machine ou un humain. Les deux objets
+                    se ressemblent (même empreinte, même forme) ; seule
+                    `origine` les distingue, et ne pas l'afficher laisserait
+                    croire à une relecture humaine qui n'a pas eu lieu. */}
+                {parLaMachine
+                  ? <> <strong>automatiquement</strong>, à l&apos;entrée en file</>
+                  : a.approuve_par && <> par <strong>{a.approuve_par}</strong></>}
                 {a.approuve_le_utc && <> le {heureDeMoanda(a.approuve_le_utc)}</>}.
+              </div>
+            )}
+            {approuve && parLaMachine && (
+              <div className="mt-0.5 text-xs text-slate-600">
+                Personne ne l&apos;a relue. Le contenu a été vérifié par le contrat
+                (format du manifeste, empreinte, créneau), pas par un œil humain.
+                Le bouton ci-contre retire l&apos;approbation, et ce retrait tient :
+                aucun passage ne le réécrira.
               </div>
             )}
             {!approuve && retiree && (

@@ -223,6 +223,29 @@ export function creerGestionnaireAutopost({
    *      sinon il n'y a rien à regarder avant d'ouvrir les verrous.
    */
   async function alimenter(depot, instantUtc) {
+    /* 🔴 LE RÉGLAGE D'APPROBATION AUTOMATIQUE — LU ICI, PAS DANS LE MODULE.
+       `alimenterFile()` ne consulte AUCUN verrou, et un test l'exige
+       (« l'alimentation n'appelle pas lireArretGlobal »). La politique
+       d'approbation est donc lue par l'appelant et passée en paramètre : le
+       module applique, il ne décide pas.
+
+       ⛔ `lireReglages()` et NON `lireArretGlobal()`, alors que les deux lisent
+          la même ligne. Approuver n'est pas publier, et le nom de la lecture le
+          dit : personne ne pourra un jour se servir de l'un comme autorisation
+          pour l'autre.
+
+       En cas de panne de lecture : on retient le DÉFAUT DU SYSTÈME (`true`,
+       décision de Gassim du 19/09/2026), pas un refus silencieux. Une base
+       injoignable fera de toute façon échouer l'alimentation juste après — ce
+       n'est pas le moment d'inventer une politique. */
+    let reglages = null;
+    try {
+      if (typeof depot.lireReglages === 'function') reglages = await depot.lireReglages();
+    } catch (err) {
+      console.error('[autopost] réglages illisibles, défaut appliqué :', err?.message);
+    }
+    const approbationAutomatique = reglages?.approbation_automatique !== false;
+
     const faire = alimente || (async (arg) => {
       // ⛔ Le MÊME client Drive sert à lire les manifestes ET à télécharger les
       //    octets des médias : une seule configuration, un seul jeton, un seul
@@ -244,7 +267,15 @@ export function creerGestionnaireAutopost({
       });
     });
     try {
-      return await faire({ depot, instant: instantUtc });
+      return await faire({
+        depot,
+        instant: instantUtc,
+        approbationAutomatique,
+        // La clé HMAC si elle est posée — la MÊME que celle du bouton. Absente
+        // aujourd'hui : l'approbation automatique est alors écrite sans
+        // signature, exactement comme celle de l'écran, et l'écran le dit.
+        cleSignature: cleSignatureApprobation(),
+      });
     } catch (err) {
       console.error('[autopost] alimentation impossible :', err?.message);
       return {
@@ -260,7 +291,20 @@ export function creerGestionnaireAutopost({
         conflits: 0,
         ecartees: [],
         ecartees_par_le_lecteur: [],
-        medias: { hebergement: 'absent', heberges: 0, deja_presents: 0, reportes: 0, ecartes: [] },
+        medias: {
+          hebergement: 'absent',
+          heberges: 0,
+          deja_presents: 0,
+          reportes: 0,
+          motif_report: null,
+          ecartes: [],
+        },
+        approbation_auto: {
+          reglage: approbationAutomatique ? 'activee' : 'desactivee',
+          posees: 0,
+          humaines_respectees: 0,
+          refusees: [],
+        },
       };
     }
   }
