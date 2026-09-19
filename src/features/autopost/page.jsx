@@ -155,6 +155,48 @@ function Voyant({ actif, ouiTexte, nonTexte, Icone }) {
 }
 
 /**
+ * ⛔ LE VOYANT « TYPE DU JETON » — CE QUI A COÛTÉ DEUX HEURES LE 19/09/2026.
+ *
+ * Ce jour-là, à 16 h 33, Instagram a publié et Facebook a refusé — à la même
+ * seconde, avec le même jeton. L'écran disait « Jeton Meta présent. », et il
+ * disait vrai : le jeton ÉTAIT là. Il était simplement du mauvais TYPE.
+ *
+ *   - un jeton d'UTILISATEUR (un jeton d'utilisateur système en est un) suffit
+ *     à Instagram, et ne suffit PAS à publier sur une Page Facebook ;
+ *   - un jeton de PAGE est ce qu'exige la Page.
+ *
+ * Depuis, l'application échange elle-même le jeton de Page au moment de
+ * publier (`api/_lib/autopost-meta.js`). Ce voyant reste quand même, parce que
+ * l'échange peut échouer pour des raisons qui ne se réparent que dans Business
+ * Manager — et parce qu'un voyant qui dit « présent » sans dire « du bon
+ * type » est exactement le faux témoin qu'on corrige ici pour la troisième fois
+ * cette semaine.
+ *
+ * ⛔ Ce composant ne reçoit ni jeton, ni fragment, ni longueur : un mot et une
+ *    phrase, produits côté serveur.
+ */
+function VoyantTypeJeton({ present, type }) {
+  // Sans jeton, le voyant précédent le dit déjà : ne pas répéter une panne.
+  if (!present) return null;
+
+  const mot = type?.type || 'inconnu';
+  const estPage = mot === 'page';
+  const estUtilisateur = mot === 'utilisateur';
+  const Icone = estPage ? CheckCircle2 : (estUtilisateur ? KeyRound : AlertTriangle);
+  const teinte = estPage ? 'text-emerald-600' : 'text-orange-500';
+
+  return (
+    <div className="flex items-start gap-2">
+      <Icone className={`mt-0.5 h-4 w-4 shrink-0 ${teinte}`} />
+      <span className="text-sm">
+        Type du jeton Meta : <strong>{mot}</strong>
+        {type?.detail ? <> — {type.detail}</> : null}
+      </span>
+    </div>
+  );
+}
+
+/**
  * ⛔ LE VOYANT DRIVE — quatre pannes, quatre phrases, quatre gestes.
  *
  * Avant le 18/09/2026, cet écran affichait « Accès Drive non configuré » pour
@@ -319,6 +361,10 @@ function Bandeau({ etat }) {
           Icone={etat?.jeton_meta_present ? CheckCircle2 : AlertTriangle}
           ouiTexte="Jeton Meta présent."
           nonTexte="Jeton Meta absent — c'est normal aujourd'hui. Tant qu'il manque, tout reste en simulation."
+        />
+        <VoyantTypeJeton
+          present={etat?.jeton_meta_present}
+          type={etat?.type_jeton_meta}
         />
         <Voyant
           actif={etat?.secret_taches_planifiees_pose}

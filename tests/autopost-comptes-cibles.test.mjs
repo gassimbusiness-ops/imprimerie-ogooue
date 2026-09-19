@@ -189,6 +189,13 @@ function fauxFetch(reponses) {
 const ok = (corps) => ({ ok: true, status: 200, json: async () => corps });
 const ko = (status, error) => ({ ok: false, status, json: async () => ({ error }) });
 
+/* ⛔ DEPUIS LE 19/09/2026, TOUTE SÉQUENCE FACEBOOK COMMENCE PAR L'ÉCHANGE.
+   `GET /{page-id}?fields=access_token` : l'application obtient elle-même le
+   jeton de PAGE à partir du jeton configuré. Les séquences ci-dessous le
+   portent en tête, explicitement — la doublure ne le devine pas. */
+const JETON_DE_PAGE = 'JETON-DE-PAGE-OBTENU-PAR-ECHANGE';
+const echangeOk = () => ok({ id: NUMERO_PAGE, access_token: JETON_DE_PAGE });
+
 /* ═══════════════════════════════════════════════════════════════════════════
    1. CHAQUE ÉTIQUETTE CONNUE RÉSOUT VERS SA VARIABLE
    ═══════════════════════════════════════════════════════════════════════════ */
@@ -199,6 +206,7 @@ test('PAGE_IMPRIMERIE → META_PAGE_ID : l\'appel Facebook porte le NUMÉRO, pas
     const p = manifeste();
     const depot = depotMemoire([ligneDe(p)]);
     const appel = fauxFetch([
+      echangeOk(),
       ok({ post_id: `${NUMERO_PAGE}_900001` }),
       ok({ id: `${NUMERO_PAGE}_900001`, permalink_url: 'https://exemple.invalid/post' }),
     ]);
@@ -207,8 +215,11 @@ test('PAGE_IMPRIMERIE → META_PAGE_ID : l\'appel Facebook porte le NUMÉRO, pas
     const bilan = await executerPassage({ depot, client, instant: INSTANT, tracer: muet });
 
     assert.equal(bilan.publies, 1, `écarté : ${JSON.stringify(bilan.ecartes[0] || null)}`);
-    assert.ok(appel.appels[0].url.includes(`/${NUMERO_PAGE}/photos`),
-      `l'appel doit viser le numéro de la Page : ${appel.appels[0].url}`);
+    // L'échange vise le NUMÉRO lui aussi : l'étiquette ne sort jamais du dépôt.
+    assert.ok(appel.appels[0].url.includes(`/${NUMERO_PAGE}?`),
+      `l'échange doit viser le numéro de la Page : ${appel.appels[0].url}`);
+    assert.ok(appel.appels[1].url.includes(`/${NUMERO_PAGE}/photos`),
+      `l'appel doit viser le numéro de la Page : ${appel.appels[1].url}`);
     assert.ok(!appel.appels.some((a) => a.url.includes('PAGE_IMPRIMERIE')),
       'aucune URL Graph ne doit jamais porter l\'étiquette');
   } finally { remettre(); }
@@ -450,7 +461,7 @@ test('⛔ le message d\'erreur de Meta revient avec l\'ÉTIQUETTE, pas avec le n
     const depot = depotMemoire([ligneDe(p)]);
     // Meta nomme l'objet visé dans son message : c'est exactement la forme de
     // l'erreur du 19/09, mais avec le numéro cette fois.
-    const appel = fauxFetch([ko(400, {
+    const appel = fauxFetch([echangeOk(), ko(400, {
       code: 100,
       error_subcode: 33,
       type: 'GraphMethodException',
@@ -477,6 +488,7 @@ test('⛔ le bilan rendu à l\'écran ne porte aucun identifiant réel', async (
     const p = manifeste();
     const depot = depotMemoire([ligneDe(p)]);
     const appel = fauxFetch([
+      echangeOk(),
       ok({ post_id: `${NUMERO_PAGE}_900001` }),
       ok({ id: `${NUMERO_PAGE}_900001`, permalink_url: 'https://exemple.invalid/post' }),
     ]);
@@ -485,6 +497,8 @@ test('⛔ le bilan rendu à l\'écran ne porte aucun identifiant réel', async (
     const bilan = await executerPassage({ depot, client, instant: INSTANT, tracer: muet });
 
     assert.equal(bilan.publies, 1);
+    assert.ok(!JSON.stringify(bilan).includes(JETON_DE_PAGE),
+      'le jeton OBTENU est un secret au même titre que le configuré');
     assert.ok(!JSON.stringify(bilan).includes(NUMERO_PAGE),
       `le bilan remonte jusqu'au navigateur : ${JSON.stringify(bilan.details)}`);
     const publie = depot.journal.find((e) => e.evenement === 'publication');

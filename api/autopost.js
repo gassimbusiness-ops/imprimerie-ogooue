@@ -124,8 +124,8 @@ import { limiteDepassee } from './_lib/limite.js';
 import { voieDemandee } from './_lib/routage.js';
 import { supabaseAdmin } from './_lib/supabase-admin.js';
 import { depotSupabaseAutopost } from './_lib/autopost-depot.js';
-import { creerClientMeta } from './_lib/autopost-meta.js';
-import { executerPassage, modeGlobalDemande } from './_lib/autopost-executeur.js';
+import { creerClientMeta, TYPE_JETON } from './_lib/autopost-meta.js';
+import { executerPassage, modeGlobalDemande, comptesDepuisEnvironnement } from './_lib/autopost-executeur.js';
 import { alimenterFile } from './_lib/autopost-alimentation.js';
 import { traiterApprobation, cleSignatureApprobation } from './_lib/autopost-approbation.js';
 import { creerHebergeurMedias, stockageSupabase } from './_lib/autopost-medias.js';
@@ -133,6 +133,23 @@ import { sonderDrive, lireConfigurationDrive, creerClientDrive, DIAGNOSTICS, MES
 
 /** Voies servies par ce point d'entrée. */
 export const VOIES_AUTOPOST = Object.freeze(['tick', 'etat', 'alimenter', 'approuver']);
+
+/**
+ * ⛔ LE VOYANT QUI MANQUAIT LE 19/09/2026 — LE TYPE DU JETON.
+ *
+ * Ce jour-là, Instagram a publié et Facebook a refusé avec le même jeton, et il
+ * a fallu deux heures pour comprendre que la cause n'était pas une autorisation
+ * manquante mais le TYPE du jeton (voir l'en-tête de `autopost-meta.js`).
+ * Personne ne pouvait le voir : rien à l'écran ne disait ce que le jeton est.
+ *
+ * Mémo court, et pour une seule raison : l'écran se recharge à chaque geste du
+ * gérant, et Meta compte les appels par application. La valeur mémorisée est
+ * un MOT et une phrase française — jamais un jeton, jamais un fragment, jamais
+ * une longueur. Une minute suffit : le type d'un jeton ne change pas dans la
+ * minute, et il se remesure au rechargement suivant.
+ */
+const MEMO_TYPE_JETON = { pose_a: 0, valeur: null };
+const MEMO_TYPE_JETON_MS = 60_000;
 
 /** Chemins publics historiques → voie (voir `api/_lib/routage.js`). */
 export const CHEMINS_AUTOPOST = Object.freeze({
@@ -334,6 +351,38 @@ export function creerGestionnaireAutopost({
     }
   }
 
+  /**
+   * Le type du jeton Meta, pour l'écran. Ne lève jamais, et ne rend jamais
+   * autre chose qu'un mot et une phrase : même filet que `etatDrive()`.
+   *
+   * Sans jeton configuré, `typeDuJeton()` rend `inconnu` SANS toucher au
+   * réseau — c'est le garde-fou de `creerClientMeta()`, pas une précaution
+   * prise ici.
+   *
+   * @returns {Promise<{type: string, detail: string}>}
+   */
+  async function etatTypeJeton(instantMs) {
+    if (MEMO_TYPE_JETON.valeur && (instantMs - MEMO_TYPE_JETON.pose_a) < MEMO_TYPE_JETON_MS) {
+      return MEMO_TYPE_JETON.valeur;
+    }
+    let valeur;
+    try {
+      const client = clientFourni || creerClientMeta();
+      const comptes = comptesDepuisEnvironnement();
+      valeur = await client.typeDuJeton(comptes.PAGE_IMPRIMERIE || null);
+    } catch {
+      // ⚠️ Aucun détail de l'exception ne remonte : un message brut de Meta
+      //    nomme l'objet visé, et cette réponse part jusqu'au navigateur.
+      valeur = {
+        type: TYPE_JETON.INCONNU,
+        detail: 'Type du jeton non mesurable : Meta n\'a pas répondu à la question.',
+      };
+    }
+    MEMO_TYPE_JETON.pose_a = instantMs;
+    MEMO_TYPE_JETON.valeur = valeur;
+    return valeur;
+  }
+
   return async function gestionnaireAutopost(req, res) {
     const voie = voieAutopost(req);
     if (voie === null) {
@@ -362,6 +411,11 @@ export function creerGestionnaireAutopost({
           controle,
           mode_global: modeGlobalDemande(),
           jeton_meta_present: Boolean((process.env.META_PAGE_ACCESS_TOKEN || '').trim()),
+          /* ⛔ LE TYPE DU JETON, EN UN MOT : `page`, `utilisateur` ou `inconnu`.
+             Présent est une chose, du BON TYPE en est une autre — c'est toute
+             la leçon du 19/09/2026. Ce champ ne porte ni jeton, ni fragment,
+             ni longueur : il porte le résultat d'une question posée à Meta. */
+          type_jeton_meta: await etatTypeJeton(maintenant().getTime()),
           /* ⛔ LE 19/09/2026 : les passages planifiés n'ont JAMAIS tourné, et
              personne ne pouvait le voir. Le journal ne portait que les
              pressions manuelles du bouton.

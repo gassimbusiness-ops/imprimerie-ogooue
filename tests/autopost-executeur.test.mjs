@@ -184,6 +184,15 @@ function fauxFetch(reponses) {
 const ok = (corps) => ({ ok: true, status: 200, json: async () => corps });
 const ko = (status, error) => ({ ok: false, status, json: async () => ({ error }) });
 
+/* ⛔ DEPUIS LE 19/09/2026, TOUTE SÉQUENCE FACEBOOK COMMENCE PAR L'ÉCHANGE.
+   Publier sur la Page ne se fait pas avec le jeton configuré mais avec le jeton
+   de PAGE, que l'application obtient elle-même par
+   `GET /{page-id}?fields=access_token`. Les séquences ci-dessous le portent en
+   tête, explicitement : la doublure ne devine rien, et l'appel de plus se voit.
+   Instagram, lui, n'en a pas : il garde le jeton configuré, qui fonctionne. */
+const JETON_DE_PAGE = 'JETON-DE-PAGE-OBTENU-PAR-ECHANGE';
+const echangeOk = () => ok({ id: NUMERO_PAGE, access_token: JETON_DE_PAGE });
+
 /* ═══════════════════════════════════════════════════════════════════════════
    1. SANS JETON : SIMULATION, ET AUCUN APPEL RÉSEAU
    ═══════════════════════════════════════════════════════════════════════════ */
@@ -282,6 +291,7 @@ test('jeton + live + approbation → publication, et le témoin est écrit', asy
   const p = manifeste();
   const depot = depotMemoire([ligneDe(p)]);
   const appel = fauxFetch([
+    echangeOk(),                                                        // GET ?fields=access_token
     ok({ id: '999', post_id: `${PAGE_ID}_999` }),                       // POST /photos
     ok({ id: `${PAGE_ID}_999`, permalink_url: 'https://fb/x' }),        // GET relecture
   ]);
@@ -301,7 +311,7 @@ test('🔴 un 200 de Meta n\'est PAS une preuve de visibilité publique, et le r
   const depot = depotMemoire([ligneDe(p)]);
   const client = creerClientMeta({
     jeton: 'jeton-de-test',
-    fetchImpl: fauxFetch([ok({ post_id: `${PAGE_ID}_999` }), ok({ id: `${PAGE_ID}_999` })]),
+    fetchImpl: fauxFetch([echangeOk(), ok({ post_id: `${PAGE_ID}_999` }), ok({ id: `${PAGE_ID}_999` })]),
   });
 
   await executerPassage({ depot, client, instant: INSTANT, tracer: muet });
@@ -316,7 +326,7 @@ test('une publication déjà partie n\'est jamais rejouée au passage suivant', 
   const depot = depotMemoire([ligneDe(p)]);
   const client = creerClientMeta({
     jeton: 'jeton-de-test',
-    fetchImpl: fauxFetch([ok({ post_id: `${PAGE_ID}_999` }), ok({ id: `${PAGE_ID}_999` })]),
+    fetchImpl: fauxFetch([echangeOk(), ok({ post_id: `${PAGE_ID}_999` }), ok({ id: `${PAGE_ID}_999` })]),
   });
 
   await executerPassage({ depot, client, instant: INSTANT, tracer: muet });
@@ -368,6 +378,10 @@ test('⛔ deux exécutions concurrentes ne publient QU\'UNE fois', async () => {
   // second consommerait une réponse qui n'existe pas.
   let postsEnvoyes = 0;
   const impl = async (url, options = {}) => {
+    // L'échange précède toute publication — y compris ici, où les deux passages
+    // le demandent chacun de leur côté. Il ne publie rien : il ne fausse donc
+    // pas le décompte des POST, qui reste la mesure du test.
+    if (url.includes('fields=access_token')) return ok({ id: NUMERO_PAGE, access_token: JETON_DE_PAGE });
     if ((options.method || 'GET') === 'POST') {
       postsEnvoyes += 1;
       return ok({ post_id: `${PAGE_ID}_999` });
@@ -414,7 +428,7 @@ test('🔴 un refus d\'autorisation journalise le code brut ET la piste « appli
   const depot = depotMemoire([ligneDe(p)]);
   const client = creerClientMeta({
     jeton: 'jeton-de-test',
-    fetchImpl: fauxFetch([ko(403, {
+    fetchImpl: fauxFetch([echangeOk(), ko(403, {
       message: '(#200) If posting to a group, requires app being installed in the group',
       type: 'OAuthException', code: 200, fbtrace_id: 'ABC123',
     })]),
@@ -454,7 +468,7 @@ test('après la dernière tentative, la ligne passe en failed et ne repart plus'
   const depot = depotMemoire([l]);
   const client = creerClientMeta({
     jeton: 'jeton-de-test',
-    fetchImpl: fauxFetch([ko(400, { message: 'Invalid parameter', code: 100 })]),
+    fetchImpl: fauxFetch([echangeOk(), ko(400, { message: 'Invalid parameter', code: 100 })]),
   });
 
   await executerPassage({ depot, client, instant: INSTANT, tracer: muet });
@@ -483,7 +497,9 @@ test('un réseau coupé ne compte pas comme un échec : la ligne passe en reconc
   const depot = depotMemoire([ligneDe(p)]);
   const client = creerClientMeta({
     jeton: 'jeton-de-test',
-    fetchImpl: fauxFetch([new Error('socket hang up')]),
+    // L'échange passe ; c'est l'appel QUI PUBLIE que le réseau coupe — sans
+    // quoi le test mesurerait l'échange, pas la publication.
+    fetchImpl: fauxFetch([echangeOk(), new Error('socket hang up')]),
   });
 
   const bilan = await executerPassage({ depot, client, instant: INSTANT, tracer: muet });
@@ -501,6 +517,7 @@ test('une ligne en reconciling est RETROUVÉE par son code de provenance, pas re
 
   let postsEnvoyes = 0;
   const impl = async (url, options = {}) => {
+    if (url.includes('fields=access_token')) return ok({ id: NUMERO_PAGE, access_token: JETON_DE_PAGE });
     if ((options.method || 'GET') === 'POST') { postsEnvoyes += 1; return ok({ post_id: 'NE-DEVRAIT-PAS-ARRIVER' }); }
     return ok({ data: [{ id: `${PAGE_ID}_555`, message: 'Flocage textile… OG-01-S39', created_time: '2026-09-21T16:46:00+0000' }] });
   };
@@ -641,11 +658,20 @@ test('le jeton n\'apparaît jamais dans le journal ni dans l\'URL appelée', asy
   const p = manifeste();
   const depot = depotMemoire([ligneDe(p)]);
   const secret = 'JETON-TRES-SECRET-A-NE-PAS-FUITER';
-  const appel = fauxFetch([ok({ post_id: 'X' }), ok({ id: 'X' })]);
+  const appel = fauxFetch([echangeOk(), ok({ post_id: 'X' }), ok({ id: 'X' })]);
   const client = creerClientMeta({ jeton: secret, fetchImpl: appel });
 
-  await executerPassage({ depot, client, instant: INSTANT, tracer: muet });
+  const bilan = await executerPassage({ depot, client, instant: INSTANT, tracer: muet });
+  assert.equal(bilan.publies, 1, 'le test doit bien traverser tout le chemin de publication');
 
   for (const a of appel.appels) assert.ok(!a.url.includes(secret), 'le jeton ne doit pas voyager dans l\'URL');
   assert.ok(!JSON.stringify(depot.journal).includes(secret), 'le jeton ne doit pas atterrir dans le journal');
+
+  /* ⛔ ET LE JETON OBTENU PAR ÉCHANGE EST UN SECRET AU MÊME TITRE.
+     Il n'est ni dans une URL, ni dans le journal, ni dans le bilan qui remonte
+     jusqu'au navigateur, ni dans la ligne écrite en base. */
+  for (const a of appel.appels) assert.ok(!a.url.includes(JETON_DE_PAGE), `jeton de Page dans l'URL : ${a.url}`);
+  assert.ok(!JSON.stringify(depot.journal).includes(JETON_DE_PAGE));
+  assert.ok(!JSON.stringify(bilan).includes(JETON_DE_PAGE));
+  assert.ok(!JSON.stringify([...depot.file.values()]).includes(JETON_DE_PAGE));
 });

@@ -864,3 +864,65 @@ test('le bouton « Retirer l approbation » reste offert sur une ligne approuvee
     await r.demonter();
   }
 });
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   LE TYPE DU JETON — LE VOYANT QUI MANQUAIT LE 19/09/2026
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+test('⛔ un jeton PRESENT mais du mauvais TYPE est dit a l ecran, en un mot', async () => {
+  // Le 19/09/2026 a 16 h 33, Instagram a publie et Facebook a refuse, avec le
+  // meme jeton. L ecran disait « Jeton Meta présent. » et disait vrai : il
+  // etait la, il etait simplement du mauvais type. Deux heures perdues faute
+  // d un mot a l ecran.
+  const f = installerFetch({
+    ...ETAT,
+    jeton_meta_present: true,
+    type_jeton_meta: {
+      type: 'utilisateur',
+      detail: 'Jeton d\'UTILISATEUR (un jeton d\'utilisateur système en est un). Instagram '
+        + 'l\'accepte ; publier sur la Page exige un jeton de Page, que l\'application échange '
+        + 'elle-même juste avant de publier.',
+    },
+  });
+  const r = await rendreEcran({ ecran: 'src/features/autopost/page.jsx' });
+  try {
+    assert.equal(r.erreurs.length, 0, `exceptions au montage : ${r.erreurs.map((e) => e?.message).join(' · ')}`);
+    assert.match(r.texte, /Type du jeton Meta/);
+    assert.match(r.texte, /utilisateur/);
+    assert.match(r.texte, /exige un jeton de Page/, 'le mot seul ne dit pas ce qu il implique');
+  } finally {
+    f.restaurer();
+    await r.demonter();
+  }
+});
+
+test('un jeton de PAGE est dit tel quel, sans alarme inutile', async () => {
+  const f = installerFetch({
+    ...ETAT,
+    jeton_meta_present: true,
+    type_jeton_meta: {
+      type: 'page',
+      detail: 'Jeton de PAGE — c\'est le type qu\'exige la publication sur la Page Facebook.',
+    },
+  });
+  const r = await rendreEcran({ ecran: 'src/features/autopost/page.jsx' });
+  try {
+    assert.match(r.texte, /Type du jeton Meta : page/);
+  } finally {
+    f.restaurer();
+    await r.demonter();
+  }
+});
+
+test('sans jeton, le voyant de TYPE se tait : une panne ne se dit pas deux fois', async () => {
+  // ETAT porte `jeton_meta_present: false` : le voyant precedent dit deja
+  // « Jeton Meta absent ». Repeter serait du bruit, pas de l information.
+  const f = installerFetch(ETAT);
+  const r = await rendreEcran({ ecran: 'src/features/autopost/page.jsx' });
+  try {
+    assert.doesNotMatch(r.texte, /Type du jeton Meta/);
+  } finally {
+    f.restaurer();
+    await r.demonter();
+  }
+});

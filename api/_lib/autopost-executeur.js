@@ -318,7 +318,10 @@ export async function executerPassage({
       };
 
       // Relecture : elle prouve que l'objet EXISTE, pas qu'il est visible.
-      const relu = await client.relire(sortie.idDistant);
+      // `pageId` n'est posé que par le chemin Facebook : il fait relire le post
+      // avec le JETON DE PAGE, celui-là même qui l'a écrit. Instagram n'en pose
+      // pas et garde le jeton configuré, qui fonctionne.
+      const relu = await client.relire(sortie.idDistant, { pageId: sortie.pageId ?? null });
       if (relu?.existe) {
         resultat.verifie_le_utc = instantUtc;
         resultat.methode_verification = 'relecture_api';
