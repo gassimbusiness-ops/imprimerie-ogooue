@@ -57,6 +57,153 @@ export const ORIGINES_MEDIA = Object.freeze([
   'chatgpt', 'photo_reelle', 'wavespeed', 'higgsfield', 'montage',
 ]);
 
+/**
+ * ════════════════════════════════════════════════════════════════════════════
+ * 🔴 LES COMPTES CIBLES — DES ÉTIQUETTES, PLUS JAMAIS DES NUMÉROS
+ * ════════════════════════════════════════════════════════════════════════════
+ *
+ * Le 19/09/2026 au soir, la première publication réelle a traversé toute la
+ * chaîne — Drive, file, approbation, hébergement du média, bon créneau — et
+ * Meta a répondu :
+ *
+ *   code=100 subcode=33 : Object with ID 'IG_IMPRIMERIE' does not exist
+ *
+ * `IG_IMPRIMERIE` n'est pas un identifiant, c'est une ÉTIQUETTE. ChatGPT
+ * l'écrivait dans `canaux[].compte_cible_id` et l'exécuteur la passait telle
+ * quelle à Graph. Il ne manquait qu'un numéro.
+ *
+ * Le défaut n'était pas dans ce que ChatGPT a écrit : c'était de lui demander
+ * un numéro. Un générateur de contenu n'a aucune raison de connaître
+ * l'identifiant d'une Page Meta — c'est une donnée d'INFRASTRUCTURE, elle
+ * change si l'entreprise change de Page, elle n'a aucun sens éditorial, et la
+ * lui confier crée une classe d'erreur entière pour rien.
+ *
+ * Depuis, `compte_cible_id` est une étiquette symbolique, et c'est
+ * l'APPLICATION qui la résout, au moment de publier, depuis ses propres
+ * variables d'environnement. Les mêmes que le bot Messenger lit déjà
+ * (`api/_lib/bot-executeur.js`) — aucun nom nouveau n'a été inventé.
+ *
+ * ⛔ CE QUE CETTE TABLE INTERDIT, ET QUI COMPTE PLUS QUE LE CONFORT :
+ *    le jeton de Page voit AUSSI la Page TopShop GABON, et plus largement
+ *    toute Page à laquelle il donne accès. Tant qu'un numéro arbitraire était
+ *    accepté, un manifeste erroné — ou altéré — pouvait publier une affiche
+ *    d'imprimerie sur n'importe quelle Page du portefeuille. Avec une liste
+ *    fermée d'étiquettes, la seule chose que ChatGPT peut demander, c'est
+ *    « la Page de l'imprimerie » ou « l'Instagram de l'imprimerie ». Il ne
+ *    peut plus DÉSIGNER une destination, seulement en NOMMER une connue.
+ */
+export const COMPTES_CIBLES = Object.freeze({
+  PAGE_IMPRIMERIE: Object.freeze({ canal: 'facebook', variable: 'META_PAGE_ID' }),
+  IG_IMPRIMERIE: Object.freeze({ canal: 'instagram', variable: 'META_INSTAGRAM_ID' }),
+  // Remise à un humain : aucun appel réseau, donc rien à résoudre. L'étiquette
+  // existe pour que le manifeste puisse la nommer sans être refusé.
+  WA_IMPRIMERIE: Object.freeze({ canal: 'whatsapp_handoff', variable: null }),
+});
+
+/** Les étiquettes qui existent, dans l'ordre où on les montre au gérant. */
+export const ETIQUETTES_COMPTES = Object.freeze(Object.keys(COMPTES_CIBLES));
+
+/**
+ * Pourquoi un compte cible n'a pas pu être résolu.
+ *
+ * ⛔ QUATRE MOTIFS, PAS UN SEUL, PARCE QUE CE SONT QUATRE GESTES DIFFÉRENTS :
+ *   - `compte_cible_absent`        : le manifeste ne dit rien → corriger le dépôt ;
+ *   - `compte_cible_inconnu`       : le manifeste dit autre chose qu'une étiquette
+ *                                    connue (y compris un numéro en clair) → corriger le dépôt ;
+ *   - `compte_cible_mauvais_canal` : l'étiquette existe mais désigne un autre
+ *                                    réseau → corriger le dépôt ;
+ *   - `compte_cible_non_configure` : l'étiquette est bonne, la variable
+ *                                    d'environnement manque → poser la variable
+ *                                    dans Vercel, RIEN à corriger dans le dépôt.
+ *
+ * Le gérant de Moanda doit pouvoir lire le motif et savoir lequel des deux
+ * gestes il a à faire. Un motif unique l'obligerait à les essayer tous les deux.
+ */
+export const MOTIFS_COMPTE = Object.freeze({
+  ABSENT: 'compte_cible_absent',
+  INCONNU: 'compte_cible_inconnu',
+  MAUVAIS_CANAL: 'compte_cible_mauvais_canal',
+  NON_CONFIGURE: 'compte_cible_non_configure',
+});
+
+const RE_NUMERIQUE = /^\d{5,}$/;
+
+/** La liste des étiquettes, écrite pour être lue dans un message d'erreur. */
+function listeEtiquettes() {
+  return ETIQUETTES_COMPTES.join(', ');
+}
+
+/**
+ * Résout l'étiquette d'un canal en identifiant réel de compte Meta.
+ *
+ * ⛔ FONCTION PURE : elle ne lit PAS `process.env`. La table `comptes` lui est
+ *    donnée par l'appelant (`comptesDepuisEnvironnement()` dans l'exécuteur).
+ *    C'est ce qui permet de tester les quatre refus sans toucher au processus.
+ *
+ * ⛔ AUCUNE SUPPOSITION. Une étiquette inconnue n'est jamais rapprochée de la
+ *    plus proche : publier sur « la page qui ressemble le plus » est exactement
+ *    l'accident qu'on veut rendre impossible.
+ *
+ * @param {object} arg
+ * @param {*} arg.etiquette  la valeur de `compte_cible_id`
+ * @param {string} [arg.canal]  le canal de la ligne ('facebook' | 'instagram' | …)
+ * @param {Record<string,string>|null} [arg.comptes]  étiquette → identifiant réel.
+ *        `null`/absent = l'appelant ne connaît pas l'environnement : l'étiquette
+ *        est quand même contrôlée, la présence de la variable ne l'est pas.
+ * @returns {{resolu: boolean, etiquette: string|null, id: string|null, motif: string|null, detail: string|null}}
+ */
+export function resoudreCompteCible({ etiquette, canal = null, comptes = null }) {
+  const refus = (motif, detail) => ({
+    resolu: false, etiquette: typeof etiquette === 'string' ? etiquette : null, id: null, motif, detail,
+  });
+
+  const brut = typeof etiquette === 'string' ? etiquette.trim() : '';
+  if (brut === '') {
+    return refus(MOTIFS_COMPTE.ABSENT,
+      `aucune étiquette de compte sur cette ligne. Les étiquettes qui existent : ${listeEtiquettes()}.`);
+  }
+
+  const definition = COMPTES_CIBLES[brut];
+  if (!definition) {
+    // Un numéro en clair est refusé COMME UN INCONNU, et c'est le point de
+    // toute cette table : accepter un numéro arbitraire rendrait à l'émetteur
+    // du manifeste le pouvoir de choisir n'importe quelle Page du portefeuille.
+    const detail = RE_NUMERIQUE.test(brut)
+      ? 'un identifiant numérique écrit en clair n\'est plus accepté : le manifeste nomme '
+        + `un compte par son étiquette, jamais par son numéro. Étiquettes admises : ${listeEtiquettes()}.`
+      : `« ${brut} » n'est pas une étiquette connue. Étiquettes admises : ${listeEtiquettes()}. `
+        + 'Aucune n\'est devinée par ressemblance.';
+    return refus(MOTIFS_COMPTE.INCONNU, detail);
+  }
+
+  if (canal && definition.canal !== canal) {
+    return refus(MOTIFS_COMPTE.MAUVAIS_CANAL,
+      `l'étiquette ${brut} désigne un compte ${definition.canal}, elle ne peut pas servir `
+      + `au canal ${canal}. À corriger dans publication.json.`);
+  }
+
+  // Canal de remise à un humain : il n'y a rien à résoudre, et c'est normal.
+  if (!definition.variable) {
+    return { resolu: true, etiquette: brut, id: null, motif: null, detail: null };
+  }
+
+  if (comptes === null || comptes === undefined) {
+    // L'appelant ne dit rien de l'environnement. L'étiquette est valide ; on ne
+    // prétend pas savoir si la variable est posée.
+    return { resolu: true, etiquette: brut, id: null, motif: null, detail: null };
+  }
+
+  const id = typeof comptes[brut] === 'string' ? comptes[brut].trim() : '';
+  if (id === '') {
+    return refus(MOTIFS_COMPTE.NON_CONFIGURE,
+      `l'étiquette ${brut} est valide, mais la variable d'environnement ${definition.variable} `
+      + 'n\'est pas posée sur le serveur. Rien à corriger dans le dépôt : c\'est une variable à '
+      + 'poser dans Vercel (Production ET Preview), puis à redéployer.');
+  }
+
+  return { resolu: true, etiquette: brut, id, motif: null, detail: null };
+}
+
 const RE_PUBLICATION_ID = /^PUB-\d{4}-S\d{2}-[1-7]-\d{2}$/;
 const RE_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const RE_SEMAINE = /^\d{4}-S\d{2}$/;

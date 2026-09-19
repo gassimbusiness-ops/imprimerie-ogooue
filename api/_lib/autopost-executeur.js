@@ -55,11 +55,64 @@
  * modifiées (`autopost-depot.js`).
  */
 import { travauxDus, resumerDecision, RAISONS } from './autopost-selection.js';
+import { COMPTES_CIBLES, resoudreCompteCible } from './autopost-contrat.js';
 import { formaterInstantUtc, formaterInstantLocal, msDepuisInstantUtc, dateLocaleDepuisInstantUtc } from '../../src/lib/dates.js';
 
 /** Modes d'exécution. `dry_run` est le défaut, partout, toujours. */
 export const MODE_SIMULATION = 'dry_run';
 export const MODE_REEL = 'live';
+
+/**
+ * ⛔ LE SEUL ENDROIT DE LA CHAÎNE QUI LIT LES IDENTIFIANTS DE COMPTE META.
+ *
+ * Le manifeste porte des étiquettes (`PAGE_IMPRIMERIE`), la base porte des
+ * étiquettes, l'écran affiche des étiquettes. Le numéro n'apparaît qu'ici, au
+ * moment de composer l'appel — et il repart masqué dans tout ce qui est
+ * journalisé ou rendu à l'écran (voir `masquerComptes`).
+ *
+ * Les noms de variables ne sont pas nouveaux : ce sont EXACTEMENT ceux que le
+ * bot Messenger lit déjà (`api/_lib/bot-executeur.js`). Deux modules, un seul
+ * couple de variables — en inventer un second ferait deux vérités.
+ *
+ * @param {object} [env]
+ * @returns {Record<string,string>} étiquette → identifiant, uniquement les posées
+ */
+export function comptesDepuisEnvironnement(env = process.env) {
+  const table = {};
+  for (const [etiquette, definition] of Object.entries(COMPTES_CIBLES)) {
+    if (!definition.variable) continue;
+    const valeur = String(env?.[definition.variable] ?? '').trim();
+    if (valeur !== '') table[etiquette] = valeur;
+  }
+  return table;
+}
+
+/**
+ * Remplace tout identifiant de compte réel par son étiquette, dans un texte.
+ *
+ * 🔴 POURQUOI : un identifiant de Page Facebook n'est pas un secret, mais il
+ * n'a rien à faire dans un écran, un journal ni une réponse d'API — et on ne
+ * prend pas l'habitude. Le message d'erreur de Meta, lui, contient l'objet visé
+ * (« Object with ID '…' »), et le bilan d'un passage remonte jusqu'au
+ * navigateur par `api/autopost.js`.
+ *
+ * ⚠️ Ce qui est masqué, c'est le TEXTE rendu. La colonne `id_distant` de la
+ * base garde la valeur brute : c'est le témoin de l'effet, et l'index unique
+ * qui empêche une double publication est posé dessus.
+ *
+ * @param {*} texte
+ * @param {Record<string,string>} comptes
+ * @returns {*} le texte, identifiants remplacés par leur étiquette
+ */
+export function masquerComptes(texte, comptes) {
+  if (typeof texte !== 'string' || texte === '') return texte;
+  let sortie = texte;
+  for (const [etiquette, id] of Object.entries(comptes || {})) {
+    if (typeof id !== 'string' || id === '') continue;
+    sortie = sortie.split(id).join(etiquette);
+  }
+  return sortie;
+}
 
 /**
  * Mode demandé par l'environnement. Absent → simulation.
@@ -132,6 +185,13 @@ export async function executerPassage({
     details: [],
   };
 
+  /* ── 0 bis. LA TABLE DES COMPTES — lue UNE fois, au début du passage ───
+     Elle sert à trois choses, et à rien d'autre : écarter avant tout appel une
+     étiquette qu'on ne sait pas résoudre, composer l'appel avec le vrai
+     identifiant, et masquer ce même identifiant dans tout ce qui est écrit. */
+  const comptes = comptesDepuisEnvironnement();
+  const masquer = (texte) => masquerComptes(texte, comptes);
+
   /* ── 0. ARRÊT GLOBAL ──────────────────────────────────────────────────── */
   const controle = await depot.lireArretGlobal();
   const modeGlobal = modeGlobalEffectif(controle);
@@ -150,7 +210,7 @@ export async function executerPassage({
   if (typeof depot.lireAReconcilier === 'function') {
     const aReconcilier = await depot.lireAReconcilier();
     for (const ligne of aReconcilier || []) {
-      const issue = await reconcilierLigne({ ligne, client, depot, instantUtc, tracer });
+      const issue = await reconcilierLigne({ ligne, client, depot, instantUtc, tracer, comptes });
       if (issue === 'publie') bilan.reconcilies += 1;
       bilan.details.push({ cle: ligne.cle_idempotence, issue: `reconciliation_${issue}` });
     }
@@ -171,6 +231,10 @@ export async function executerPassage({
       plafondJournalier: controle?.plafond ?? options.plafondJournalier ?? 4,
       dejaPubliesAujourdhui,
       cleSignature: options.cleSignature ?? (process.env.AUTOPOST_CLE_APPROBATION || null),
+      // ⛔ Toujours passée, jamais omise : sans elle, la sélection contrôlerait
+      //    l'étiquette mais pas la présence de la variable, et une publication
+      //    partirait vers un identifiant vide.
+      comptes,
     },
   });
 
@@ -234,7 +298,7 @@ export async function executerPassage({
     /* ── APPEL RÉEL ───────────────────────────────────────────────────── */
     const tentatives = (travail.tentatives || 0) + 1;
     try {
-      const sortie = await publierUnCanal({ travail, client, depot, cle });
+      const sortie = await publierUnCanal({ travail, client, depot, cle, comptes });
       const resultat = {
         etat_final: 'published',
         id_distant: sortie.idDistant,
@@ -268,11 +332,13 @@ export async function executerPassage({
         publication_id: travail.publication_id,
         canal: travail.canal,
         evenement: 'publication',
-        resume: `publié — id_distant=${sortie.idDistant} · visibilité publique NON vérifiée`,
+        // Masqué : l'identifiant d'un post Facebook porte celui de la Page en
+        // préfixe. La valeur brute reste dans la colonne `id_distant`.
+        resume: masquer(`publié — id_distant=${sortie.idDistant} · visibilité publique NON vérifiée`),
       });
       bilan.publies += 1;
-      bilan.details.push({ cle, issue: 'publie', id_distant: sortie.idDistant });
-      tracer('[autopost] PUBLIÉ %s %s id=%s', travail.publication_id, travail.canal, sortie.idDistant);
+      bilan.details.push({ cle, issue: 'publie', id_distant: masquer(sortie.idDistant) });
+      tracer('[autopost] PUBLIÉ %s %s id=%s', travail.publication_id, travail.canal, masquer(sortie.idDistant));
     } catch (err) {
       const incertain = err?.incertain === true;
       const max = travail.tentatives_max ?? 3;
@@ -283,7 +349,9 @@ export async function executerPassage({
         tentatives,
         erreur: {
           code_erreur: err?.codeMeta ?? 'inconnu',
-          message_erreur: err?.message ?? String(err),
+          // Le message de Meta nomme l'objet visé (« Object with ID '…' ») : il
+          // est rendu au gérant avec l'étiquette, pas avec le numéro.
+          message_erreur: masquer(err?.message ?? String(err)),
           piste: err?.piste ?? null,
           statut_http: err?.statut ?? null,
           a_utc: instantUtc,
@@ -295,14 +363,14 @@ export async function executerPassage({
         publication_id: travail.publication_id,
         canal: travail.canal,
         evenement: incertain ? 'incertain' : 'echec',
-        resume: `${err?.codeMeta ?? 'inconnu'} — ${err?.message ?? err}`,
+        resume: masquer(`${err?.codeMeta ?? 'inconnu'} — ${err?.message ?? err}`),
         piste: err?.piste ?? null,
       });
 
       if (incertain) bilan.incertains += 1; else bilan.echecs += 1;
       bilan.details.push({ cle, issue: incertain ? 'incertain' : 'echec', code: err?.codeMeta, piste: err?.piste });
       tracer('[autopost] %s %s %s : %s', incertain ? 'INCERTAIN' : 'ÉCHEC',
-        travail.publication_id, travail.canal, err?.message);
+        travail.publication_id, travail.canal, masquer(err?.message));
     }
   }
 
@@ -313,7 +381,27 @@ export async function executerPassage({
 }
 
 /** Aiguillage par canal. Le média doit être accessible publiquement par Meta. */
-async function publierUnCanal({ travail, client, depot, cle }) {
+async function publierUnCanal({ travail, client, depot, cle, comptes = {} }) {
+  /* 🔴 LA LIGNE QUI MANQUAIT LE 19/09/2026 AU SOIR.
+     `travail.compte_cible_id` vaut `IG_IMPRIMERIE` : une étiquette. Elle partait
+     telle quelle dans l'URL Graph, et Meta répondait « Object with ID
+     'IG_IMPRIMERIE' does not exist ». On résout ICI, et on ne passe JAMAIS
+     `travail.compte_cible_id` au client.
+     La sélection a déjà écarté ce qui n'est pas résolvable ; ce contrôle est la
+     ceinture par-dessus les bretelles, pour le jour où un autre appelant
+     arrivera par un autre chemin. */
+  const compte = resoudreCompteCible({
+    etiquette: travail.compte_cible_id, canal: travail.canal, comptes,
+  });
+  if (!compte.resolu || !compte.id) {
+    const e = new Error(compte.detail
+      || `compte cible « ${travail.compte_cible_id} » non résolu : aucun appel n'est tenté`);
+    e.codeMeta = compte.motif || 'compte_cible_non_resolu';
+    e.piste = 'Voir api/_lib/autopost-contrat.js : le manifeste nomme un compte par son '
+      + 'étiquette, et l\'application la résout avec ses propres variables d\'environnement.';
+    throw e;
+  }
+
   const legende = travail.legende || '';
   const urlMedia = travail.url_media || null;
   if (!urlMedia) {
@@ -330,11 +418,11 @@ async function publierUnCanal({ travail, client, depot, cle }) {
 
   if (travail.canal === 'facebook') {
     return client.publierPhotoFacebook({
-      pageId: travail.compte_cible_id, urlMedia, legende,
+      pageId: compte.id, urlMedia, legende,
     });
   }
   return client.publierPhotoInstagram({
-    igId: travail.compte_cible_id,
+    igId: compte.id,
     urlMedia,
     legende,
     // L'ancre écrite AVANT `media_publish` : sans elle, un timeout au mauvais
@@ -349,7 +437,7 @@ async function publierUnCanal({ travail, client, depot, cle }) {
  * en `reconciling` avec une tâche humaine : le dossier le permet, c'est un état
  * à part entière, pas un échec.
  */
-async function reconcilierLigne({ ligne, client, depot, instantUtc, tracer }) {
+async function reconcilierLigne({ ligne, client, depot, instantUtc, tracer, comptes = {} }) {
   if (!client?.disponible) return 'jeton_absent';
 
   try {
@@ -376,9 +464,20 @@ async function reconcilierLigne({ ligne, client, depot, instantUtc, tracer }) {
 
     const code = ligne.publication?.code_provenance;
     if (ligne.canal === 'facebook' && code) {
+      // Même règle que pour publier : on CHERCHE sur un identifiant résolu, pas
+      // sur une étiquette. Non résolue, la ligne reste en `reconciling` — un
+      // état à part entière, avec une tâche humaine, pas un échec.
+      const compte = resoudreCompteCible({
+        etiquette: ligne.compte_cible_id, canal: 'facebook', comptes,
+      });
+      if (!compte.resolu || !compte.id) {
+        tracer('[autopost] réconciliation impossible pour %s : %s',
+          ligne.cle_idempotence, compte.detail || 'compte cible non résolu');
+        return 'compte_cible_non_resolu';
+      }
       const depuis = msDepuisInstantUtc(ligne.instant_utc) || 0;
       const trouve = await client.chercherParCodeProvenance({
-        pageId: ligne.compte_cible_id, code, depuisMs: depuis,
+        pageId: compte.id, code, depuisMs: depuis,
       });
       if (trouve) {
         await depot.enregistrerPublication(ligne.cle_idempotence, {

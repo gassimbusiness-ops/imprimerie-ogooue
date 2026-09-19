@@ -51,8 +51,9 @@ import { ETATS_MODIFIABLES } from '../api/_lib/autopost-alimentation.js';
 import { travauxDus, RAISONS } from '../api/_lib/autopost-selection.js';
 import { instantUtcDepuisCreneau } from '../src/lib/dates.js';
 
-const PAGE_ID = '100000000000001';
-const IG_ID = '178000000000001';
+/* Des ÉTIQUETTES, pas des numéros — voir `tests/autopost-comptes-cibles.test.mjs`. */
+const PAGE_ID = 'PAGE_IMPRIMERIE';
+const IG_ID = 'IG_IMPRIMERIE';
 
 /** L'instant du geste : samedi 19/09/2026, 08 h 55 locales — cinq minutes avant. */
 const INSTANT = '2026-09-19T07:55:00Z';

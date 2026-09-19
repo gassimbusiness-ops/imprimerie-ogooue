@@ -17,7 +17,7 @@
 | `META_APP_SECRET` | vérifier la signature de chaque message Meta | **403 — refus par défaut, voulu** |
 | `META_PAGE_ACCESS_TOKEN` | publier sur la Page et sur Instagram (`api/_lib/autopost-meta.js`) | **simulation, sans aucun appel réseau — voulu** |
 | `BOT_META_MODE` | `live` pour que le bot Messenger / Instagram ENVOIE réellement ses réponses ; toute autre valeur = simulation | **simulation — le bot compose et journalise, il n'envoie rien** |
-| `META_PAGE_ID` · `META_INSTAGRAM_ID` | *facultatives.* Limiter le bot aux comptes de l'imprimerie — le jeton voit AUSSI la Page TopShop, dont les actifs sont dans le même portefeuille | le bot répond sur le compte qui a reçu le message, quel qu'il soit |
+| `META_PAGE_ID` · `META_INSTAGRAM_ID` | **deux emplois.** (1) *facultatif* : limiter le bot aux comptes de l'imprimerie — le jeton voit AUSSI la Page TopShop, dont les actifs sont dans le même portefeuille. (2) **obligatoire pour publier** : l'auto-poster y résout les étiquettes `PAGE_IMPRIMERIE` / `IG_IMPRIMERIE` du manifeste | le bot répond sur le compte qui a reçu le message, quel qu'il soit — **et l'auto-poster REFUSE de publier**, motif `compte_cible_non_configure`, sans aucun appel réseau |
 | `AUTOPOST_MODE` | `live` pour publier réellement ; toute autre valeur = simulation | simulation |
 | `AUTOPOST_CLE_APPROBATION` | signer les approbations données depuis l'écran (`api/_lib/autopost-approbation.js`) ET vérifier la signature HMAC des `APPROBATION.json` (`autopost-selection.js`) | la signature n'est **ni produite ni contrôlée** ; l'empreinte du contenu l'est toujours. L'approbation écrite porte alors `signature: 'absente'`, et l'écran l'affiche au lieu d'un voyant vert |
 | `CRON_SECRET` | authentifier les tâches planifiées Vercel sur `/api/autopost-tick` | **toute tâche planifiée est refusée — voulu** |
@@ -62,6 +62,32 @@ en ligne toute seule. `tests/autopost-executeur.test.mjs` vérifie les deux sens
 Tant qu'il en manque une, le passage est journalisé comme **simulé** et ne touche pas le
 réseau. C'est ce qui permet à toute la chaîne d'être développée, testée et relue **avant**
 que le jeton n'existe.
+
+### Le compte cible n'est plus un numéro — c'est une étiquette
+
+Le 19/09/2026 au soir, la première publication réelle a traversé toute la chaîne et Meta a
+répondu : `Object with ID 'IG_IMPRIMERIE' does not exist`. `IG_IMPRIMERIE` n'est pas un
+identifiant, c'est une **étiquette**, et elle partait telle quelle chez Meta.
+
+Depuis, `canaux[].compte_cible_id` du manifeste porte une étiquette, et **c'est
+l'application qui la résout**, au moment de publier :
+
+| Étiquette | Variable Vercel | Canal |
+|---|---|---|
+| `PAGE_IMPRIMERIE` | `META_PAGE_ID` | Facebook |
+| `IG_IMPRIMERIE` | `META_INSTAGRAM_ID` | Instagram |
+| `WA_IMPRIMERIE` | *aucune* | remise à un humain, aucun appel réseau |
+
+⛔ **Une étiquette inconnue est un refus, jamais une supposition** — aucune n'est
+rapprochée de la plus proche. ⛔ **Un identifiant numérique écrit en clair est refusé lui
+aussi** : l'accepter rendrait à l'émetteur du manifeste le pouvoir de publier sur
+n'importe quelle Page que le jeton voit, TopShop GABON comprise.
+
+Les trois refus portent **trois motifs distincts**, parce qu'ils appellent des gestes
+distincts : `compte_cible_inconnu` et `compte_cible_mauvais_canal` se corrigent dans le
+dépôt, `compte_cible_non_configure` se corrige **dans Vercel** (poser la variable, puis
+redéployer). Aucun des trois ne touche le réseau, ne prend la ligne, ni ne compte une
+tentative : la publication attend, elle n'est pas perdue.
 
 `CRON_SECRET` : sans lui, `/api/autopost-tick` refuse les tâches planifiées. Une URL
 publique capable de publier sur la Page de l'entreprise n'est pas une option. Un

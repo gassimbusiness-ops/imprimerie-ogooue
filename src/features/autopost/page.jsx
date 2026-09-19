@@ -70,6 +70,16 @@ const RAISONS = {
   offre_perimee: 'L\'offre citée dans le contenu a expiré.',
   non_approuve: 'Pas approuvé. Rien ne part sans approbation.',
   compte_cible_absent: 'Aucun compte Meta cible : impossible de vérifier qu\'on publie au bon endroit.',
+  /* Les trois refus de résolution d'étiquette. Deux disent « corrige le dépôt »,
+     le troisième dit « pose une variable dans Vercel » : ce sont deux gestes
+     différents, ils ne partagent pas une phrase. Source des codes :
+     `MOTIFS_COMPTE` dans `api/_lib/autopost-contrat.js`. */
+  compte_cible_inconnu: 'Le compte visé n\'est pas une étiquette connue. Le détail dit ce qui a été '
+    + 'reçu et ce qui est admis : à corriger dans publication.json. Rien n\'est deviné.',
+  compte_cible_mauvais_canal: 'L\'étiquette du compte ne correspond pas au réseau de cette ligne '
+    + '(un compte Facebook pour Instagram, ou l\'inverse). À corriger dans publication.json.',
+  compte_cible_non_configure: 'L\'étiquette est bonne, mais le serveur ne connaît pas encore le '
+    + 'compte correspondant. Rien à corriger dans le dépôt : c\'est une variable à poser dans Vercel.',
   plafond_journalier: 'Plafond de publications du jour atteint.',
   pris_par_une_autre_execution: 'Une autre exécution s\'en occupait déjà.',
 };

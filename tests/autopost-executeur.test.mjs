@@ -26,8 +26,15 @@ import { creerClientMeta, diagnostiquerErreurMeta } from '../api/_lib/autopost-m
 import { cleIdempotence, empreinteCanonique } from '../api/_lib/autopost-contrat.js';
 import { instantUtcDepuisCreneau } from '../src/lib/dates.js';
 
-const PAGE_ID = '100000000000001';
-const IG_ID = '178000000000001';
+/* ⛔ `compte_cible_id` porte une ÉTIQUETTE. Les numéros ci-dessous sont ceux que
+   l'ENVIRONNEMENT connaît, et c'est l'application qui fait le lien : c'est tout
+   le sujet de `tests/autopost-comptes-cibles.test.mjs`. */
+const PAGE_ID = 'PAGE_IMPRIMERIE';
+const IG_ID = 'IG_IMPRIMERIE';
+const NUMERO_PAGE = '100000000000001';
+const NUMERO_IG = '178000000000001';
+process.env.META_PAGE_ID = NUMERO_PAGE;
+process.env.META_INSTAGRAM_ID = NUMERO_IG;
 const INSTANT = '2026-09-21T16:45:00Z';
 
 /* Le mode réel exige DEUX verrous indépendants : la ligne `autopost_controle`

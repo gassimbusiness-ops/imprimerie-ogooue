@@ -37,7 +37,11 @@ import { instantUtcDepuisCreneau, formaterInstantLocal } from '../src/lib/dates.
    Fabriques — une publication conforme, qu'on abîme ensuite champ par champ
    ═══════════════════════════════════════════════════════════════════════════ */
 
-const PAGE_ID = '100000000000001';
+/* ⛔ Une ÉTIQUETTE, pas un numéro. Depuis le 19/09/2026 au soir, `compte_cible_id`
+   ne porte plus d'identifiant Meta : l'application résout l'étiquette elle-même
+   au moment de publier. Un numéro en clair est refusé — voir
+   `tests/autopost-comptes-cibles.test.mjs`. */
+const PAGE_ID = 'PAGE_IMPRIMERIE';
 
 function manifeste({
   id = 'PUB-2026-S39-1-02',

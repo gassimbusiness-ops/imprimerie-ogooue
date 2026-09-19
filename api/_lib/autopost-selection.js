@@ -70,7 +70,9 @@
  * minute. C'est une décision de Gassim, pas une correction de code.
  */
 import { instantUtcDepuisCreneau, msDepuisInstantUtc } from '../../src/lib/dates.js';
-import { validerManifeste, verifierApprobation, CANAUX_PUBLIANTS } from './autopost-contrat.js';
+import {
+  validerManifeste, verifierApprobation, resoudreCompteCible, MOTIFS_COMPTE, CANAUX_PUBLIANTS,
+} from './autopost-contrat.js';
 
 /**
  * Pourquoi un travail n'est pas parti. Ces chaînes sont écrites telles quelles
@@ -90,6 +92,12 @@ export const RAISONS = Object.freeze({
   OFFRE_PERIMEE: 'offre_perimee',
   NON_APPROUVE: 'non_approuve',
   COMPTE_CIBLE_ABSENT: 'compte_cible_absent',
+  /* Les trois refus de résolution d'étiquette. Ils sont DISTINCTS parce qu'ils
+     appellent des gestes distincts : corriger le dépôt pour les deux premiers,
+     poser une variable dans Vercel pour le troisième. Voir `MOTIFS_COMPTE`. */
+  COMPTE_CIBLE_INCONNU: 'compte_cible_inconnu',
+  COMPTE_CIBLE_MAUVAIS_CANAL: 'compte_cible_mauvais_canal',
+  COMPTE_CIBLE_NON_CONFIGURE: 'compte_cible_non_configure',
   PLAFOND_JOURNALIER: 'plafond_journalier',
 });
 
@@ -161,6 +169,13 @@ function ecart(travail, raison, detail = null) {
  * @param {number} [arg.options.plafondJournalier]  garde-fou : max de publications par jour
  * @param {number} [arg.options.dejaPubliesAujourdhui]
  * @param {string|null} [arg.options.cleSignature]  secret HMAC des approbations
+ * @param {Record<string,string>|null} [arg.options.comptes]  étiquette → identifiant
+ *        réel de compte Meta, tel que l'environnement du serveur le connaît.
+ *        ⛔ L'exécuteur le passe TOUJOURS (`comptesDepuisEnvironnement()`), et un
+ *        test le prouve. Absent = l'appelant ne connaît pas l'environnement : les
+ *        étiquettes sont quand même contrôlées, la présence des variables non.
+ *        Ce fichier ne lit jamais `process.env` lui-même — c'est sa seule qualité
+ *        importante.
  * @returns {{aPublier: object[], ecartes: object[], alertes: object[]}}
  */
 export function travauxDus({ file = [], instant, options = {} }) {
@@ -295,14 +310,32 @@ export function travauxDus({ file = [], instant, options = {} }) {
       continue;
     }
 
-    /* ── 10. Le compte cible doit être NUMÉRIQUE et présent ─────────────
+    /* ── 10. Le compte cible doit être une ÉTIQUETTE CONNUE ET RÉSOLUE ───
        TopShop GABON partage le même environnement Meta que l'imprimerie. Une
        erreur de cible ne publie pas « au mauvais endroit » : elle publie une
-       affiche d'imprimerie sur la page d'une autre entreprise. Sans compte
-       cible explicite, on ne part pas. */
-    if (!t.compte_cible_id) {
-      ecartes.push(ecart(t, RAISONS.COMPTE_CIBLE_ABSENT,
-        'aucun Page ID / IG Business Account ID sur la ligne'));
+       affiche d'imprimerie sur la page d'une autre entreprise.
+
+       🔴 Depuis le 19/09/2026 au soir, ce n'est plus un numéro qu'on attend
+       mais une étiquette (`PAGE_IMPRIMERIE`, `IG_IMPRIMERIE`), que
+       l'application résout elle-même depuis ses variables d'environnement.
+       La panne du soir — `Object with ID 'IG_IMPRIMERIE' does not exist` —
+       venait de ce que l'étiquette partait telle quelle chez Meta.
+
+       Un refus ici est un refus SANS appel réseau et SANS prise de ligne : la
+       publication reste en file, elle n'est ni perdue ni comptée en échec. */
+    const compte = resoudreCompteCible({
+      etiquette: t.compte_cible_id,
+      canal: t.canal,
+      comptes: options.comptes ?? null,
+    });
+    if (!compte.resolu) {
+      const raison = {
+        [MOTIFS_COMPTE.ABSENT]: RAISONS.COMPTE_CIBLE_ABSENT,
+        [MOTIFS_COMPTE.INCONNU]: RAISONS.COMPTE_CIBLE_INCONNU,
+        [MOTIFS_COMPTE.MAUVAIS_CANAL]: RAISONS.COMPTE_CIBLE_MAUVAIS_CANAL,
+        [MOTIFS_COMPTE.NON_CONFIGURE]: RAISONS.COMPTE_CIBLE_NON_CONFIGURE,
+      }[compte.motif];
+      ecartes.push(ecart(t, raison, compte.detail));
       continue;
     }
 
