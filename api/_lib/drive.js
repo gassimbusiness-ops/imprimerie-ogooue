@@ -135,6 +135,18 @@ const PROFONDEUR_MAX = 4;
 const REQUETES_MAX = 150;
 
 /**
+ * Combien de dossiers-FEUILLES sans manifeste la lecture par recherche accepte
+ * d'ouvrir pour dire ce qui y traîne.
+ *
+ * Elle n'en a pas besoin pour trouver les publications — la recherche par nom
+ * les lui donne. Elle les ouvre pour ne pas TAIRE un jour où ChatGPT a déposé
+ * une affiche sans son `publication.json` : ce dossier-là doit s'afficher au
+ * gérant avec son motif. Dans une semaine propre il n'y en a aucun. La borne
+ * existe pour qu'un Drive encombré ne transforme pas une lecture en inventaire.
+ */
+const INSPECTION_FEUILLES_MAX = 40;
+
+/**
  * Budget de listings du SONDAGE (celui qui alimente l'écran). Beaucoup plus
  * serré que le parcours complet : ouvrir un écran ne doit jamais coûter
  * l'inventaire intégral d'un Drive. Au-delà, le sondage dit qu'il a tronqué
@@ -403,6 +415,7 @@ export function creerClientDrive({
   profondeurMax = PROFONDEUR_MAX,
   requetesMax = REQUETES_MAX,
   sondageListingsMax = SONDAGE_LISTINGS_MAX,
+  feuillesMax = INSPECTION_FEUILLES_MAX,
 } = {}) {
   const configuration = lireConfigurationDrive(env);
   const appeler = fetchImpl || globalThis.fetch;
@@ -1033,94 +1046,520 @@ export function creerClientDrive({
    * @param {object} [arg]
    * @param {string} [arg.idDossier] par défaut `DRIVE_DOSSIER_PUBLICATIONS_ID`
    */
+  /**
+   * Le motif d'écartement d'un dossier qui porte des fichiers mais AUCUN
+   * manifeste. Écrit une seule fois, et servi par les DEUX façons de trouver
+   * les dossiers : le gérant de Moanda lit exactement la même phrase, que le
+   * Drive ait été interrogé par recherche ou parcouru à la main.
+   *
+   * Le motif NOMME ce qui est là. Un simple « aucune publication » devant 77
+   * fichiers déposés fait chercher au mauvais endroit : le gérant irait
+   * revérifier un partage de dossier qui marche très bien.
+   */
+  function motifSansManifeste(fichiers) {
+    const echantillon = fichiers.slice(0, 4).map((x) => x.name);
+    const reste = fichiers.length - echantillon.length;
+    return `aucun fichier ${NOM_MANIFESTE} dans ce dossier, alors que ${fichiers.length} `
+      + `fichier(s) y sont déposés : ${echantillon.join(', ')}`
+      + `${reste > 0 ? `, et ${reste} autre(s)` : ''}. Rien n'est publiable tant qu'un `
+      + `${NOM_MANIFESTE} ne déclare pas le créneau, les canaux et les médias.`;
+  }
+
+  /**
+   * L'INDEX DES DOSSIERS — une requête pour TOUS les noms et TOUTES les
+   * filiations que le robot peut voir.
+   *
+   * Pourquoi il existe. La recherche par nom rend `parents` : chaque manifeste
+   * trouvé porte l'identifiant de son dossier. Un identifiant Google n'est pas
+   * un chemin lisible : le gérant doit lire un emplacement, pas
+   * `1aB2cD3eF4...`. Plutôt que de remonter la filiation dossier par dossier
+   * (un appel par ancêtre), on demande une fois la liste des dossiers visibles
+   * et on reconstruit les chemins hors ligne. Une requête, pas vingt.
+   *
+   * ⚠️ Comme la recherche par nom, elle ne voit QUE ce qui est partagé avec le
+   *    robot — le dossier des publications et sa descendance.
+   *
+   * @returns {Promise<Map<string, {nom: string, parents: string[]}>>}
+   */
+  async function indexerDossiers(maxRequetes = 5) {
+    exigerConfiguration();
+    const index = new Map();
+    let pageToken = null;
+    let requetes = 0;
+
+    do {
+      const parametres = new URLSearchParams({
+        q: `mimeType = '${MIME_DOSSIER}' and trashed = false`,
+        fields: 'nextPageToken, files(id, name, parents)',
+        pageSize: '1000',
+        supportsAllDrives: 'true',
+        includeItemsFromAllDrives: 'true',
+      });
+      if (pageToken) parametres.set('pageToken', pageToken);
+
+      const reponse = await requete(`${BASE_DRIVE}/files?${parametres.toString()}`, {
+        method: 'GET',
+        headers: await entetes(),
+      });
+      const corps = await lireCorps(reponse);
+      if (!reponse.ok) throw erreurDrive(reponse.status, corps, configuration.dossierId);
+
+      let charge;
+      try {
+        charge = JSON.parse(corps);
+      } catch {
+        throw new ErreurDrive({
+          diagnostic: DIAGNOSTICS.PANNE,
+          message: MESSAGES.panne,
+          detail: `index des dossiers illisible : ${String(corps).slice(0, 200)}`,
+          piste: PISTES.panne,
+        });
+      }
+      for (const dossier of charge.files || []) {
+        index.set(dossier.id, { nom: dossier.name || '', parents: dossier.parents || [] });
+      }
+      pageToken = charge.nextPageToken || null;
+      requetes += 1;
+    } while (pageToken && requetes < maxRequetes);
+
+    return index;
+  }
+
+  /** Mémoire des métadonnées de dossiers, pour ne jamais redemander un ancêtre. */
+  const memoireDossiers = new Map();
+
+  /**
+   * Le nom et la filiation d'UN dossier. Pris dans l'index s'il y est ; sinon
+   * demandé à Google, une fois, et retenu.
+   *
+   * Un 404 rend `null` : c'est un fait, pas une panne. Une vraie panne réseau
+   * remonte, elle, parce qu'insister n'apporterait rien.
+   */
+  async function metaDossier(id, index = null) {
+    if (memoireDossiers.has(id)) return memoireDossiers.get(id);
+    if (index && index.has(id)) {
+      memoireDossiers.set(id, index.get(id));
+      return index.get(id);
+    }
+
+    const parametres = new URLSearchParams({ fields: 'id, name, parents', supportsAllDrives: 'true' });
+    const reponse = await requete(
+      `${BASE_DRIVE}/files/${encodeURIComponent(id)}?${parametres.toString()}`,
+      { method: 'GET', headers: await entetes() },
+    );
+    const corps = await lireCorps(reponse);
+    let meta = null;
+    if (reponse.ok) {
+      try {
+        const charge = JSON.parse(corps);
+        meta = { nom: charge.name || '', parents: charge.parents || [] };
+      } catch {
+        meta = null;
+      }
+    }
+    memoireDossiers.set(id, meta);
+    return meta;
+  }
+
+  /**
+   * SITUER un dossier : son nom, son chemin LISIBLE relatif à la racine, et la
+   * réponse à la seule question de sécurité qui compte — est-il bien SOUS la
+   * racine demandée ?
+   *
+   * Le chemin rendu a exactement la forme de celui que produisait le parcours,
+   * parce que c'est celui-là qui s'affiche au gérant.
+   */
+  async function situerDossier(id, racineId, index) {
+    const segments = [];
+    const vus = new Set();
+    let courant = id;
+    let sousRacine = false;
+
+    while (courant && !vus.has(courant) && segments.length < 32) {
+      if (courant === racineId) { sousRacine = true; break; }
+      vus.add(courant);
+      const meta = await metaDossier(courant, index);
+      // Filiation inconnue : on rend ce qu'on a plutôt que rien. Un chemin
+      // partiel reste lisible ; un identifiant Google ne l'est pas.
+      if (!meta) break;
+      segments.unshift(meta.nom);
+      courant = (meta.parents || [])[0] || null;
+    }
+
+    return {
+      chemin: segments.join('/'),
+      nom: segments.length > 0 ? segments[segments.length - 1] : '',
+      sousRacine,
+    };
+  }
+
+  /**
+   * ON DEMANDE PLUTÔT QUE DE FOUILLER — la lecture par recherche.
+   *
+   * Pourquoi cette voie remplace le parcours. Le 19/09/2026, l'écran affichait
+   * DEUX choses contradictoires : « 14 publication(s) trouvée(s) » (le sondage,
+   * corrigé la veille, qui DEMANDE à Google) et « aucune publication conforme,
+   * 53 dossier(s) écarté(s) » (la lecture, restée sur le parcours en largeur,
+   * qui s'arrêtait à la profondeur 4 sans jamais atteindre les manifestes).
+   *
+   * La correction n'est pas de relever le plafond : la disposition déposée
+   * compte 4 ou 5 niveaux selon l'endroit où pointe la racine, et une semaine
+   * de plus en rajoute. Google sait répondre en UNE requête à « où sont les
+   * fichiers nommés publication.json ? », et chaque réponse porte
+   * l'identifiant de son dossier parent. On liste CES dossiers-là, et eux
+   * seuls.
+   *
+   *   • aucune limite de profondeur : la question ne se pose plus ;
+   *   • le coût ne suit plus le nombre de semaines déposées, mais le nombre de
+   *     publications réellement trouvées.
+   */
+  async function lireParRecherche(racine, manifestes, publications, ecartees) {
+    // L'index sert aux CHEMINS, pas à trouver les publications : s'il manque,
+    // on lit quand même — un chemin approximatif vaut mieux qu'un Drive muet.
+    let index = null;
+    try {
+      index = await indexerDossiers();
+    } catch {
+      index = null;
+    }
+
+    /* ── Un dossier par manifeste, sans doublon ─────────────────────────── */
+    const dossiers = new Map();
+    for (const manifeste of manifestes) {
+      const parent = (manifeste.parents || [])[0];
+      if (!parent) continue;
+      if (!dossiers.has(parent)) dossiers.set(parent, manifeste);
+    }
+
+    for (const id of dossiers.keys()) {
+      const situation = await situerDossier(id, racine, index);
+      // Hors périmètre : la recherche voit tout ce qui est partagé avec le
+      // robot, la lecture ne rend QUE ce qui est sous la racine demandée.
+      // Une filiation qu'on n'a pas su remonter n'est pas une preuve
+      // d'exclusion : dans le doute, on garde la publication.
+      const filiationConnue = situation.chemin !== '';
+      if (!situation.sousRacine && filiationConnue && index) continue;
+
+      const noeud = { id, nom: situation.nom, chemin: situation.chemin };
+
+      let entrees;
+      try {
+        entrees = await listerDossier(id);
+      } catch (err) {
+        ecartees.push({
+          dossier_id: id,
+          dossier_nom: noeud.nom,
+          chemin: noeud.chemin,
+          motif: `dossier inaccessible : ${err?.detail || err?.message || err}`,
+        });
+        continue;
+      }
+
+      if (!entrees.some((x) => x.name === NOM_MANIFESTE)) {
+        // Le manifeste a disparu entre la recherche et le listing. On le DIT.
+        const fichiers = entrees.filter((x) => x.mimeType !== MIME_DOSSIER);
+        if (fichiers.length > 0) {
+          ecartees.push({
+            dossier_id: id,
+            dossier_nom: noeud.nom,
+            chemin: noeud.chemin,
+            motif: motifSansManifeste(fichiers),
+          });
+        }
+        continue;
+      }
+
+      try {
+        const issue = await examinerDossierPublication(noeud, entrees);
+        if (issue.publication) publications.push(issue.publication);
+        else ecartees.push(issue.ecartee);
+      } catch (err) {
+        // Même règle que le parcours : un manifeste qu'on n'arrive pas à
+        // TÉLÉCHARGER n'emporte pas les autres ; une clé refusée ou une panne
+        // réseau touchent TOUT, et on remonte.
+        if (err?.diagnostic === DIAGNOSTICS.CLE_REFUSEE
+          || err?.diagnostic === DIAGNOSTICS.NON_CONFIGURE
+          || err?.diagnostic === DIAGNOSTICS.PANNE) throw err;
+        ecartees.push({
+          dossier_id: id,
+          dossier_nom: noeud.nom,
+          chemin: noeud.chemin,
+          motif: `${NOM_MANIFESTE} inaccessible : ${err?.detail || err?.message || err}`,
+        });
+      }
+    }
+
+    await inspecterFeuilles(racine, index, new Set(dossiers.keys()), ecartees);
+  }
+
+  /**
+   * CE QUE LA RECHERCHE NE DIT PAS — les dossiers déposés SANS manifeste.
+   *
+   * La recherche ne rend que les dossiers qui portent un `publication.json`.
+   * Un jour où ChatGPT a déposé une affiche et oublié le manifeste
+   * disparaîtrait alors de l'écran en silence — et une publication muette est
+   * exactement ce que ce module refuse.
+   *
+   * L'index des dossiers suffit à les DÉSIGNER sans rien fouiller : ce sont
+   * les FEUILLES (aucun sous-dossier) qui ne portent pas de manifeste. Dans une
+   * semaine propre, il n'y en a aucune, et ça ne coûte rien.
+   *
+   * ⚠️ Et quand il y en a, on ne les LISTE pas une par une. Dix semaines de
+   *    dossiers-jours préparés à l'avance feraient soixante-dix listings pour
+   *    n'y rien trouver — le coût qui recommence à suivre le calendrier, c'est
+   *    exactement ce qu'on vient de corriger. On pose donc la question inverse
+   *    à Google, UNE fois : « où sont les fichiers qui ne sont pas des
+   *    dossiers ? ». Chacun porte son parent, et on sait tout.
+   */
+  async function inspecterFeuilles(racine, index, dossiersDePublication, ecartees) {
+    if (!index || index.size === 0) return;
+
+    const parents = new Set();
+    for (const meta of index.values()) {
+      for (const parent of meta.parents || []) parents.add(parent);
+    }
+
+    /* ── Les feuilles à inspecter. Aucun appel : de l'arithmétique sur l'index ── */
+    const feuilles = [];
+    for (const [id, meta] of index) {
+      if (id === racine) continue;
+      if (dossiersDePublication.has(id)) continue;
+      if (parents.has(id)) continue;
+      const situation = await situerDossier(id, racine, index);
+      if (!situation.sousRacine) continue;
+      feuilles.push({ id, nom: meta.nom, chemin: situation.chemin });
+    }
+    if (feuilles.length === 0) return;
+
+    /* ── Une requête pour savoir ce que TOUTES portent ─────────────────── */
+    let parDossier = null;
+    try {
+      parDossier = await indexerFichiersPlats();
+    } catch {
+      parDossier = null;
+    }
+
+    let inspectes = 0;
+    for (const feuille of feuilles) {
+      let fichiers;
+
+      if (parDossier) {
+        fichiers = parDossier.get(feuille.id) || [];
+      } else {
+        // L'index des fichiers n'a pas répondu : on retombe sur le listing,
+        // borné, plutôt que de TAIRE un dépôt qui ne sera jamais publié.
+        if (inspectes >= feuillesMax) break;
+        inspectes += 1;
+        try {
+          fichiers = (await listerDossier(feuille.id)).filter((x) => x.mimeType !== MIME_DOSSIER);
+        } catch (err) {
+          ecartees.push({
+            dossier_id: feuille.id,
+            dossier_nom: feuille.nom,
+            chemin: feuille.chemin,
+            motif: `dossier inaccessible : ${err?.detail || err?.message || err}`,
+          });
+          continue;
+        }
+      }
+
+      // Un dossier vide est NORMAL : un jour sans publication n'est pas une
+      // anomalie, et ne doit pas encombrer l'écran du gérant.
+      if (fichiers.length === 0) continue;
+      if (fichiers.some((x) => x.name === NOM_MANIFESTE)) continue;
+
+      ecartees.push({
+        dossier_id: feuille.id,
+        dossier_nom: feuille.nom,
+        chemin: feuille.chemin,
+        motif: motifSansManifeste(fichiers),
+      });
+    }
+  }
+
+  /**
+   * L'INDEX DES FICHIERS — tout ce qui n'est PAS un dossier, rangé par parent.
+   *
+   * La question symétrique de `indexerDossiers()`. Elle coûte une requête et
+   * remplace un listing par dossier suspect. Elle n'est posée que s'il y a des
+   * feuilles à inspecter : une semaine propre ne la déclenche jamais.
+   *
+   * @returns {Promise<Map<string, Array<{id: string, name: string}>>>}
+   */
+  async function indexerFichiersPlats(maxRequetes = 5) {
+    exigerConfiguration();
+    const parDossier = new Map();
+    let pageToken = null;
+    let requetes = 0;
+
+    do {
+      const parametres = new URLSearchParams({
+        q: `mimeType != '${MIME_DOSSIER}' and trashed = false`,
+        fields: 'nextPageToken, files(id, name, mimeType, parents)',
+        pageSize: '1000',
+        // Le MÊME ordre que le listing : le motif d'écartement nomme les
+        // premiers fichiers, et il ne doit pas dépendre du chemin pris.
+        orderBy: 'name',
+        supportsAllDrives: 'true',
+        includeItemsFromAllDrives: 'true',
+      });
+      if (pageToken) parametres.set('pageToken', pageToken);
+
+      const reponse = await requete(`${BASE_DRIVE}/files?${parametres.toString()}`, {
+        method: 'GET',
+        headers: await entetes(),
+      });
+      const corps = await lireCorps(reponse);
+      if (!reponse.ok) throw erreurDrive(reponse.status, corps, configuration.dossierId);
+
+      let charge;
+      try {
+        charge = JSON.parse(corps);
+      } catch {
+        throw new ErreurDrive({
+          diagnostic: DIAGNOSTICS.PANNE,
+          message: MESSAGES.panne,
+          detail: `index des fichiers illisible : ${String(corps).slice(0, 200)}`,
+          piste: PISTES.panne,
+        });
+      }
+      for (const fichier of charge.files || []) {
+        for (const parent of fichier.parents || []) {
+          if (!parDossier.has(parent)) parDossier.set(parent, []);
+          parDossier.get(parent).push({ id: fichier.id, name: fichier.name, mimeType: fichier.mimeType });
+        }
+      }
+      pageToken = charge.nextPageToken || null;
+      requetes += 1;
+    } while (pageToken && requetes < maxRequetes);
+
+    return parDossier;
+  }
+
+  /**
+   * LE REPLI — le parcours en largeur, inchangé.
+   *
+   * Il reste là parce qu'un Drive lisible d'une façon vaut mieux qu'un Drive
+   * illisible proprement : si la recherche par nom échoue (droit, panne,
+   * quota) ou ne rend rien, c'est lui qui prend le relais — et lui seul sait
+   * dire POURQUOI un dépôt n'est pas publiable quand il n'y a aucun manifeste.
+   *
+   * ⚠️ Sa profondeur reste bornée : c'est la limite qui a causé la panne du
+   *    19/09/2026. Elle ne gêne plus, parce qu'il n'est plus le chemin normal.
+   */
+  async function lireParParcours(racine, publications, ecartees) {
+    const aVisiter = [{ id: racine, nom: '', chemin: '', profondeur: 0 }];
+
+    while (aVisiter.length > 0) {
+      const noeud = aVisiter.shift();
+
+      let entrees;
+      try {
+        entrees = await listerDossier(noeud.id);
+      } catch (err) {
+        // ⛔ La RACINE est décisive : si elle ne se lit pas, c'est le partage
+        //    ou l'identifiant, et tout le reste est sans objet.
+        if (noeud.profondeur === 0) throw err;
+        // Plus bas, une branche illisible est un incident LOCAL. L'écarter en
+        // le disant vaut mieux que de jeter les branches lisibles avec elle.
+        ecartees.push({
+          dossier_id: noeud.id,
+          dossier_nom: noeud.nom,
+          chemin: noeud.chemin,
+          motif: `dossier inaccessible : ${err?.detail || err?.message || err}`,
+        });
+        continue;
+      }
+
+      const sousDossiers = entrees.filter((x) => x.mimeType === MIME_DOSSIER);
+      const fichiers = entrees.filter((x) => x.mimeType !== MIME_DOSSIER);
+
+      if (fichiers.some((x) => x.name === NOM_MANIFESTE)) {
+        try {
+          const issue = await examinerDossierPublication(noeud, entrees);
+          if (issue.publication) publications.push(issue.publication);
+          else ecartees.push(issue.ecartee);
+        } catch (err) {
+          // Un manifeste qu'on n'arrive pas à TÉLÉCHARGER (droit sur le
+          // fichier, fichier supprimé entre le listing et la lecture) ne doit
+          // pas emporter les autres publications de la semaine. En revanche,
+          // une clé refusée ou une panne réseau touchent TOUT : on remonte,
+          // parce qu'insister sur les dossiers suivants ne donnerait que la
+          // même erreur, cinquante fois.
+          if (err?.diagnostic === DIAGNOSTICS.CLE_REFUSEE
+            || err?.diagnostic === DIAGNOSTICS.NON_CONFIGURE
+            || err?.diagnostic === DIAGNOSTICS.PANNE) throw err;
+          ecartees.push({
+            dossier_id: noeud.id,
+            dossier_nom: noeud.nom,
+            chemin: noeud.chemin,
+            motif: `${NOM_MANIFESTE} inaccessible : ${err?.detail || err?.message || err}`,
+          });
+        }
+        continue;
+      }
+
+      if (sousDossiers.length > 0 && noeud.profondeur < profondeurMax) {
+        for (const sous of sousDossiers) {
+          aVisiter.push({
+            id: sous.id,
+            nom: sous.name,
+            chemin: noeud.chemin ? `${noeud.chemin}/${sous.name}` : sous.name,
+            profondeur: noeud.profondeur + 1,
+          });
+        }
+        continue;
+      }
+
+      // Un dossier de feuille qui porte des fichiers mais pas de manifeste :
+      // quelqu'un a déposé quelque chose qui ne sera jamais publié. On le
+      // DIT. Un dossier vide, lui, est normal — un jour sans publication.
+      if (fichiers.length > 0 && noeud.profondeur > 0) {
+        ecartees.push({
+          dossier_id: noeud.id,
+          dossier_nom: noeud.nom,
+          chemin: noeud.chemin,
+          motif: motifSansManifeste(fichiers),
+        });
+      }
+    }
+  }
+
+  /**
+   * Parcourt le dossier des publications et rend ce qui est lisible, et ce qui
+   * ne l'est pas — avec le motif.
+   *
+   * ⛔ Ne lève jamais : rend un objet qui porte le diagnostic.
+   *
+   * @param {object} [arg]
+   * @param {string} [arg.idDossier] par défaut `DRIVE_DOSSIER_PUBLICATIONS_ID`
+   */
   async function lirePublications({ idDossier = null } = {}) {
     const publications = [];
     const ecartees = [];
     try {
       exigerConfiguration();
       const racine = idDossier || configuration.dossierId;
-      const aVisiter = [{ id: racine, nom: '', chemin: '', profondeur: 0 }];
 
-      while (aVisiter.length > 0) {
-        const noeud = aVisiter.shift();
+      /* ── ON DEMANDE AVANT DE FOUILLER ───────────────────────────────────
+         Exactement ce que fait le sondage depuis le 18/09/2026. Une requête :
+         « où sont les fichiers nommés publication.json ? ». L'échec de la
+         recherche n'est PAS une panne — le parcours prend le relais. */
+      let manifestes = null;
+      try {
+        manifestes = await rechercherParNom(NOM_MANIFESTE);
+      } catch {
+        manifestes = null;
+      }
 
-        let entrees;
-        try {
-          entrees = await listerDossier(noeud.id);
-        } catch (err) {
-          // ⛔ La RACINE est décisive : si elle ne se lit pas, c'est le partage
-          //    ou l'identifiant, et tout le reste est sans objet.
-          if (noeud.profondeur === 0) throw err;
-          // Plus bas, une branche illisible est un incident LOCAL. L'écarter en
-          // le disant vaut mieux que de jeter les branches lisibles avec elle.
-          ecartees.push({
-            dossier_id: noeud.id,
-            dossier_nom: noeud.nom,
-            chemin: noeud.chemin,
-            motif: `dossier inaccessible : ${err?.detail || err?.message || err}`,
-          });
-          continue;
-        }
+      if (manifestes && manifestes.length > 0) {
+        await lireParRecherche(racine, manifestes, publications, ecartees);
+      }
 
-        const sousDossiers = entrees.filter((x) => x.mimeType === MIME_DOSSIER);
-        const fichiers = entrees.filter((x) => x.mimeType !== MIME_DOSSIER);
-
-        if (fichiers.some((x) => x.name === NOM_MANIFESTE)) {
-          try {
-            const issue = await examinerDossierPublication(noeud, entrees);
-            if (issue.publication) publications.push(issue.publication);
-            else ecartees.push(issue.ecartee);
-          } catch (err) {
-            // Un manifeste qu'on n'arrive pas à TÉLÉCHARGER (droit sur le
-            // fichier, fichier supprimé entre le listing et la lecture) ne doit
-            // pas emporter les autres publications de la semaine. En revanche,
-            // une clé refusée ou une panne réseau touchent TOUT : on remonte,
-            // parce qu'insister sur les dossiers suivants ne donnerait que la
-            // même erreur, cinquante fois.
-            if (err?.diagnostic === DIAGNOSTICS.CLE_REFUSEE
-              || err?.diagnostic === DIAGNOSTICS.NON_CONFIGURE
-              || err?.diagnostic === DIAGNOSTICS.PANNE) throw err;
-            ecartees.push({
-              dossier_id: noeud.id,
-              dossier_nom: noeud.nom,
-              chemin: noeud.chemin,
-              motif: `${NOM_MANIFESTE} inaccessible : ${err?.detail || err?.message || err}`,
-            });
-          }
-          continue;
-        }
-
-        if (sousDossiers.length > 0 && noeud.profondeur < profondeurMax) {
-          for (const sous of sousDossiers) {
-            aVisiter.push({
-              id: sous.id,
-              nom: sous.name,
-              chemin: noeud.chemin ? `${noeud.chemin}/${sous.name}` : sous.name,
-              profondeur: noeud.profondeur + 1,
-            });
-          }
-          continue;
-        }
-
-        // Un dossier de feuille qui porte des fichiers mais pas de manifeste :
-        // quelqu'un a déposé quelque chose qui ne sera jamais publié. On le
-        // DIT. Un dossier vide, lui, est normal — un jour sans publication.
-        if (fichiers.length > 0 && noeud.profondeur > 0) {
-          // Le motif NOMME ce qui est là. Un simple « aucune publication »
-          // devant 77 fichiers déposés fait chercher au mauvais endroit : le
-          // gérant irait revérifier un partage de dossier qui marche.
-          const echantillon = fichiers.slice(0, 4).map((x) => x.name);
-          const reste = fichiers.length - echantillon.length;
-          ecartees.push({
-            dossier_id: noeud.id,
-            dossier_nom: noeud.nom,
-            chemin: noeud.chemin,
-            motif: `aucun fichier ${NOM_MANIFESTE} dans ce dossier, alors que ${fichiers.length} `
-              + `fichier(s) y sont déposés : ${echantillon.join(', ')}`
-              + `${reste > 0 ? `, et ${reste} autre(s)` : ''}. Rien n'est publiable tant qu'un `
-              + `${NOM_MANIFESTE} ne déclare pas le créneau, les canaux et les médias.`,
-          });
-        }
+      // Rien du tout : soit la recherche n'a rien rendu, soit ce qu'elle a
+      // rendu était hors périmètre. Le parcours sait dire POURQUOI.
+      if (publications.length === 0 && ecartees.length === 0) {
+        await lireParParcours(racine, publications, ecartees);
       }
     } catch (err) {
       return { publications, ecartees, ...etatDepuisErreur(err) };

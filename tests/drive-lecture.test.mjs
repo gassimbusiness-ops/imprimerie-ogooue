@@ -73,7 +73,7 @@ function env(cle = CLE_VRAIS_SAUTS, { email = EMAIL, dossier = DOSSIER } = {}) {
    Le faux Google. Il route par URL et enregistre TOUT ce qui sort.
    ═══════════════════════════════════════════════════════════════════════════ */
 
-function fauxGoogle({ jeton = null, listes = {}, fichiers = {}, recherche = null, expireIn = 3600 } = {}) {
+function fauxGoogle({ jeton = null, listes = {}, fichiers = {}, recherche = null, dossiers = null, plats = null, metas = null, expireIn = 3600 } = {}) {
   const appels = [];
   const impl = async (url, options = {}) => {
     const u = String(url);
@@ -117,6 +117,24 @@ function fauxGoogle({ jeton = null, listes = {}, fichiers = {}, recherche = null
       };
     }
 
+    /* ── Les métadonnées d'UN fichier (nom, parents) ─────────────────────
+       Le repli du repli : quand l'index des dossiers n'est pas disponible, le
+       chemin se reconstruit en remontant la filiation un dossier à la fois.
+       Absent de la table ⇒ 404, ce qui doit dégrader le CHEMIN sans jamais
+       faire perdre la publication. */
+    const fiche = u.match(/\/drive\/v3\/files\/([^/?]+)\?/);
+    if (fiche && !u.includes('alt=media')) {
+      const meta = metas && metas[fiche[1]];
+      if (!meta) {
+        return { ok: false, status: 404, async text() { return JSON.stringify({ error: { code: 404, message: 'File not found' } }); } };
+      }
+      return {
+        ok: true,
+        status: 200,
+        async text() { return JSON.stringify({ id: fiche[1], name: meta.name, parents: meta.parents || [] }); },
+      };
+    }
+
     /* ── La RECHERCHE PAR NOM ────────────────────────────────────────────
        `name = 'publication.json'`, sans `in parents`. Le vrai Google la sert
        sur tout ce que le robot peut voir ; le faux la sert depuis `recherche`. */
@@ -128,6 +146,34 @@ function fauxGoogle({ jeton = null, listes = {}, fichiers = {}, recherche = null
       }
       const trouves = (recherche && recherche[parNom[1]]) || [];
       return { ok: true, status: 200, async text() { return JSON.stringify({ files: trouves }); } };
+    }
+
+    /* ── L'INDEX DES DOSSIERS ────────────────────────────────────────────
+       `mimeType = '…folder'`, sans `in parents`. UNE requête qui rend le nom et
+       la filiation de tout ce que le robot peut voir : c'est ce qui permet de
+       reconstruire un chemin LISIBLE sans remonter la filiation dossier par
+       dossier. Absent de la table ⇒ index vide, ce qui est aussi un cas à
+       tester : la lecture doit continuer sans lui. */
+    const parType = qBrut.match(/^mimeType = '([^']+)' and trashed = false$/);
+    if (parType) {
+      if (dossiers && dossiers.statut) {
+        return { ok: false, status: dossiers.statut, async text() { return JSON.stringify(dossiers.corps ?? {}); } };
+      }
+      const liste = Array.isArray(dossiers) ? dossiers : [];
+      return { ok: true, status: 200, async text() { return JSON.stringify({ files: liste }); } };
+    }
+
+    /* ── L'INDEX DES FICHIERS — la question symétrique ────────────────────
+       `mimeType != '…folder'`. Elle dit, en UNE requête, ce que portent les
+       dossiers qui n'ont pas de manifeste : sans elle il faudrait les lister
+       un par un, et le coût se remettrait à suivre le calendrier. */
+    const parTypeExclu = qBrut.match(/^mimeType != '([^']+)' and trashed = false$/);
+    if (parTypeExclu) {
+      if (plats && plats.statut) {
+        return { ok: false, status: plats.statut, async text() { return JSON.stringify(plats.corps ?? {}); } };
+      }
+      const liste = Array.isArray(plats) ? plats : [];
+      return { ok: true, status: 200, async text() { return JSON.stringify({ files: liste }); } };
     }
 
     /* ── Le listing d'un dossier ─────────────────────────────────────────── */
@@ -1184,4 +1230,447 @@ test('un média introuvable lève un diagnostic lisible, pas un octet vide', asy
       return true;
     },
   );
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   I. LA LECTURE DEMANDE, ELLE NE FOUILLE PLUS — le bug du 19/09/2026
+
+   Le matin du 19/09/2026, le MÊME écran affichait deux choses contradictoires :
+
+     ✅ « Accès Drive opérationnel. 14 publication(s) trouvée(s) dans le Drive. »
+     ❌ « Le Drive n'a pas pu être lu : aucune publication conforme au contrat.
+          53 dossier(s) écarté(s). »
+
+   Les deux disaient vrai. `sonder()`, corrigé la veille, DEMANDAIT à Google où
+   étaient les `publication.json` : il en trouvait 14, sans limite de
+   profondeur. `lirePublications()`, resté sur le parcours en largeur borné à
+   4 niveaux, visitait 53 dossiers et n'atteignait jamais les manifestes —
+   déposés 5 niveaux plus bas.
+
+   Relever le plafond n'était PAS la correction : la disposition déposée compte
+   4 ou 5 niveaux selon l'endroit où pointe la racine, et une semaine de plus en
+   rajoute. Ces tests exigent que la lecture pose la même question que le
+   sondage — et que le parcours reste là quand la question n'obtient pas de
+   réponse.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Une arborescence de `niveaux` dossiers imbriqués, le manifeste tout au fond.
+ * `niveaux = 5` reproduit la disposition réelle quand la racine pointe un cran
+ * au-dessus de 10_PUBLICATIONS.
+ */
+function arborescence(niveaux, { fichiersEnPlus = [] } = {}) {
+  const listes = {};
+  const segments = [];
+  let parent = DOSSIER;
+  for (let n = 1; n <= niveaux; n += 1) {
+    const id = `n${n}`;
+    const nom = n === niveaux ? '1_POST_09H00' : `NIVEAU_${n}`;
+    listes[parent] = [d(id, nom)];
+    segments.push(nom);
+    parent = id;
+  }
+  listes[parent] = [f('f-json', 'publication.json', 'application/json'), f('f-media', MEDIA), ...fichiersEnPlus];
+  return { listes, chemin: segments.join('/'), feuille: parent };
+}
+
+/**
+ * Le faux Google AVEC ce que le vrai sait faire : répondre à « où sont les
+ * fichiers nommés publication.json ? » et rendre le nom et la filiation des
+ * dossiers. Les deux réponses sont DÉRIVÉES de la table `listes` — on ne peut
+ * donc pas les écrire complaisantes.
+ */
+function googleQuiSaitChercher(listes, fichiers = {}, extra = {}) {
+  const manifestes = [];
+  const dossiers = [];
+  const plats = [];
+  for (const [parent, entrees] of Object.entries(listes)) {
+    for (const entree of entrees) {
+      if (entree.mimeType === DOSSIER_MIME) {
+        dossiers.push({ id: entree.id, name: entree.name, parents: [parent] });
+      } else {
+        plats.push({ id: entree.id, name: entree.name, mimeType: entree.mimeType, parents: [parent] });
+      }
+      if (entree.name === 'publication.json') {
+        manifestes.push({ id: entree.id, name: entree.name, mimeType: entree.mimeType, parents: [parent] });
+      }
+    }
+  }
+  // Le vrai Google honore `orderBy=name` : le faux aussi, sinon le motif
+  // d'écartement nommerait les fichiers dans un autre ordre que le listing.
+  plats.sort((a, b) => a.name.localeCompare(b.name));
+  return fauxGoogle({
+    listes,
+    fichiers,
+    recherche: { 'publication.json': manifestes },
+    dossiers,
+    plats,
+    ...extra,
+  });
+}
+
+/** Compte les requêtes Google par famille — c'est le coût, mesuré, pas estimé. */
+function compter(appels) {
+  const lisible = (a) => decodeURIComponent(a.url.replace(/\+/g, ' '));
+  return {
+    jetons: appels.filter((a) => a.url.startsWith(URL_JETON)).length,
+    recherches: appels.filter((a) => /[?&]q=name = /.test(lisible(a))).length,
+    index: appels.filter((a) => /[?&]q=mimeType = /.test(lisible(a))).length,
+    indexFichiers: appels.filter((a) => /[?&]q=mimeType != /.test(lisible(a))).length,
+    listings: appels.filter((a) => / in parents/.test(lisible(a))).length,
+    fiches: appels.filter((a) => /\/files\/[^/?]+\?/.test(a.url) && !a.url.includes('alt=media')).length,
+    telechargements: appels.filter((a) => a.url.includes('alt=media')).length,
+    total: appels.length,
+  };
+}
+
+test('⛔ LA PREUVE DU BUG — 5 niveaux, l ancienne méthode ne trouve RIEN', async () => {
+  viderCacheJeton();
+  const { listes } = arborescence(5);
+  // Aucune table `recherche` : la recherche par nom rend zéro, donc c'est
+  // EXACTEMENT le parcours en largeur d'avant le 19/09/2026 qui s'exécute.
+  const g = fauxGoogle({ listes, fichiers: { 'f-json': JSON.stringify(manifeste()) } });
+  const lot = await creerClientDrive({ env: env(), fetchImpl: g.impl }).lirePublications();
+
+  assert.equal(lot.publications.length, 0,
+    'si le parcours atteignait le manifeste, il n y aurait jamais eu de panne le 19/09');
+  assert.notEqual(lot.diagnostic, DIAGNOSTICS.OK);
+  // Et il a bien fouillé pour rien : des listings, aucun manifeste atteint.
+  assert.ok(compter(g.appels).listings >= 4, 'le parcours doit avoir visité les niveaux intermédiaires');
+});
+
+test('5 NIVEAUX — la lecture DEMANDE, et trouve la publication que le parcours manquait', async () => {
+  viderCacheJeton();
+  const { listes, chemin } = arborescence(5);
+  const g = googleQuiSaitChercher(listes, { 'f-json': JSON.stringify(manifeste()) });
+  const lot = await creerClientDrive({ env: env(), fetchImpl: g.impl }).lirePublications();
+
+  assert.equal(lot.diagnostic, DIAGNOSTICS.OK, `attendu « ok », reçu « ${lot.diagnostic} » : ${lot.message}`);
+  assert.equal(lot.publications.length, 1);
+  assert.equal(lot.publications[0].publication.publication_id, 'PUB-2026-S39-1-01');
+  assert.equal(lot.publications[0].medias[0].fichier_id, 'f-media');
+  // ⛔ Le chemin reste LISIBLE : le gérant de Moanda ne lit pas un identifiant.
+  assert.equal(lot.publications[0].chemin, chemin);
+  assert.equal(lot.publications[0].dossier_nom, '1_POST_09H00');
+  assert.doesNotMatch(lot.publications[0].chemin, /^[A-Za-z0-9_-]{20,}$/, 'un identifiant Google n est pas un chemin');
+});
+
+test('7 NIVEAUX — la profondeur n est plus une limite, elle a disparu', async () => {
+  viderCacheJeton();
+  const { listes, chemin } = arborescence(7);
+  const g = googleQuiSaitChercher(listes, { 'f-json': JSON.stringify(manifeste()) });
+  const lot = await creerClientDrive({ env: env(), fetchImpl: g.impl }).lirePublications();
+
+  assert.equal(lot.diagnostic, DIAGNOSTICS.OK, `attendu « ok », reçu « ${lot.diagnostic} » : ${lot.message}`);
+  assert.equal(lot.publications.length, 1);
+  assert.equal(lot.publications[0].chemin, chemin);
+  assert.equal(chemin.split('/').length, 7, 'le repère du test : sept niveaux, pas quatre');
+});
+
+test('⛔ le coût ne suit plus le nombre de semaines déposées', async () => {
+  viderCacheJeton();
+  // Dix semaines de sept jours : 70 dossiers-jours, et UNE seule publication.
+  // L ancien parcours listait les 70 ; la recherche n en liste qu un.
+  const listes = { [DOSSIER]: [] };
+  for (let s = 0; s < 10; s += 1) {
+    const sem = `s${s}`;
+    listes[DOSSIER].push(d(sem, `SEMAINE_${s}`));
+    listes[sem] = [];
+    for (let j = 0; j < 7; j += 1) {
+      const jour = `s${s}j${j}`;
+      listes[sem].push(d(jour, `JOUR_${j}`));
+      listes[jour] = [];
+    }
+  }
+  listes.s0j0 = [d('post', '1_POST_09H00')];
+  listes.post = [f('f-json', 'publication.json', 'application/json'), f('f-media', MEDIA)];
+
+  const g = googleQuiSaitChercher(listes, { 'f-json': JSON.stringify(manifeste()) });
+  const lot = await creerClientDrive({ env: env(), fetchImpl: g.impl }).lirePublications();
+  const cout = compter(g.appels);
+
+  assert.equal(lot.publications.length, 1);
+  assert.ok(cout.recherches === 1, `une seule recherche doit suffire : ${cout.recherches}`);
+  assert.ok(cout.index === 1, `un seul index des dossiers : ${cout.index}`);
+  assert.ok(cout.listings <= 3,
+    `le dossier de publication devait être le seul listé, ou presque : ${cout.listings} listings pour 81 dossiers`);
+  // 70 dossiers-jours vides : ils ne doivent PAS être listés un par un. Une
+  // requête répond pour tous, et le coût cesse de suivre le calendrier.
+  assert.ok(cout.indexFichiers <= 1, `un index des fichiers au plus : ${cout.indexFichiers}`);
+  assert.ok(cout.total <= 10, `coût total trop élevé pour 81 dossiers : ${cout.total} requêtes`);
+});
+
+test('⛔ REPLI — recherche en panne : le parcours prend le relais et la lecture aboutit', async () => {
+  viderCacheJeton();
+  const listes = {
+    [DOSSIER]: [d('w1', 'WEEK_21-27Sept')],
+    w1: [d('j1', 'Lundi_21_Sept')],
+    j1: [d('p1', '1_POST_09H00')],
+    p1: [f('f-json', 'publication.json', 'application/json'), f('f-media', MEDIA)],
+  };
+  const g = fauxGoogle({
+    listes,
+    fichiers: { 'f-json': JSON.stringify(manifeste()) },
+    recherche: { statut: 500, corps: { error: { code: 500, message: 'backend error' } } },
+  });
+  const lot = await creerClientDrive({ env: env(), fetchImpl: g.impl }).lirePublications();
+
+  assert.equal(lot.diagnostic, DIAGNOSTICS.OK, 'un Drive lisible d une façon vaut mieux qu un Drive illisible proprement');
+  assert.equal(lot.publications.length, 1);
+  assert.match(lot.publications[0].chemin, /WEEK_21-27Sept\/Lundi_21_Sept\/1_POST_09H00/);
+});
+
+test('REPLI — recherche interdite (403) : la lecture ne tombe pas, elle marche', async () => {
+  viderCacheJeton();
+  const listes = {
+    [DOSSIER]: [d('p1', '1_POST_09H00')],
+    p1: [f('f-json', 'publication.json', 'application/json'), f('f-media', MEDIA)],
+  };
+  const g = fauxGoogle({
+    listes,
+    fichiers: { 'f-json': JSON.stringify(manifeste()) },
+    recherche: { statut: 403, corps: { error: { code: 403, message: 'Insufficient permission' } } },
+  });
+  const lot = await creerClientDrive({ env: env(), fetchImpl: g.impl }).lirePublications();
+  assert.equal(lot.publications.length, 1);
+});
+
+test('l index des dossiers en panne n emporte pas la publication — seul le chemin dégrade', async () => {
+  viderCacheJeton();
+  const { listes } = arborescence(5);
+  const g = googleQuiSaitChercher(listes, { 'f-json': JSON.stringify(manifeste()) }, {
+    dossiers: { statut: 500, corps: { error: { code: 500, message: 'backend error' } } },
+  });
+  const lot = await creerClientDrive({ env: env(), fetchImpl: g.impl }).lirePublications();
+
+  assert.equal(lot.publications.length, 1, 'la publication passe avant son étiquette');
+  assert.equal(lot.diagnostic, DIAGNOSTICS.OK);
+});
+
+test('index en panne : le chemin se reconstruit dossier par dossier, il reste LISIBLE', async () => {
+  viderCacheJeton();
+  const { listes, chemin } = arborescence(5);
+  // La filiation, telle que `files.get` la rendrait, un dossier à la fois.
+  const metas = {};
+  for (const [parent, entrees] of Object.entries(listes)) {
+    for (const entree of entrees) metas[entree.id] = { name: entree.name, parents: [parent] };
+  }
+  const g = googleQuiSaitChercher(listes, { 'f-json': JSON.stringify(manifeste()) }, {
+    dossiers: { statut: 500, corps: { error: { code: 500 } } },
+    metas,
+  });
+  const lot = await creerClientDrive({ env: env(), fetchImpl: g.impl }).lirePublications();
+
+  assert.equal(lot.publications.length, 1);
+  assert.equal(lot.publications[0].chemin, chemin, 'le repli de filiation doit rendre le MÊME chemin');
+});
+
+/* ── LES MOTIFS D'ÉCARTEMENT : AUSSI PRÉCIS QU'AVANT ────────────────────────
+   Ce ne sont pas des messages de journal : ils s'affichent au gérant de
+   Moanda, et c'est à partir d'eux qu'il sait s'il doit rappeler ChatGPT ou
+   revérifier un partage. Le test le plus sévère qu'on puisse écrire n'est pas
+   « le motif contient tel mot » : c'est « les DEUX méthodes rendent
+   EXACTEMENT les mêmes écartées sur le même Drive ». ───────────────────── */
+
+/** Un Drive volontairement abîmé, assez PEU profond pour que les deux méthodes
+ *  le lisent toutes les deux — c'est la condition pour pouvoir les comparer. */
+function driveAbime() {
+  return {
+    [DOSSIER]: [d('j1', 'Lundi_21_Sept')],
+    j1: [d('p1', '1_POST_09H00'), d('p2', '2_REEL_17H30'), d('p3', '3_STORY_20H00')],
+    // conforme
+    p1: [f('ok-json', 'publication.json', 'application/json'), f('ok-media', MEDIA)],
+    // manifeste hors contrat
+    p2: [f('ko-json', 'publication.json', 'application/json'), f('ko-media', MEDIA)],
+    // des fichiers déposés, AUCUN manifeste : le cas qu on ne doit jamais taire
+    p3: [f('orphelin-1', 'affiche.jpg'), f('orphelin-2', 'brief.md', 'text/markdown')],
+  };
+}
+
+const FICHIERS_ABIMES = {
+  'ok-json': JSON.stringify(manifeste()),
+  'ko-json': JSON.stringify(manifeste({ schema_version: '1.0', publication_id: 'PUB-2026-S39-1-02' })),
+};
+
+const rangees = (lot) => [...lot.ecartees]
+  .map((e) => ({ dossier_id: e.dossier_id, dossier_nom: e.dossier_nom, chemin: e.chemin, motif: e.motif }))
+  .sort((a, b) => a.dossier_id.localeCompare(b.dossier_id));
+
+test('⛔ LES MOTIFS NE PERDENT RIEN — les deux méthodes écartent À L IDENTIQUE', async () => {
+  viderCacheJeton();
+  const parcours = fauxGoogle({ listes: driveAbime(), fichiers: FICHIERS_ABIMES });
+  const lotParcours = await creerClientDrive({ env: env(), fetchImpl: parcours.impl }).lirePublications();
+
+  viderCacheJeton();
+  const recherche = googleQuiSaitChercher(driveAbime(), FICHIERS_ABIMES);
+  const lotRecherche = await creerClientDrive({ env: env(), fetchImpl: recherche.impl }).lirePublications();
+
+  // La preuve que le Drive de test est bien lisible par les DEUX chemins.
+  assert.equal(lotParcours.publications.length, 1);
+  assert.equal(lotRecherche.publications.length, 1);
+
+  // Et la seule chose qui compte pour Moanda : le même verdict, mot pour mot.
+  assert.deepEqual(rangees(lotRecherche), rangees(lotParcours),
+    'un motif perdu ou raccourci envoie le gérant chercher au mauvais endroit');
+  assert.equal(lotRecherche.ecartees.length, 2, 'le manifeste hors contrat ET le dossier sans manifeste');
+});
+
+test('un dossier déposé SANS manifeste reste dit, même quand la recherche a trouvé ailleurs', async () => {
+  viderCacheJeton();
+  const g = googleQuiSaitChercher(driveAbime(), FICHIERS_ABIMES);
+  const lot = await creerClientDrive({ env: env(), fetchImpl: g.impl }).lirePublications();
+
+  const orphelin = lot.ecartees.find((e) => e.dossier_id === 'p3');
+  assert.ok(orphelin, 'un jour déposé sans publication.json ne doit JAMAIS disparaître de l écran');
+  assert.match(orphelin.motif, /publication\.json/);
+  assert.match(orphelin.motif, /2 fichier/);
+  assert.match(orphelin.motif, /affiche\.jpg|brief\.md/, 'le motif NOMME ce qui est là');
+  assert.equal(orphelin.chemin, 'Lundi_21_Sept/3_STORY_20H00');
+  assert.equal(orphelin.dossier_nom, '3_STORY_20H00');
+});
+
+test('le manifeste hors contrat garde son motif détaillé — schema_version NOMMÉ', async () => {
+  viderCacheJeton();
+  const g = googleQuiSaitChercher(driveAbime(), FICHIERS_ABIMES);
+  const lot = await creerClientDrive({ env: env(), fetchImpl: g.impl }).lirePublications();
+
+  const casse = lot.ecartees.find((e) => e.dossier_id === 'p2');
+  assert.ok(casse);
+  assert.match(casse.motif, /schema_version/);
+  assert.equal(casse.chemin, 'Lundi_21_Sept/2_REEL_17H30');
+});
+
+test('un dossier de publication illisible est écarté, pas tu — et les autres passent', async () => {
+  viderCacheJeton();
+  const listes = {
+    [DOSSIER]: [d('p1', '1_POST_09H00'), d('p2', '2_REEL_17H30')],
+    p1: [f('ok-json', 'publication.json', 'application/json'), f('ok-media', MEDIA)],
+    p2: [f('perdu-json', 'publication.json', 'application/json')],
+  };
+  // `p2` disparaît de la table des listings APRÈS que la recherche l a vu :
+  // le listing rend 404, exactement comme un dossier dont le partage a sauté.
+  const g = googleQuiSaitChercher(listes, { 'ok-json': JSON.stringify(manifeste()) });
+  delete listes.p2;
+
+  const lot = await creerClientDrive({ env: env(), fetchImpl: g.impl }).lirePublications();
+  assert.equal(lot.publications.length, 1, 'la branche lisible doit survivre');
+  assert.ok(lot.ecartees.some((e) => e.dossier_id === 'p2' && /inaccessible|404/i.test(e.motif)));
+});
+
+test('⛔ la recherche ne fait pas sortir la lecture de son périmètre', async () => {
+  viderCacheJeton();
+  // Un manifeste partagé avec le robot mais HORS du dossier des publications :
+  // la recherche par nom le voit, la lecture ne doit PAS le rendre.
+  const listes = {
+    [DOSSIER]: [d('p1', '1_POST_09H00')],
+    p1: [f('ok-json', 'publication.json', 'application/json'), f('ok-media', MEDIA)],
+    AILLEURS: [d('x1', 'DOSSIER_PRIVE')],
+    x1: [f('intrus-json', 'publication.json', 'application/json'), f('intrus-media', MEDIA)],
+  };
+  const g = googleQuiSaitChercher(listes, {
+    'ok-json': JSON.stringify(manifeste()),
+    'intrus-json': JSON.stringify(manifeste({ publication_id: 'PUB-2026-S39-7-99' })),
+  });
+  const lot = await creerClientDrive({ env: env(), fetchImpl: g.impl }).lirePublications();
+
+  assert.equal(lot.publications.length, 1);
+  assert.equal(lot.publications[0].publication.publication_id, 'PUB-2026-S39-1-01');
+  assert.equal(lot.ecartees.length, 0, 'ce qui est hors périmètre est ignoré, pas écarté bruyamment');
+});
+
+test('⛔ la lecture par recherche n émet QUE des GET — la portée reste la lecture seule', async () => {
+  viderCacheJeton();
+  const { listes } = arborescence(5);
+  const g = googleQuiSaitChercher(listes, { 'f-json': JSON.stringify(manifeste()) });
+  await creerClientDrive({ env: env(), fetchImpl: g.impl }).lirePublications();
+  for (const a of g.appels) {
+    if (a.url.startsWith(URL_JETON)) {
+      assert.equal(a.methode, 'POST', 'l échange du JWT est le seul POST légitime');
+      continue;
+    }
+    assert.equal(a.methode, 'GET', `écriture interdite : ${a.methode} ${a.url}`);
+  }
+});
+
+test('LE COÛT MESURÉ — une semaine de 14 publications, avant et après', async () => {
+  viderCacheJeton();
+  // La semaine réelle : _INBOX / WEEK / 7 jours / 2 créneaux par jour.
+  const listes = { [DOSSIER]: [d('inbox', '_INBOX_CHATGPT')], inbox: [d('w1', 'WEEK_21-27Sept')], w1: [] };
+  const fichiers = {};
+  for (let j = 0; j < 7; j += 1) {
+    const jour = `j${j}`;
+    listes.w1.push(d(jour, `Jour_${j}`));
+    listes[jour] = [];
+    for (let c = 0; c < 2; c += 1) {
+      const post = `j${j}c${c}`;
+      listes[jour].push(d(post, `${c + 1}_POST`));
+      listes[post] = [f(`${post}-json`, 'publication.json', 'application/json'), f(`${post}-media`, MEDIA)];
+      fichiers[`${post}-json`] = JSON.stringify(manifeste({ publication_id: `PUB-2026-S39-${j + 1}-0${c + 1}` }));
+    }
+  }
+
+  const g = googleQuiSaitChercher(listes, fichiers);
+  const lot = await creerClientDrive({ env: env(), fetchImpl: g.impl }).lirePublications();
+  const cout = compter(g.appels);
+
+  assert.equal(lot.publications.length, 14, `14 publications attendues, ${lot.publications.length} lues : ${lot.message}`);
+  assert.equal(cout.recherches, 1);
+  assert.equal(cout.index, 1);
+  assert.equal(cout.listings, 14, 'un listing par dossier de publication, et pas un de plus');
+  assert.equal(cout.telechargements, 14, 'un manifeste téléchargé par publication');
+  // L ancien parcours listait 1 + 1 + 1 + 7 + 14 = 24 dossiers pour le même
+  // résultat — quand il y arrivait. Ici : 1 recherche + 1 index + 14 listings.
+  assert.ok(cout.listings + cout.recherches + cout.index < 24,
+    `le coût doit avoir baissé : ${cout.listings + cout.recherches + cout.index} requêtes de localisation`);
+});
+
+test('une semaine PROPRE ne déclenche aucune inspection de feuilles', async () => {
+  viderCacheJeton();
+  const listes = {
+    [DOSSIER]: [d('w1', 'WEEK_21-27Sept')],
+    w1: [d('j1', 'Lundi_21_Sept')],
+    j1: [d('p1', '1_POST_09H00')],
+    p1: [f('f-json', 'publication.json', 'application/json'), f('f-media', MEDIA)],
+  };
+  const g = googleQuiSaitChercher(listes, { 'f-json': JSON.stringify(manifeste()) });
+  const lot = await creerClientDrive({ env: env(), fetchImpl: g.impl }).lirePublications();
+  const cout = compter(g.appels);
+
+  assert.equal(lot.publications.length, 1);
+  assert.equal(lot.ecartees.length, 0);
+  assert.equal(cout.indexFichiers, 0, 'rien à inspecter ne doit rien coûter');
+  assert.equal(cout.listings, 1, 'un seul dossier listé : celui de la publication');
+});
+
+test('index des fichiers en panne : le dépôt sans manifeste est DIT quand même', async () => {
+  viderCacheJeton();
+  const g = googleQuiSaitChercher(driveAbime(), FICHIERS_ABIMES, {
+    plats: { statut: 500, corps: { error: { code: 500, message: 'backend error' } } },
+  });
+  const lot = await creerClientDrive({ env: env(), fetchImpl: g.impl }).lirePublications();
+
+  assert.equal(lot.publications.length, 1);
+  const orphelin = lot.ecartees.find((e) => e.dossier_id === 'p3');
+  assert.ok(orphelin, 'le repli par listing doit retrouver ce que l index n a pas pu dire');
+  assert.match(orphelin.motif, /affiche\.jpg|brief\.md/);
+});
+
+test('⛔ un Drive encombré ne fait pas exploser le nombre de listings d inspection', async () => {
+  viderCacheJeton();
+  // 60 feuilles sans manifeste ET l index des fichiers en panne : le repli doit
+  // rester borné. Un écran lent est un écran qu on n ouvre plus.
+  const listes = { [DOSSIER]: [d('p1', '1_POST_09H00')] };
+  listes.p1 = [f('f-json', 'publication.json', 'application/json'), f('f-media', MEDIA)];
+  for (let i = 0; i < 60; i += 1) {
+    listes[DOSSIER].push(d(`v${i}`, `VRAC_${i}`));
+    listes[`v${i}`] = [f(`vf${i}`, `fichier_${i}.txt`, 'text/plain')];
+  }
+  const g = googleQuiSaitChercher(listes, { 'f-json': JSON.stringify(manifeste()) }, {
+    plats: { statut: 500, corps: { error: { code: 500 } } },
+  });
+  const lot = await creerClientDrive({ env: env(), fetchImpl: g.impl }).lirePublications();
+  const cout = compter(g.appels);
+
+  assert.equal(lot.publications.length, 1, 'la publication passe, quoi qu il arrive');
+  assert.ok(cout.listings <= 42, `inspection non bornée : ${cout.listings} listings`);
 });
