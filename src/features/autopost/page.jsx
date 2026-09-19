@@ -731,7 +731,22 @@ export default function Autopost() {
   const file = etat?.file || [];
   const prevus = file.filter((l) => ['scheduled', 'draft', 'executing'].includes(l.etat));
   const partis = file.filter((l) => l.etat === 'published');
-  const bloques = file.filter((l) => ['failed', 'expired', 'suspended', 'reconciling', 'cancelled'].includes(l.etat));
+  /* ⛔ UN REMPLACEMENT VOLONTAIRE N'EST PAS UNE PANNE.
+     Le 19/09/2026, la première publication réelle a laissé UNE ligne sous
+     « Échoué ou bloqué » : l'ancienne ligne WhatsApp de 09 h 00, annulée parce
+     que ChatGPT avait déplacé le créneau à 15 h 00. Le remplacement est
+     exactement ce qui empêche de publier deux fois — et il s'affichait en rouge,
+     à côté d'un vrai échec Facebook.
+
+     Un bandeau rouge sur une décision voulue est un faux témoin, au même titre
+     qu'un voyant vert sur une panne : il apprend au gérant à ignorer le rouge.
+     Les deux sont donc séparés, et le décompte de « Échoué ou bloqué » ne
+     compte plus que ce qui demande un geste. */
+  const estRemplacee = (l) => l.etat === 'cancelled'
+    && l.derniere_erreur?.code_erreur === 'remplacee_par_un_nouveau_depot';
+  const ETATS_ARRETES = ['failed', 'expired', 'suspended', 'reconciling', 'cancelled'];
+  const bloques = file.filter((l) => ETATS_ARRETES.includes(l.etat) && !estRemplacee(l));
+  const remplacees = file.filter(estRemplacee);
   const nonApprouves = prevus.filter((l) => !l.approbation?.approuve);
   // 🔴 Le média : la file peut être pleine et rien ne peut partir.
   const sansMedia = prevus.filter((l) => !l.url_media);
@@ -851,6 +866,31 @@ export default function Autopost() {
             ))}
         </CardContent>
       </Card>
+
+      {remplacees.length > 0 && (
+        <Card>
+          <CardContent className="p-4">
+            <h2 className="mb-1 flex items-center gap-2 font-semibold">
+              <RefreshCw className="h-4 w-4 text-slate-500" /> Remplacées ({remplacees.length})
+            </h2>
+            <p className="mb-2 text-sm text-slate-500">
+              Ces lignes ont été annulées parce qu&apos;un dépôt plus récent les remplace : le contenu,
+              le créneau ou le compte cible a changé dans le Drive. Une seule ligne vivante est
+              conservée par publication et par canal — c&apos;est ce qui empêche de publier deux fois.
+              <strong> Rien à faire.</strong>
+            </p>
+            {remplacees.map((l) => (
+              <Ligne
+                key={l.cle_idempotence}
+                l={l}
+                peutApprouver={false}
+                enCours={false}
+                surApprobation={() => {}}
+              />
+            ))}
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardContent className="p-4">
