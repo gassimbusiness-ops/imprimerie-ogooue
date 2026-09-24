@@ -8,6 +8,25 @@
 import { estTransfertInterne } from '@/services/mouvements-financiers';
 import { todayISO, dateMetierDepuisHorodatage } from '@/lib/dates';
 
+/* ═══ Devis, factures, bons de livraison : réglages imprimés ═══════════════
+ * Modèle de référence : le devis papier du dirigeant (DEVIS MUG SODIM, 09/09/2026).
+ */
+
+/**
+ * Nom imprimé sous « Le Responsable » sur tout devis, facture ou bon de livraison.
+ *
+ * ⚠️ Repris tel quel du modèle papier : c'est le choix du dirigeant.
+ * L'IMPRIMERIE OGOOUÉ est une entreprise individuelle au nom de Senoussi ABAKAR
+ * GASSIM ; Ibrahim signe par procuration. Si une mention de procuration doit
+ * figurer sur les documents qui engagent l'entreprise, c'est ICI qu'on la
+ * met — la décision n'appartient pas au code.
+ */
+export const SIGNATAIRE_DOCUMENTS = 'M. Ibrahim Abakar';
+export const FONCTION_SIGNATAIRE = 'Le Responsable';
+
+/** Durée de validité imprimée sur les DEVIS, et sur eux seuls. */
+export const VALIDITE_DEVIS_JOURS = 30;
+
 /**
  * Génère un PDF à partir de HTML (via impression du navigateur).
  * @param {string} title - Titre du document
@@ -275,14 +294,93 @@ function nombreEnLettres(n) {
 }
 
 /**
- * Export facture / devis / bon de livraison en PDF — design fidele au modele
- * officiel Imprimerie Ogooué (logo, tagline, encadre client, tableau, montant
- * en lettres, cachet, pied de page legal).
+ * Ce qui change d'un type de document à l'autre — et RIEN d'autre.
+ *
+ * ⚠️ Avant le 24/09/2026, un seul gabarit servait aux trois types et ne
+ * regardait jamais le `type` pour le titre : un DEVIS sortait intitulé
+ * « FACTURE N°… », une facture portait en plus « BON DE LIVRAISON » à gauche,
+ * et « Livré le … » s'imprimait sur tout, devis compris. Chaque type a
+ * maintenant son titre, sa formule d'arrêté et ses mentions propres.
+ *
+ * Formule d'arrêté : le participe s'accorde avec le document.
+ *   devis (masc.)            → « Arrêté le présent devis »
+ *   facture (fém.)           → « Arrêtée la présente facture »
+ *   bon de livraison (masc.) → « Arrêté le présent bon de livraison »
+ * Le modèle papier écrit « Arrêté la présente facture » sur un devis : c'est
+ * une erreur du modèle, volontairement NON recopiée.
+ */
+const MODELES_DOCUMENT = {
+  devis: {
+    titre: 'DEVIS', libelle: 'Devis', prefixe: 'DEV',
+    arrete: 'Arrêté le présent devis',
+    livreLe: false, recuPar: false, validite: true,
+  },
+  facture: {
+    titre: 'FACTURE', libelle: 'Facture', prefixe: 'FAC',
+    arrete: 'Arrêtée la présente facture',
+    livreLe: false, recuPar: true, validite: false,
+  },
+  bon_livraison: {
+    titre: 'BON DE LIVRAISON', libelle: 'Bon de livraison', prefixe: 'BL',
+    arrete: 'Arrêté le présent bon de livraison',
+    livreLe: true, recuPar: true, validite: false,
+  },
+};
+
+const RE_DATE_ISO = /^(\d{4})-(\d{2})-(\d{2})/;
+
+/**
+ * Numéro IMPRIMÉ d'un document : `N°152/09/26/GA` — numéro / mois / année / GA.
+ *
+ * AFFICHAGE SEULEMENT. Le numéro enregistré (`DEV-0152`, `FAC-0152`) et la
+ * façon dont il est attribué ne changent pas ; on en retire seulement le
+ * préfixe du type et les zéros de tête, comme le modèle papier.
+ *
+ * Le mois et l'année sont ceux de la DATE DU DOCUMENT, lus dans la chaîne
+ * `YYYY-MM-DD` — jamais via `new Date()` : une facture datée du 31/12
+ * imprimée le 2 janvier reste « /12/26/ », quel que soit le fuseau de la
+ * machine qui imprime.
+ *
+ * Un numéro d'une autre forme (ex. `CMD-K3F9A2`, commande sans facture
+ * imprimée depuis le portail) est gardé entier : le réduire à ses chiffres
+ * le ferait passer pour un numéro de facture qu'il n'est pas.
+ *
+ * @param {string} numero   numéro enregistré
+ * @param {string} type     'devis' | 'facture' | 'bon_livraison'
+ * @param {string} dateISO  date du document, `YYYY-MM-DD`
+ */
+export function numeroDocumentImprime(numero, type, dateISO) {
+  const modele = MODELES_DOCUMENT[type] || MODELES_DOCUMENT.facture;
+  const brut = String(numero ?? '').trim();
+  const m = brut.match(new RegExp(`^(?:${modele.prefixe}-)?0*(\\d+)$`, 'i'));
+  const court = m ? m[1] : brut;
+  const d = RE_DATE_ISO.exec(String(dateISO || ''));
+  return d ? `N°${court}/${d[2]}/${d[1].slice(2)}/GA` : `N°${court}/GA`;
+}
+
+/**
+ * Export facture / devis / bon de livraison en PDF — mise en page du modèle
+ * papier du dirigeant : logo et accroche, beaucoup d'air, « TITRE N° » et la
+ * date sur une ligne, client encadré, objet, tableau, somme en lettres,
+ * signature du responsable, pied légal.
  */
 export function exportDocument(doc, lignes, type = 'facture') {
+  const modele = MODELES_DOCUMENT[type] || MODELES_DOCUMENT.facture;
   const numero = doc.numero || doc.id?.slice(0, 8) || '';
-  const title = type === 'facture' ? `Facture ${numero}` : type === 'bon_livraison' ? `Bon de livraison ${numero}` : `Devis ${numero}`;
-  const total = lignes.reduce((s, l) => s + ((l.quantite || 1) * (l.prix_unitaire || 0)), 0);
+  const title = `${modele.libelle} ${numero}`;
+  /* ⛔ LA REMISE ÉTAIT IGNORÉE À L'IMPRESSION — ET ELLE A MORDU.
+     L'écran calcule `sous-total − remise` (devis-factures/page.jsx, getTotal) ;
+     ce PDF recalculait seulement la somme des lignes. Mesuré le 24/09/2026 :
+     FAC-0003, client SNEEM, remise 2 000 F — 94 000 F à l'écran, 96 000 F sur
+     le papier. Un document remis au client réclamait plus que ce qui avait été
+     convenu.
+     Le PDF refait désormais EXACTEMENT le calcul de l'écran, dans le même ordre.
+     Ne pas lire `total_ttc` à la place : un champ stocké peut être périmé, et
+     le papier doit montrer un total que le client peut vérifier ligne par
+     ligne — sous-total, remise, total. */
+  const sousTotal = lignes.reduce((s, l) => s + ((l.quantite || 1) * (l.prix_unitaire || 0)), 0);
+  const remise = Math.max(0, Number(doc.remise) || 0);
+  const total = sousTotal - remise;
   // ⚠️ `todayISO()` et jamais `.toISOString().slice(0, 10)` : c'est la date
   // imprimee sur une facture remise au client. A Moanda (UTC+1), la seconde
   // forme datait de la VEILLE toute facture editee entre 00 h et 01 h.
@@ -291,88 +389,109 @@ export function exportDocument(doc, lignes, type = 'facture') {
   // s'il ne reconnait pas la forme, rend les dix premiers caracteres plutot
   // qu'une case vide — une facture sans date ne se remet pas a un client.
   const dateDoc = doc.date || dateMetierDepuisHorodatage(doc.created_at) || todayISO();
-  const dateFr = (() => { try { return new Date(dateDoc + 'T00:00:00').toLocaleDateString('fr-FR'); } catch { return dateDoc; } })();
-  const docLabelGauche = type === 'facture' ? 'BON DE LIVRAISON' : type === 'devis' ? 'DEVIS' : 'BON DE LIVRAISON';
-  const numFacture = `FACTURE N°${numero}/GA/${new Date(dateDoc).getFullYear() || new Date().getFullYear()}`;
+  // Lue dans la chaîne, sans passer par `Date` : même jour dans tous les fuseaux.
+  const dateFr = (() => {
+    const d = RE_DATE_ISO.exec(String(dateDoc));
+    return d ? `${d[3]}/${d[2]}/${d[1]}` : String(dateDoc);
+  })();
+  const enTete = `${modele.titre} ${numeroDocumentImprime(numero, type, dateDoc)}`;
+  // Un bon de livraison peut porter sa vraie date de livraison ; sinon, sa date.
+  const dateLivraisonFr = (() => {
+    const d = RE_DATE_ISO.exec(String(doc.date_livraison || ''));
+    return d ? `${d[3]}/${d[2]}/${d[1]}` : dateFr;
+  })();
   const origin = (typeof window !== 'undefined' && window.location?.origin) ? window.location.origin : '';
 
+  const bordure = 'border:1px solid #8c8c8c;';
+  const cellule = `padding:5px 10px;${bordure}`;
   let rows = '';
   lignes.forEach((l) => {
     const lineTotal = (l.quantite || 1) * (l.prix_unitaire || 0);
-    rows += `<tr>
-      <td style="padding:7px 10px;border:1px solid #94a3b8;">${esc(l.designation || l.description || '—')}</td>
-      <td style="padding:7px 10px;border:1px solid #94a3b8;text-align:center;">${l.quantite || 1}</td>
-      <td style="padding:7px 10px;border:1px solid #94a3b8;text-align:right;">${fmt(l.prix_unitaire)}</td>
-      <td style="padding:7px 10px;border:1px solid #94a3b8;text-align:right;">${fmt(lineTotal)}</td>
+    rows += `<tr style="background:#fff;">
+      <td style="${cellule}">${esc(l.designation || l.description || '—')}</td>
+      <td style="${cellule}text-align:center;">${l.quantite || 1}</td>
+      <td style="${cellule}text-align:center;">${fmt(l.prix_unitaire)}</td>
+      <td style="${cellule}text-align:center;">${fmt(lineTotal)}</td>
     </tr>`;
   });
 
   const html = `
-    <div style="font-family:'Segoe UI',system-ui,sans-serif;color:#1a1a2e;">
-      <!-- En-tete : logo + tagline -->
-      <div style="display:flex;align-items:center;gap:18px;margin-bottom:6px;">
-        <img src="${origin}/logo.png" alt="Logo" style="height:78px;width:auto;object-fit:contain;" onerror="this.style.display='none'"/>
-        <div style="flex:1;text-align:center;">
-          <p style="font-weight:800;font-size:13px;color:#1e3a5f;margin:0;">Conception graphique &bull; Supports de communication multiformats</p>
-          <p style="font-weight:800;font-size:13px;color:#1e3a5f;margin:2px 0;">Objets publicitaires &bull; personnalisation sur mesure</p>
-          <p style="font-size:9.5px;color:#374151;margin:2px 0;">Adresse : Carrefour Fina, Moanda, Gabon &nbsp; Tél : (+241) 60 44 46 34</p>
+    <div style="font-family:Calibri,Carlito,'Segoe UI',system-ui,sans-serif;font-size:13.5px;color:#111;line-height:1.4;min-height:262mm;display:flex;flex-direction:column;">
+      <!-- En-tete : logo + accroche -->
+      <div style="display:flex;align-items:center;gap:22px;">
+        <img src="${origin}/logo.png" alt="Logo" style="height:140px;width:auto;object-fit:contain;" onerror="this.style.display='none'"/>
+        <div style="flex:1;text-align:center;font-family:Arial,Helvetica,sans-serif;">
+          <p style="font-weight:700;font-size:13px;margin:0 0 10px;">Conception graphique &bull; Supports de communication multiformats</p>
+          <p style="font-weight:700;font-size:13px;margin:0 0 10px;">Objets publicitaires &amp; personnalisation sur mesure</p>
+          <p style="font-weight:700;font-size:10px;margin:0;">Adresse : Carrefour Fina, Moanda, Gabon &nbsp; Tél : 060 44 46 34 / 074 42 41 42</p>
         </div>
       </div>
-      <div style="border-bottom:2px solid #1e3a5f;margin-bottom:22px;"></div>
 
-      <!-- Titre document -->
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;">
-        <p style="font-weight:700;font-size:12px;">${docLabelGauche}</p>
-        <p style="font-weight:700;font-size:12px;">${numFacture}</p>
+      <!-- Titre du document et date, sur une seule ligne -->
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:100px;font-size:15px;">
+        <p>${enTete}</p>
+        <p>${dateFr}</p>
       </div>
-      <p style="font-size:11px;margin-bottom:14px;">Livré le ${dateFr}</p>
+      ${modele.livreLe ? `<p style="margin-top:6px;">Livré le ${dateLivraisonFr}</p>` : ''}
 
       <!-- Client encadre -->
-      <div style="border:1.5px solid #2563eb;border-radius:4px;padding:8px 12px;display:inline-block;margin-bottom:12px;">
-        <span style="font-weight:700;font-size:12px;">CLIENT : ${esc((doc.client_nom || '—').toUpperCase())}</span>
+      <div style="margin-top:44px;border:1.5px solid #1ea0e6;padding:9px 12px;width:66%;">
+        <span style="font-weight:700;">CLIENT : ${esc((doc.client_nom || '—').toUpperCase())}</span>
       </div>
-      ${doc.client_adresse ? `<p style="font-size:10px;color:#374151;margin-bottom:6px;">${esc(doc.client_adresse)}</p>` : ''}
+      ${doc.client_adresse ? `<p style="font-size:11.5px;color:#374151;margin-top:6px;">${esc(doc.client_adresse)}</p>` : ''}
 
       <!-- Objet -->
-      <p style="font-size:11px;margin-bottom:14px;"><span style="text-decoration:underline;">Objet</span> : ${esc(doc.objet || 'Impression support publicitaire')}</p>
+      <p style="margin-top:22px;"><span style="text-decoration:underline;">Objet :</span>&nbsp; ${esc(doc.objet || 'Impression support publicitaire')}</p>
 
       <!-- Tableau -->
-      <table style="width:100%;border-collapse:collapse;font-size:11px;margin-bottom:8px;">
+      <table style="width:100%;border-collapse:collapse;font-size:13.5px;margin:56px 0 0;">
         <thead>
-          <tr style="background:#f1f5f9;">
-            <th style="padding:7px 10px;border:1px solid #94a3b8;text-align:center;font-weight:700;">DESIGNATION</th>
-            <th style="padding:7px 10px;border:1px solid #94a3b8;text-align:center;font-weight:700;width:60px;">QTE</th>
-            <th style="padding:7px 10px;border:1px solid #94a3b8;text-align:center;font-weight:700;width:90px;">P. U</th>
-            <th style="padding:7px 10px;border:1px solid #94a3b8;text-align:center;font-weight:700;width:110px;">P. TOTAL</th>
+          <tr style="background:#fff;">
+            <th style="${cellule}text-align:center;font-weight:400;background:#fff;">DESIGNATION</th>
+            <th style="${cellule}text-align:center;font-weight:400;background:#fff;width:70px;">QTE</th>
+            <th style="${cellule}text-align:center;font-weight:400;background:#fff;width:120px;">P. U</th>
+            <th style="${cellule}text-align:center;font-weight:400;background:#fff;width:170px;">P. TOTAL</th>
           </tr>
         </thead>
         <tbody>${rows}</tbody>
         <tfoot>
+          ${remise > 0 ? `
           <tr>
-            <td colspan="3" style="padding:8px 10px;border:1px solid #94a3b8;text-align:center;font-weight:700;">TOTAL GENERAL</td>
-            <td style="padding:8px 10px;border:1px solid #94a3b8;text-align:right;font-weight:800;">${fmt(total)} FCFA</td>
+            <td colspan="3" style="${cellule}text-align:center;">SOUS-TOTAL</td>
+            <td style="${cellule}text-align:center;">${fmt(sousTotal)}</td>
+          </tr>
+          <tr>
+            <td colspan="3" style="${cellule}text-align:center;">REMISE</td>
+            <td style="${cellule}text-align:center;">− ${fmt(remise)}</td>
+          </tr>` : ''}
+          <tr style="background:#dce6f2;">
+            <td colspan="3" style="${cellule}text-align:center;">TOTAL GENERAL</td>
+            <td style="${cellule}text-align:center;font-size:15.5px;">${fmt(total)} FCFA</td>
           </tr>
         </tfoot>
       </table>
 
       <!-- Montant en lettres -->
-      <p style="font-size:11px;margin:14px 0 28px;">Arrêté la présente ${type === 'devis' ? 'proforma' : 'facture'} à la somme de <span style="text-transform:capitalize;">${nombreEnLettres(total)}</span> Francs CFA.</p>
+      <p style="margin-top:34px;">${modele.arrete} à la somme de <span style="text-transform:capitalize;">${nombreEnLettres(total)}</span> Francs CFA.</p>
+      ${modele.validite ? `<p style="margin-top:8px;font-size:11.5px;color:#4b5563;">Validité de l'offre : ${VALIDITE_DEVIS_JOURS} jours</p>` : ''}
 
       <!-- Signatures -->
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-top:20px;">
-        <div style="text-decoration:underline;font-weight:700;font-size:12px;">Reçu par :</div>
-        <div style="text-align:center;">
-          <p style="text-decoration:underline;font-weight:700;font-size:12px;margin-bottom:50px;">Le Responsable</p>
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-top:72px;">
+        <div style="text-decoration:underline;font-weight:700;font-size:15px;">${modele.recuPar ? 'Reçu par :' : ''}</div>
+        <div style="text-align:center;font-weight:700;font-size:15px;margin-right:4px;">
+          <p style="text-decoration:underline;">${esc(FONCTION_SIGNATAIRE)}</p>
+          <p style="margin-top:96px;">${esc(SIGNATAIRE_DOCUMENTS)}</p>
         </div>
       </div>
 
       <!-- Pied de page legal -->
-      <div style="margin-top:36px;border-top:1px solid #cbd5e1;padding-top:8px;text-align:center;font-size:8.5px;color:#475569;line-height:1.6;">
+      <div style="margin-top:auto;padding-top:40px;"><div style="border-top:5px solid #dce8f5;margin:0 -4mm 12px;"></div>
+      <div style="text-align:center;font-family:Arial,Helvetica,sans-serif;font-size:9.5px;color:#111;line-height:1.5;">
         <p style="font-weight:700;">RCCM : RG/FCV 2023A0407 &nbsp; NIF : 256598U</p>
         <p>Compte BGFI : 40003 04500 31113254001 66 &nbsp; Compte Finam : 40003 04100 41001779011 12</p>
         <p>Siège social : Carrefour Fina en face de Finam Moanda – Gabon</p>
         <p>Tél : 060 44 46 34 / 074 42 41 42 &nbsp; Email : imprimerieogooue@gmail.com</p>
-      </div>
+      </div></div>
     </div>`;
 
   printHTML(title, html, { raw: true });
