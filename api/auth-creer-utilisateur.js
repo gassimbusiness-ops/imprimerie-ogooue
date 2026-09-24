@@ -132,6 +132,9 @@ export function creerGestionnaireCreationUtilisateur({ depot } = {}) {
         action: 'create',
         module: 'auth',
         session,
+        // Sans session, c'est un visiteur qui s'inscrit : un auteur ANONYME,
+        // pas « Serveur ».
+        contexteSansSession: 'inscription publique',
         entityId: id,
         entityLabel: `${prenom || ''} ${nom}`.trim(),
         details: `Creation de compte ${emailNormalise} (${roleFinal})`

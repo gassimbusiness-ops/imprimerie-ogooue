@@ -116,6 +116,7 @@ const INSTANT_MINUIT = new Date(Date.UTC(2026, 8, 18, 23, 30, 0));
 let compteurIp = 0;
 function requete({
   voie = 'depense', jeton = JETON, method = 'POST', url = null, query = null, corps = null,
+  entetes = {},
 } = {}) {
   compteurIp += 1;
   return {
@@ -127,6 +128,7 @@ function requete({
       ...(jeton === null ? {} : { authorization: `Bearer ${jeton}` }),
       'content-type': 'application/json',
       'x-forwarded-for': `10.9.${Math.floor(compteurIp / 250)}.${compteurIp % 250}`,
+      ...entetes,
     },
     socket: { remoteAddress: '10.9.0.1' },
   };
@@ -598,6 +600,72 @@ test('AUDIT : la trace dit qui, quoi, combien et avec quelle phrase', async () =
     assert.match(String(trace.details), /100\s?000|100000/, 'le montant doit être lisible dans la trace');
     assert.equal(trace.metadata.phrase, "Aujourd'hui j'ai payé 100 000 francs de travaux");
     assert.equal(trace.metadata.cle, 'depense-2026-09-18-001');
+  });
+});
+
+test('AUDIT — QUI : l\'auteur est « ChatGPT », et le corps ne peut pas le changer', async () => {
+  await avecJeton(JETON, async () => {
+    const { depot } = await appeler({
+      corps: corpsDepense({
+        // Ce qu'un GPT mal réglé — ou un porteur du jeton — pourrait envoyer :
+        auteur: { type: 'humain', id: 'f61af333', nom: 'Imprimerie Admin', role: 'admin' },
+        user_id: 'f61af333', user_nom: 'Imprimerie Admin', dicte_par: 'Ibrahim',
+      }),
+    });
+    const [trace] = depot.tables.audit_logs;
+    assert.equal(trace.auteur.type, 'chatgpt');
+    assert.equal(trace.auteur.id, 'chatgpt');
+    assert.equal(trace.auteur.source, 'jeton_pont');
+    assert.equal(trace.user_id, 'chatgpt');
+    assert.equal(trace.auteur.dicte_par, null, 'qui a dicté n\'est pas vérifiable : on ne l\'invente pas');
+    assert.match(trace.auteur.dicte_par_motif, /jeton/);
+    assert.notEqual(trace.auteur.type, 'humain');
+  });
+});
+
+test('AUDIT — QUI : les en-têtes OpenAI sont gardés comme INDICES non vérifiés, jamais le jeton', async () => {
+  await avecJeton(JETON, async () => {
+    const { depot } = await appeler({
+      corps: corpsDepense(),
+      entetes: {
+        'openai-conversation-id': 'conv_0123-abcd',
+        'openai-ephemeral-user-id': 'eph_user_42',
+        'openai-gpt-id': 'g-XYZ',
+      },
+    });
+    const [trace] = depot.tables.audit_logs;
+    assert.deepEqual(trace.auteur.indices_openai, {
+      conversation: 'conv_0123-abcd', utilisateur_ephemere: 'eph_user_42', gpt: 'g-XYZ', verifie: false,
+    });
+    assert.equal(trace.auteur.type, 'chatgpt', 'un indice n\'est pas un auteur');
+    assert.ok(!JSON.stringify(trace).includes(JETON), 'le jeton du pont est entré au journal');
+  });
+});
+
+test('AUDIT — QUI : un en-tête OpenAI forgé ne dépose pas de texte libre au journal', async () => {
+  await avecJeton(JETON, async () => {
+    const { depot } = await appeler({
+      corps: corpsDepense(),
+      entetes: { 'openai-conversation-id': 'Ibrahim a dicté <script>', 'openai-gpt-id': 'x'.repeat(500) },
+    });
+    const [trace] = depot.tables.audit_logs;
+    assert.equal(trace.auteur.indices_openai, null);
+  });
+});
+
+test('AUDIT — QUI : l\'annulation par le pont est signée « ChatGPT », elle aussi', async () => {
+  await avecJeton(JETON, async () => {
+    const depot = faussDepot();
+    const creation = await appeler({ corps: corpsDepense() }, { depot });
+    await appeler({
+      voie: 'annuler',
+      corps: { identifiant: creation.corps.identifiant, phrase: 'annule, erreur de montant', user_nom: 'Admin' },
+    }, { depot });
+    assert.equal(depot.tables.audit_logs.length, 2);
+    for (const trace of depot.tables.audit_logs) {
+      assert.equal(trace.auteur.type, 'chatgpt');
+      assert.equal(trace.user_nom, 'ChatGPT (pont)');
+    }
   });
 });
 

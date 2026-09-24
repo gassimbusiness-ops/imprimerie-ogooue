@@ -515,3 +515,129 @@ test('la logique des comptes vit dans api/_lib et ne consomme aucune fonction', 
   const source = readFileSync(new URL('../api/_lib/comptes.js', import.meta.url), 'utf8');
   assert.ok(source.includes('auth_credentials'), 'le module ne vise plus la bonne table');
 });
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   7. QUI — chaque ligne serveur porte l'auteur du JETON, pas « Serveur »
+
+   Le 18/09/2026 à 16 h 52 (Moanda), `PATCH /api/employes` a changé le mot de
+   passe de l'accueil. La ligne portait `user_id` = le compte admin, mais
+   `user_nom: 'Serveur'` et aucun rôle : l'administrateur s'y lisait comme
+   une machine. Voir `src/services/journal-audit.js`.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+const FICHE_ADMIN = { id: 'admin-1', prenom: 'Imprimerie', nom: 'Admin', email: 'admin@ogooue.ga', role: 'admin' };
+const FICHE_ACCUEIL = { id: 'e-accueil', prenom: 'Opérateur', nom: 'Acceuil', email: 'accueil@ogooue.ga', role: 'employe' };
+
+function verifierAuteurAdmin(ligne) {
+  assert.equal(ligne.auteur?.type, 'humain', 'la ligne doit porter un auteur humain');
+  assert.equal(ligne.auteur.id, 'admin-1', "l'identifiant vient du jeton signé");
+  assert.equal(ligne.auteur.nom, 'Imprimerie Admin', 'le nom vient de la fiche relue par le serveur');
+  assert.equal(ligne.auteur.role, 'admin', 'le rôle vient du jeton signé');
+  assert.equal(ligne.auteur.source, 'session_signee');
+  assert.equal(ligne.user_id, 'admin-1');
+  assert.equal(ligne.user_nom, 'Imprimerie Admin');
+  assert.notEqual(ligne.user_nom, 'Serveur');
+}
+
+function verifierAucunSecret(ligne, motDePasse) {
+  const texte = JSON.stringify(ligne);
+  assert.ok(!texte.includes(motDePasse), 'le mot de passe est entré au journal');
+  assert.ok(!/password_hash|password_salt/.test(texte), 'un nom de champ d’empreinte est entré au journal');
+  assert.ok(!/[0-9a-f]{64}/.test(texte), 'une empreinte SHA-256 est entrée au journal');
+  assert.ok(!/[0-9a-f]{32}/.test(texte), 'un sel est entré au journal');
+}
+
+test('QUI : PATCH /api/employes qui change un mot de passe — l’admin, nommé, avec son rôle ; le FAIT, pas la valeur', async () => {
+  const depot = depotMemoire({ employes: [FICHE_ADMIN, FICHE_ACCUEIL] });
+  const res = fausseReponse();
+  await creerGestionnaireEmployes({ depot })(requete({
+    method: 'PATCH',
+    session: ADMIN,
+    body: {
+      id: 'e-accueil',
+      data: { telephone: '074000000' },
+      motDePasse: 'AccueilSecret2026',
+      // Ce que l'appelant voudrait écrire comme auteur : ignoré.
+      user_id: 'quelqu-un-d-autre', user_nom: 'Personne', auteur: { type: 'systeme' },
+    },
+  }), res);
+
+  assert.equal(res.code, 200);
+  assert.equal(depot.journal.length, 1);
+  const [ligne] = depot.journal;
+  verifierAuteurAdmin(ligne);
+  assert.match(ligne.details, /mot de passe change/, 'le FAIT est enregistré');
+  verifierAucunSecret(ligne, 'AccueilSecret2026');
+});
+
+test('QUI : /api/auth-changer-mot-de-passe par un admin pour un autre compte — l’admin, et rien du secret', async () => {
+  const depot = depotMemoire({ employes: [FICHE_ADMIN, FICHE_ACCUEIL] });
+  const res = fausseReponse();
+  await creerGestionnaireChangementMotDePasse({ depot })(requete({
+    session: ADMIN,
+    body: { userId: 'e-accueil', nouveauMotDePasse: 'NouveauSecret2026', user_nom: 'Faux auteur' },
+  }), res);
+
+  assert.equal(res.code, 200);
+  const [ligne] = depot.journal;
+  verifierAuteurAdmin(ligne);
+  assert.equal(ligne.entity_id, 'e-accueil', 'la CIBLE est distincte de l’auteur');
+  assert.match(ligne.details, /par un administrateur/);
+  verifierAucunSecret(ligne, 'NouveauSecret2026');
+});
+
+test('QUI : un employé qui change SON mot de passe — lui-même, rôle employe', async () => {
+  const depot = depotMemoire({ employes: [{ ...FICHE_ACCUEIL, id: 'emp-1' }] });
+  await creerGestionnaireChangementMotDePasse({ depot })(
+    requete({ session: EMPLOYE, body: { nouveauMotDePasse: 'MonSecret2026!' } }), fausseReponse(),
+  );
+  const [ligne] = depot.journal;
+  assert.equal(ligne.auteur.type, 'humain');
+  assert.equal(ligne.auteur.id, 'emp-1');
+  assert.equal(ligne.auteur.role, 'employe');
+  assert.equal(ligne.auteur.nom, 'Opérateur Acceuil');
+  verifierAucunSecret(ligne, 'MonSecret2026!');
+});
+
+test('QUI : création et suppression d’un employé par l’admin — l’admin', async () => {
+  const depot = depotMemoire({ employes: [FICHE_ADMIN, FICHE_ACCUEIL] });
+  const handler = creerGestionnaireEmployes({ depot });
+  await handler(requete({
+    method: 'POST', session: ADMIN,
+    body: { data: { nom: 'Nzue', prenom: 'Paul', email: 'paul@ogooue.ga', role: 'employe' }, motDePasse: 'PaulSecret2026' },
+  }), fausseReponse());
+  await handler(requete({ method: 'DELETE', session: ADMIN, query: { id: 'e-accueil' } }), fausseReponse());
+
+  assert.equal(depot.journal.length, 2);
+  for (const ligne of depot.journal) verifierAuteurAdmin(ligne);
+  verifierAucunSecret(depot.journal[0], 'PaulSecret2026');
+});
+
+test('QUI : inscription publique — ANONYME « inscription publique », pas « Serveur »', async () => {
+  const depot = depotMemoire();
+  const res = fausseReponse();
+  await creerGestionnaireCreationUtilisateur({ depot })(requete({
+    method: 'POST',
+    body: { email: 'client@exemple.ga', motDePasse: 'ClientSecret2026', nom: 'Client', user_id: 'admin-1' },
+  }), res);
+
+  assert.equal(res.code, 201);
+  const [ligne] = depot.journal;
+  assert.equal(ligne.auteur.type, 'anonyme');
+  assert.equal(ligne.auteur.contexte, 'inscription publique');
+  assert.equal(ligne.auteur.id, null, 'un user_id du corps ne devient pas l’auteur');
+  assert.notEqual(ligne.user_nom, 'Serveur');
+  verifierAucunSecret(ligne, 'ClientSecret2026');
+});
+
+test('QUI : fiche de l’auteur introuvable — l’identifiant et le rôle signés restent, le journal part', async () => {
+  const depot = depotMemoire({ employes: [FICHE_ACCUEIL] });
+  depot.lireEmploye = async (id) => (id === 'e-accueil' ? { ...FICHE_ACCUEIL } : null);
+  await creerGestionnaireChangementMotDePasse({ depot })(
+    requete({ session: ADMIN, body: { userId: 'e-accueil', nouveauMotDePasse: 'Secret2026!!' } }), fausseReponse(),
+  );
+  const [ligne] = depot.journal;
+  assert.equal(ligne.auteur.id, 'admin-1');
+  assert.equal(ligne.auteur.role, 'admin');
+  assert.equal(ligne.auteur.nom, null, 'on ne devine pas un nom');
+});

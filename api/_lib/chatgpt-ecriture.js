@@ -69,6 +69,7 @@
  */
 import { supabaseAdmin } from './supabase-admin.js';
 import { creerVerrouExecution } from '../../src/services/execution-unique.js';
+import { auteurChatGPT, ligneJournal } from '../../src/services/journal-audit.js';
 import {
   GESTES,
   BESOINS_CONTEXTE,
@@ -475,19 +476,26 @@ async function chargerContexte(geste, depot, corps, ctx) {
   return Object.fromEntries(besoins.map((cle, i) => [cle, valeurs[i]]));
 }
 
-/** L'entrée d'audit, à la forme de `src/services/audit.js`. */
-function traceAudit(journal, { cle, phrase, ctx, identifiant }) {
-  return {
+/**
+ * L'entrée d'audit — fabriquée par `ligneJournal`, comme toute ligne du journal.
+ *
+ * L'AUTEUR est « ChatGPT », fixé ici et nulle part ailleurs : aucun champ du
+ * corps reçu (`auteur`, `user_id`, « dicté par »…) ne peut le changer. Qui a
+ * dicté n'est PAS vérifiable — un seul jeton, partagé — et la ligne le dit
+ * (`dicte_par: null`, avec son motif) au lieu de deviner. Les en-têtes OpenAI
+ * éventuels sont rangés à part, comme indices non vérifiés.
+ */
+function traceAudit(journal, { cle, phrase, ctx, identifiant, entetes }) {
+  return ligneJournal({
+    auteur: auteurChatGPT({ entetes }),
     timestamp: ctx.instant_utc,
-    user_id: 'chatgpt',
-    user_nom: 'ChatGPT (pont)',
     action: journal.action,
     module: journal.module,
-    entity_id: identifiant,
-    entity_label: journal.entity_label,
+    entityId: identifiant,
+    entityLabel: journal.entity_label,
     details: `${journal.details} — écrit par ChatGPT sans confirmation, le ${ctx.lisible}`,
     metadata: { ...journal.metadata, cle, phrase, identifiant, heure_moanda: ctx.lisible },
-  };
+  });
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -502,8 +510,9 @@ function traceAudit(journal, { cle, phrase, ctx, identifiant }) {
  * @param {object} arg.corps  le corps JSON reçu
  * @param {object} arg.depot
  * @param {object} arg.ctx    `contexteTemporel()` — l'heure de MOANDA
+ * @param {object} [arg.entetes] en-têtes HTTP reçus — indices de provenance, jamais l'auteur
  */
-export async function executerGeste({ geste, corps, depot, ctx }) {
+export async function executerGeste({ geste, corps, depot, ctx, entetes }) {
   const contexte = { ctx, ...(await chargerContexte(geste, depot, corps, ctx)) };
   const plan = preparerGeste(geste, corps, contexte);
   if (!plan.ok) {
@@ -529,7 +538,7 @@ export async function executerGeste({ geste, corps, depot, ctx }) {
     // LA TRACE D'ABORD. Si ce qui suit échoue au milieu, on saura quand même
     // ce qui a été tenté, sur quel montant, et à partir de quelle phrase.
     await depot.journaliser(traceAudit(plan.journal, {
-      cle: plan.cle, phrase: corps.phrase, ctx, identifiant: plan.identifiant,
+      cle: plan.cle, phrase: corps.phrase, ctx, identifiant: plan.identifiant, entetes,
     }));
 
     await appliquer(plan.operations, depot);
@@ -559,7 +568,7 @@ export async function executerGeste({ geste, corps, depot, ctx }) {
  * et c'est ce qui rend tenable une écriture partie sans confirmation : on peut
  * toujours montrer ce qui a été écrit, et ce qui a été défait.
  */
-export async function annulerEcriture({ corps, depot, ctx }) {
+export async function annulerEcriture({ corps, depot, ctx, entetes }) {
   const cle = cleDepuisIdentifiant(corps?.identifiant);
   if (!cle) {
     return {
@@ -611,7 +620,7 @@ export async function annulerEcriture({ corps, depot, ctx }) {
     }
 
     await depot.journaliser(traceAudit(plan.journal, {
-      cle, phrase, ctx, identifiant: identifiantDe(cle),
+      cle, phrase, ctx, identifiant: identifiantDe(cle), entetes,
     }));
 
     await appliquer(plan.operations, depot);

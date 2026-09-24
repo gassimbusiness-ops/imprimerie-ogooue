@@ -1,6 +1,11 @@
 import { useState, useEffect, useMemo } from 'react';
 import { db } from '@/services/db';
-import { ACTION_LABELS, MODULE_LABELS } from '@/services/audit';
+// Depuis le module PUR du journal, pas depuis `audit.js` : celui-ci écrit en
+// base, celui-là ne fait que décrire — c'est ce qui permet de monter l'écran
+// en test avec de vraies lignes.
+import {
+  ACTION_LABELS, MODULE_LABELS, afficherAuteur, cleAuteur,
+} from '@/services/journal-audit';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
@@ -27,6 +32,15 @@ import {
   Trash2,
 } from 'lucide-react';
 import { todayISO } from '@/lib/dates';
+
+/** Couleur du badge d'auteur : une personne, le pont, une tâche, personne. */
+const STYLE_AUTEUR = {
+  humain: 'bg-slate-100 text-slate-700',
+  chatgpt: 'bg-amber-100 text-amber-800',
+  systeme: 'bg-violet-100 text-violet-700',
+  anonyme: 'bg-red-100 text-red-700',
+  ancien: 'bg-muted text-muted-foreground',
+};
 
 const ACTION_ICONS = {
   create: Plus,
@@ -59,8 +73,11 @@ export default function AuditLog() {
       if (filterModule !== 'all' && log.module !== filterModule) return false;
       if (search) {
         const q = search.toLowerCase();
+        const auteur = afficherAuteur(log);
         return (
           (log.user_nom || '').toLowerCase().includes(q) ||
+          auteur.nom.toLowerCase().includes(q) ||
+          auteur.libelleType.toLowerCase().includes(q) ||
           (log.details || '').toLowerCase().includes(q) ||
           (log.entity_label || '').toLowerCase().includes(q)
         );
@@ -76,7 +93,8 @@ export default function AuditLog() {
     const today = todayISO();
     const todayLogs = logs.filter((l) => (l.timestamp || l.created_at || '').startsWith(today));
     const cancellations = logs.filter((l) => l.action === 'cancel');
-    const uniqueUsers = new Set(logs.map((l) => l.user_id)).size;
+    // Un auteur inconnu n'est pas « un utilisateur de plus » : il n'est pas compté.
+    const uniqueUsers = new Set(logs.map(cleAuteur).filter(Boolean)).size;
     return { total: logs.length, today: todayLogs.length, cancellations: cancellations.length, uniqueUsers };
   }, [logs]);
 
@@ -204,6 +222,7 @@ export default function AuditLog() {
                 const ts = log.timestamp || log.created_at || '';
                 const dateObj = new Date(ts);
                 const isExpanded = expandedId === log.id;
+                const auteur = afficherAuteur(log);
 
                 return (
                   <div key={log.id} className="px-4 py-3 hover:bg-muted/50 transition-colors">
@@ -216,7 +235,12 @@ export default function AuditLog() {
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className="text-sm font-semibold">{log.user_nom}</span>
+                          <span className="text-sm font-semibold" data-auteur={auteur.type}>
+                            {auteur.enregistre ? auteur.nom : `Auteur : ${auteur.nom}`}
+                          </span>
+                          <Badge variant="outline" className={`text-[10px] ${STYLE_AUTEUR[auteur.type] || STYLE_AUTEUR.ancien}`}>
+                            {auteur.libelleType}
+                          </Badge>
                           <Badge variant="outline" className={`text-[10px] ${actionStyle.color}`}>
                             {actionStyle.label}
                           </Badge>
@@ -225,6 +249,9 @@ export default function AuditLog() {
                           </Badge>
                         </div>
                         <p className="text-sm text-muted-foreground mt-0.5 truncate">{log.details}</p>
+                        <p className="text-[11px] text-muted-foreground mt-0.5">
+                          Rôle : {auteur.role} · {auteur.precision}
+                        </p>
                       </div>
                       <div className="flex items-center gap-2 shrink-0">
                         <span className="text-xs text-muted-foreground">
@@ -239,6 +266,9 @@ export default function AuditLog() {
                     </div>
                     {isExpanded && (
                       <div className="mt-2 ml-11 rounded-lg bg-muted/50 p-3 text-xs space-y-1">
+                        <p><span className="font-medium">Auteur:</span> {auteur.nom} ({auteur.libelleType})</p>
+                        <p><span className="font-medium">Rôle:</span> {auteur.role}</p>
+                        <p><span className="font-medium">Provenance:</span> {auteur.precision}</p>
                         <p><span className="font-medium">ID:</span> {log.entity_id || '—'}</p>
                         <p><span className="font-medium">Entité:</span> {log.entity_label || '—'}</p>
                         <p><span className="font-medium">Horodatage:</span> {dateObj.toLocaleString('fr-FR')}</p>

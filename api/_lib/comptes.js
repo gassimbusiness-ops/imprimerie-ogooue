@@ -34,6 +34,15 @@
 import crypto from 'node:crypto';
 import { supabaseAdmin } from './supabase-admin.js';
 import { hacherMotDePasse, genererSel } from './session.js';
+import {
+  assainir,
+  auteurDepuisSessionServeur,
+  ligneJournal,
+} from '../../src/services/journal-audit.js';
+
+// `assainir` vit désormais dans le module partagé du journal ; ré-exporté ici
+// pour les appelants et les tests qui l'importaient de ce fichier.
+export { assainir };
 
 /** Longueur minimale d'un mot de passe. Alignée sur l'inscription publique. */
 export const LONGUEUR_MINI = 8;
@@ -257,51 +266,45 @@ export function depotSupabase() {
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
-   Journalisation — l'acte, jamais le secret
+   Journalisation — l'acte, jamais le secret ; et QUI l'a fait
    ═══════════════════════════════════════════════════════════════════════════ */
-
-/** Clés dont la valeur ne doit jamais atteindre le journal. */
-const CLES_SECRETES = [
-  'password', 'motdepasse', 'mot_de_passe', 'nouveaumotdepasse',
-  'password_hash', 'password_salt', 'hash', 'sel', 'salt', 'token', 'authorization',
-];
-
-/**
- * Recopie un objet en remplaçant toute valeur secrète par « [omis] ».
- *
- * C'est une ceinture, pas une bretelle : les appelants ne passent déjà que des
- * métadonnées inoffensives. Mais un journal est l'endroit exact où un mot de
- * passe finit par se retrouver le jour où quelqu'un ajoute un champ « pour
- * déboguer » — et un journal s'exporte, se lit à l'écran Audit, et se garde
- * pour toujours (3 338 lignes en production au 17/09/2026).
- */
-export function assainir(valeur, profondeur = 0) {
-  if (profondeur > 4 || valeur === null || typeof valeur !== 'object') return valeur;
-  if (Array.isArray(valeur)) return valeur.map((v) => assainir(v, profondeur + 1));
-  const sortie = {};
-  for (const [cle, v] of Object.entries(valeur)) {
-    sortie[cle] = CLES_SECRETES.includes(cle.toLowerCase()) ? '[omis]' : assainir(v, profondeur + 1);
-  }
-  return sortie;
-}
 
 /**
  * Écrit une ligne d'audit. N'échoue JAMAIS l'action métier : un journal
  * indisponible ne doit pas empêcher un gérant de créer un employé au comptoir.
+ *
+ * L'AUTEUR vient du jeton VÉRIFIÉ (`session`, rendu par `exigerSession` /
+ * `sessionDepuisRequete`) : identifiant et rôle signés par le serveur, nom relu
+ * sur la fiche employé. Avant le 24/09/2026 cette fonction écrivait
+ * `user_nom: 'Serveur'` — l'administrateur qui a changé le mot de passe de
+ * l'accueil le 18/09 s'y lisait comme une machine.
+ *
+ * Sans session (inscription publique), l'auteur est ANONYME, avec
+ * `contexteSansSession` pour dire pourquoi.
+ *
+ * Aucun mot de passe n'est transmis ici par les appelants, et `ligneJournal`
+ * passe les métadonnées par `assainir`.
  */
-export async function journaliser(depot, { action, module = 'employes', session, entityId, entityLabel, details, metadata }) {
+export async function journaliser(depot, {
+  action, module = 'employes', session, contexteSansSession,
+  entityId, entityLabel, details, metadata,
+}) {
   try {
-    await depot.ecrireJournal({
-      timestamp: new Date().toISOString(),
-      user_id: session?.sub || 'serveur',
-      user_nom: 'Serveur',
+    let employe = null;
+    if (session?.sub && typeof depot.lireEmploye === 'function') {
+      // Un nom introuvable n'empêche pas d'écrire : l'identifiant et le rôle
+      // signés suffisent à dire qui, le nom sera « non enregistré ».
+      employe = await depot.lireEmploye(session.sub).catch(() => null);
+    }
+    await depot.ecrireJournal(ligneJournal({
+      auteur: auteurDepuisSessionServeur(session, { employe, contexte: contexteSansSession }),
       action,
       module,
-      entity_id: entityId || '',
-      entity_label: entityLabel || '',
-      details: String(details || ''),
-      metadata: assainir(metadata || {}),
-    });
+      entityId,
+      entityLabel,
+      details,
+      metadata,
+    }));
   } catch (e) {
     console.error('[journal]', e.message);
   }

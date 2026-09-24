@@ -1,11 +1,18 @@
 /**
  * Service d'audit — enregistre toutes les actions pour la traçabilité anti-fraude.
+ *
+ * La FORME de la ligne, et surtout son AUTEUR, ne se décident pas ici : voir
+ * `src/services/journal-audit.js`. Ce fichier ne fait que lire la session du
+ * navigateur et écrire. L'appelant fournit QUOI (action, module, entité,
+ * détails) ; il ne fournit jamais QUI — un `user_id`, `user_nom` ou `auteur`
+ * glissé dans `opts` est ignoré.
  */
 import { db } from './db';
+import { auteurDepuisSessionNavigateur, ligneJournal } from './journal-audit';
 
 /**
  * Log an action to the audit trail.
- * @param {'create'|'update'|'delete'|'cancel'|'cloture'|'login'|'logout'} action
+ * @param {string} action - e.g. 'create', 'update', 'delete', 'cancel', 'cloture', 'login', 'logout'
  * @param {string} module - e.g. 'rapports', 'commandes', 'factures'
  * @param {object} opts
  * @param {string} opts.entityId - ID of the affected entity
@@ -33,52 +40,29 @@ export async function logAction(action, module, opts = {}) {
   }
 }
 
-async function ecrireTrace(action, module, opts) {
-  const session = JSON.parse(localStorage.getItem('io_current_user') || '{}');
-  return db.audit_logs.create({
-    timestamp: new Date().toISOString(),
-    user_id: session.id || 'unknown',
-    user_nom: session.prenom && session.nom ? `${session.prenom} ${session.nom}` : 'Système',
-    action,
-    module,
-    entity_id: opts.entityId || '',
-    entity_label: opts.entityLabel || '',
-    details: opts.details || '',
-    metadata: opts.metadata || {},
-  });
+/** La session rangée à la connexion par `auth.jsx`, ou `null`. */
+function lireSessionNavigateur() {
+  try {
+    const brut = localStorage.getItem('io_current_user');
+    return brut ? JSON.parse(brut) : null;
+  } catch {
+    return null;
+  }
 }
 
-export const ACTION_LABELS = {
-  create: { label: 'Création', color: 'bg-emerald-100 text-emerald-700' },
-  update: { label: 'Modification', color: 'bg-blue-100 text-blue-700' },
-  delete: { label: 'Suppression', color: 'bg-red-100 text-red-700' },
-  cancel: { label: 'Annulation', color: 'bg-orange-100 text-orange-700' },
-  cloture: { label: 'Clôture', color: 'bg-violet-100 text-violet-700' },
-  login: { label: 'Connexion', color: 'bg-slate-100 text-slate-700' },
-  logout: { label: 'Déconnexion', color: 'bg-slate-100 text-slate-700' },
-};
+async function ecrireTrace(action, module, options) {
+  const opts = options || {};
+  return db.audit_logs.create(ligneJournal({
+    auteur: auteurDepuisSessionNavigateur(lireSessionNavigateur()),
+    action,
+    module,
+    entityId: opts.entityId,
+    entityLabel: opts.entityLabel,
+    details: opts.details,
+    metadata: opts.metadata,
+  }));
+}
 
-export const MODULE_LABELS = {
-  rapports: 'Rapports',
-  commandes: 'Commandes',
-  devis: 'Devis',
-  factures: 'Factures',
-  stocks: 'Stocks',
-  employes: 'Employés',
-  clients: 'Clients',
-  pointage: 'Pointage',
-  parametres: 'Paramètres',
-  cloture_caisse: 'Clôture caisse',
-  auth: 'Authentification',
-  taches: 'Tâches',
-  catalogue: 'Catalogue',
-  prospects: 'Prospection',
-  finances: 'Finances',
-  objectifs: 'Objectifs',
-  demandes_rh: 'Demandes RH',
-  travaux: 'Travaux',
-  evenements: 'Événements',
-  messagerie: 'Messagerie',
-  tarifs: 'Tarifs',
-  gouvernance: 'Gouvernance',
-};
+// Les libellés vivent dans le module PUR `journal-audit.js` (l'écran Audit les
+// y lit) ; ré-exportés ici pour les imports historiques.
+export { ACTION_LABELS, MODULE_LABELS } from './journal-audit';

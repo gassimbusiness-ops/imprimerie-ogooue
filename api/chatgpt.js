@@ -412,8 +412,11 @@ async function servir(voie, req, depot, ctx, depotE) {
  */
 async function servirEcriture(voie, req, depotE, ctx) {
   const corps = corpsJson(req);
-  if (voie === 'annuler') return annulerEcriture({ corps, depot: depotE, ctx });
-  return executerGeste({ geste: voie, corps, depot: depotE, ctx });
+  // Les en-têtes ne servent qu'aux INDICES de provenance du journal (numéro de
+  // conversation OpenAI) : l'auteur de la ligne reste « ChatGPT », quoi qu'ils disent.
+  const entetes = req.headers || {};
+  if (voie === 'annuler') return annulerEcriture({ corps, depot: depotE, ctx, entetes });
+  return executerGeste({ geste: voie, corps, depot: depotE, ctx, entetes });
 }
 
 /* ═══════════════════════════════════════════════════════════════════════════
