@@ -32,13 +32,17 @@ export const VALIDITE_DEVIS_JOURS = 30;
  * @param {string} title - Titre du document
  * @param {string} htmlContent - Contenu HTML à imprimer
  * @param {Object} options - Options supplémentaires
+ *   - `margePage`   : marges `@page` (défaut `15mm`, inchangé pour les rapports) ;
+ *   - `cssDocument` : règles ajoutées APRÈS la feuille commune, dans le `<head>`
+ *                     (jamais dans le corps : le texte d'un `<style>` du corps
+ *                     ferait partie du texte du document).
  */
 export function printHTML(title, htmlContent, options = {}) {
-  const { orientation = 'portrait', companyName = 'IMPRIMERIE OGOOUÉ', raw = false } = options;
+  const { orientation = 'portrait', companyName = 'IMPRIMERIE OGOOUÉ', raw = false, margePage = '15mm', cssDocument = '' } = options;
 
   const css = `
     <style>
-      @page { size: A4 ${orientation}; margin: 15mm; }
+      @page { size: A4 ${orientation}; margin: ${margePage}; }
       * { box-sizing: border-box; margin: 0; padding: 0; }
       body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; font-size: 11px; color: #1a1a2e; line-height: 1.5; }
       .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 3px solid #1e40af; padding-bottom: 14px; margin-bottom: 18px; }
@@ -74,7 +78,7 @@ export function printHTML(title, htmlContent, options = {}) {
       .signature-block { margin-top: 14px; padding-top: 8px; border-top: 1px solid #e5e7eb; text-align: center; font-size: 7.5px; color: #9ca3af; font-style: italic; line-height: 1.8; }
       .page-break { page-break-before: always; }
       @media print { body { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
-    </style>
+    </style>${cssDocument ? `\n    <style>${cssDocument}</style>` : ''}
   `;
 
   const now = new Date();
@@ -403,7 +407,7 @@ export function exportDocument(doc, lignes, type = 'facture') {
   const origin = (typeof window !== 'undefined' && window.location?.origin) ? window.location.origin : '';
 
   const bordure = 'border:1px solid #8c8c8c;';
-  const cellule = `padding:5px 10px;${bordure}`;
+  const cellule = `padding:4px 10px;${bordure}`;
   let rows = '';
   lignes.forEach((l) => {
     const lineTotal = (l.quantite || 1) * (l.prix_unitaire || 0);
@@ -415,36 +419,74 @@ export function exportDocument(doc, lignes, type = 'facture') {
     </tr>`;
   });
 
+  /* ⛔ UN DEVIS D'UNE LIGNE SORTAIT SUR DEUX PAGES — mesuré le 25/09/2026.
+     Chrome, A4, marges 15 mm (267 mm utiles) : la mise en page « beaucoup
+     d'air » mesurait 253 mm pour UNE ligne (dont ~120 mm de marges verticales
+     et un logo de 37 mm), +8 mm par ligne. Une seule ligne passait de
+     justesse ; 2 à 5 lignes, ou une remise (2 lignes de plus), débordaient et
+     le pied légal partait seul en page 2.
+     Désormais :
+       - marges de page 10/12 mm et air resserré : 12 lignes + remise tiennent
+         sur une page (mesuré sur de vrais PDF Chrome, pas en jsdom) ;
+       - le pied légal est FIXÉ en bas de page (répété sur chaque page si le
+         document en fait deux) ; la ligne vide de réserve `doc-reserve-pied`,
+         en pied du tableau de mise en page, se répète elle aussi et empêche le
+         contenu de passer dessous. Plus aucune hauteur minimale : c'est elle
+         qui obligeait à tenir le pied « en bas » par la taille du contenu ;
+       - au-delà d'une page : une ligne d'articles n'est jamais coupée, l'en-tête
+         du tableau se répète, et le bloc final (somme en lettres + signature)
+         ne se coupe pas et ne part pas seul : il emmène avec lui les dernières
+         lignes du tableau.
+     Toute marge ajoutée ici se paie en lignes : re-mesurer avec Chrome. */
+  const cssDocument = `
+    table.doc-cadre { width:100%; border-collapse:collapse; margin:0; font-size:inherit; }
+    table.doc-cadre > tbody > tr > td, table.doc-cadre > tfoot > tr > td { border:none; padding:0; background:none; }
+    table.doc-cadre > tbody > tr, table.doc-cadre > tfoot > tr { background:none; }
+    .doc-reserve-pied { height:30mm; }
+    .doc-pied { position:fixed; left:0; right:0; bottom:0; }
+    table.doc-lignes { width:100%; border-collapse:collapse; font-size:13.5px; line-height:1.3; margin:26px 0 0; }
+    table.doc-lignes thead { display:table-header-group; }
+    table.doc-lignes tr { break-inside:avoid; page-break-inside:avoid; }
+    table.doc-lignes tr.doc-colle { break-before:avoid; page-break-before:avoid; }
+    .doc-fin { break-inside:avoid; page-break-inside:avoid; break-before:avoid; page-break-before:avoid; }
+  `;
+
   const html = `
-    <div style="font-family:Calibri,Carlito,'Segoe UI',system-ui,sans-serif;font-size:13.5px;color:#111;line-height:1.4;min-height:262mm;display:flex;flex-direction:column;">
+    <div style="font-family:Calibri,Carlito,'Segoe UI',system-ui,sans-serif;font-size:13.5px;color:#111;line-height:1.4;">
+    <table class="doc-cadre">
+    <tfoot><tr><td><div class="doc-reserve-pied"></div></td></tr></tfoot>
+    <tbody><tr><td>
       <!-- En-tete : logo + accroche -->
       <div style="display:flex;align-items:center;gap:22px;">
-        <img src="${origin}/logo.png" alt="Logo" style="height:140px;width:auto;object-fit:contain;" onerror="this.style.display='none'"/>
+        <img src="${origin}/logo.png" alt="Logo" style="height:112px;width:auto;object-fit:contain;" onerror="this.style.display='none'"/>
         <div style="flex:1;text-align:center;font-family:Arial,Helvetica,sans-serif;">
           <p style="font-weight:700;font-size:13px;margin:0 0 10px;">Conception graphique &bull; Supports de communication multiformats</p>
           <p style="font-weight:700;font-size:13px;margin:0 0 10px;">Objets publicitaires &amp; personnalisation sur mesure</p>
-          <p style="font-weight:700;font-size:10px;margin:0;">Adresse : Carrefour Fina, Moanda, Gabon &nbsp; Tél : 060 44 46 34 / 074 42 41 42</p>
+          <p style="font-weight:700;font-size:10px;margin:0;">Adresse : Carrefour Fina, Moanda, Gabon &nbsp; Tél : 060 44 46 34</p>
         </div>
       </div>
 
       <!-- Titre du document et date, sur une seule ligne -->
-      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:100px;font-size:15px;">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-top:44px;font-size:15px;">
         <p>${enTete}</p>
         <p>${dateFr}</p>
       </div>
       ${modele.livreLe ? `<p style="margin-top:6px;">Livré le ${dateLivraisonFr}</p>` : ''}
 
       <!-- Client encadre -->
-      <div style="margin-top:44px;border:1.5px solid #1ea0e6;padding:9px 12px;width:66%;">
+      <div style="margin-top:24px;border:1.5px solid #1ea0e6;padding:9px 12px;width:66%;">
         <span style="font-weight:700;">CLIENT : ${esc((doc.client_nom || '—').toUpperCase())}</span>
       </div>
       ${doc.client_adresse ? `<p style="font-size:11.5px;color:#374151;margin-top:6px;">${esc(doc.client_adresse)}</p>` : ''}
 
       <!-- Objet -->
-      <p style="margin-top:22px;"><span style="text-decoration:underline;">Objet :</span>&nbsp; ${esc(doc.objet || 'Impression support publicitaire')}</p>
+      <p style="margin-top:16px;"><span style="text-decoration:underline;">Objet :</span>&nbsp; ${esc(doc.objet || 'Impression support publicitaire')}</p>
 
-      <!-- Tableau -->
-      <table style="width:100%;border-collapse:collapse;font-size:13.5px;margin:56px 0 0;">
+      <!-- Tableau : les totaux sont des lignes du corps, PAS un <tfoot> — un tfoot
+           se répète au bas de chaque page et imprimerait « TOTAL GENERAL » deux fois.
+           « doc-colle » : pas de saut de page juste avant (les totaux emmènent
+           au moins la dernière ligne d'articles avec eux). -->
+      <table class="doc-lignes">
         <thead>
           <tr style="background:#fff;">
             <th style="${cellule}text-align:center;font-weight:400;background:#fff;">DESIGNATION</th>
@@ -453,48 +495,50 @@ export function exportDocument(doc, lignes, type = 'facture') {
             <th style="${cellule}text-align:center;font-weight:400;background:#fff;width:170px;">P. TOTAL</th>
           </tr>
         </thead>
-        <tbody>${rows}</tbody>
-        <tfoot>
+        <tbody>${rows}
           ${remise > 0 ? `
-          <tr>
+          <tr class="doc-colle" style="background:#fff;">
             <td colspan="3" style="${cellule}text-align:center;">SOUS-TOTAL</td>
             <td style="${cellule}text-align:center;">${fmt(sousTotal)}</td>
           </tr>
-          <tr>
+          <tr class="doc-colle" style="background:#fff;">
             <td colspan="3" style="${cellule}text-align:center;">REMISE</td>
             <td style="${cellule}text-align:center;">− ${fmt(remise)}</td>
           </tr>` : ''}
-          <tr style="background:#dce6f2;">
+          <tr class="doc-colle" style="background:#dce6f2;">
             <td colspan="3" style="${cellule}text-align:center;">TOTAL GENERAL</td>
             <td style="${cellule}text-align:center;font-size:15.5px;">${fmt(total)} FCFA</td>
           </tr>
-        </tfoot>
+        </tbody>
       </table>
 
-      <!-- Montant en lettres -->
-      <p style="margin-top:34px;">${modele.arrete} à la somme de <span style="text-transform:capitalize;">${nombreEnLettres(total)}</span> Francs CFA.</p>
-      ${modele.validite ? `<p style="margin-top:8px;font-size:11.5px;color:#4b5563;">Validité de l'offre : ${VALIDITE_DEVIS_JOURS} jours</p>` : ''}
-
-      <!-- Signatures -->
-      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-top:72px;">
-        <div style="text-decoration:underline;font-weight:700;font-size:15px;">${modele.recuPar ? 'Reçu par :' : ''}</div>
-        <div style="text-align:center;font-weight:700;font-size:15px;margin-right:4px;">
-          <p style="text-decoration:underline;">${esc(FONCTION_SIGNATAIRE)}</p>
-          <p style="margin-top:96px;">${esc(SIGNATAIRE_DOCUMENTS)}</p>
+      <!-- Bloc final, insécable : montant en lettres + signatures -->
+      <div class="doc-fin">
+        <p style="margin-top:22px;">${modele.arrete} à la somme de <span style="text-transform:capitalize;">${nombreEnLettres(total)}</span> Francs CFA.</p>
+        ${modele.validite ? `<p style="margin-top:6px;font-size:11.5px;color:#4b5563;">Validité de l'offre : ${VALIDITE_DEVIS_JOURS} jours</p>` : ''}
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-top:34px;">
+          <div style="text-decoration:underline;font-weight:700;font-size:15px;">${modele.recuPar ? 'Reçu par :' : ''}</div>
+          <div style="text-align:center;font-weight:700;font-size:15px;margin-right:4px;">
+            <p style="text-decoration:underline;">${esc(FONCTION_SIGNATAIRE)}</p>
+            <p style="margin-top:64px;">${esc(SIGNATAIRE_DOCUMENTS)}</p>
+          </div>
         </div>
       </div>
+    </td></tr></tbody>
+    </table>
 
-      <!-- Pied de page legal -->
-      <div style="margin-top:auto;padding-top:40px;"><div style="border-top:5px solid #dce8f5;margin:0 -4mm 12px;"></div>
+    <!-- Pied de page legal : fixe en bas de page (voir cssDocument) -->
+    <div class="doc-pied"><div style="border-top:5px solid #dce8f5;margin:0 -4mm 10px;"></div>
       <div style="text-align:center;font-family:Arial,Helvetica,sans-serif;font-size:9.5px;color:#111;line-height:1.5;">
         <p style="font-weight:700;">RCCM : RG/FCV 2023A0407 &nbsp; NIF : 256598U</p>
         <p>Compte BGFI : 40003 04500 31113254001 66 &nbsp; Compte Finam : 40003 04100 41001779011 12</p>
         <p>Siège social : Carrefour Fina en face de Finam Moanda – Gabon</p>
         <p>Tél : 060 44 46 34 / 074 42 41 42 &nbsp; Email : imprimerieogooue@gmail.com</p>
-      </div></div>
+      </div>
+    </div>
     </div>`;
 
-  printHTML(title, html, { raw: true });
+  printHTML(title, html, { raw: true, margePage: '10mm 12mm', cssDocument });
 }
 
 /**

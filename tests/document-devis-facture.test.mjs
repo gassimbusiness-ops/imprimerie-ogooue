@@ -218,9 +218,13 @@ test('montants — séparateur de milliers partout (4 000, 40 000 FCFA), jamais 
   assert.ok(!/\b(4000|40000)\b/.test(texte), 'un montant sans séparateur de milliers');
 });
 
-test('en-tête — les deux numéros du pied, plus le « (+241) 60 44 46 34 » isolé', async () => {
+test('en-tête — « Tél : 060 44 46 34 » seul, comme le modèle, au format local', async () => {
+  // Arbitrage du dirigeant (25/09/2026) : l'en-tête reprend le modèle papier
+  // — un seul numéro — mais au format local « 060 44 46 34 », pas
+  // « (+241) 60 44 46 34 ». Le pied, lui, garde les deux numéros.
   const { texte } = await imprimer(DOC_MODELE, MUGS, 'devis');
-  assert.match(texte, /Adresse : Carrefour Fina, Moanda, Gabon Tél : 060 44 46 34 \/ 074 42 41 42/);
+  assert.match(texte, /Adresse : Carrefour Fina, Moanda, Gabon Tél : 060 44 46 34 DEVIS N°/);
+  assert.match(texte, /Tél : 060 44 46 34 \/ 074 42 41 42 Email : imprimerieogooue@gmail\.com$/);
   assert.ok(!/\(\+241\)/.test(texte));
   assert.match(texte, /Objets publicitaires & personnalisation sur mesure/);
 });
@@ -287,4 +291,27 @@ test('remise — une remise négative ou illisible ne peut pas GONFLER le total'
     const { texte } = await imprimer({ ...DOC_MODELE, remise }, MUGS, 'devis');
     assert.match(texte, /TOTAL GENERAL 40 000 FCFA/, `remise=${remise} a changé le total`);
   }
+});
+
+
+/* ═══ UNE PAGE — le devis d'une ligne sortait sur deux ════════════════════
+   Mesuré le 25/09/2026 avec Chrome (vrais PDF, pas jsdom) : 253 mm de
+   contenu pour UNE ligne sur 267 mm utiles, +8 mm par ligne — 2 à 5 lignes,
+   ou une remise, donnaient deux pages. jsdom ne sait pas paginer : ce test ne
+   PROUVE pas qu'un devis tient sur une page, il garde les réglages qui l'ont
+   obtenu. Tout changement de marge se re-mesure avec Chrome. */
+
+test('mise en page — les réglages qui font tenir un devis sur une page', async () => {
+  const { html } = await imprimer({ ...DOC_MODELE, remise: 2000 }, MUGS, 'facture');
+  assert.match(html, /@page \{ size: A4 portrait; margin: 10mm 12mm; \}/);
+  // Plus de hauteur minimale : le pied tient en bas par position fixe.
+  assert.ok(!/min-height/.test(html), 'une hauteur minimale est revenue');
+  assert.match(html, /\.doc-pied \{ position:fixed;/);
+  // Une ligne d'articles ne se coupe jamais ; le bloc final non plus.
+  assert.match(html, /table\.doc-lignes tr \{ break-inside:avoid;/);
+  assert.match(html, /\.doc-fin \{ break-inside:avoid;/);
+  // Les totaux ne sont pas un <tfoot> : il se répéterait sur chaque page.
+  const lignes = html.slice(html.indexOf('class="doc-lignes"'));
+  assert.ok(!/<tfoot>/.test(lignes.slice(0, lignes.indexOf('</table>'))), 'totaux dans un <tfoot>');
+  assert.equal((html.match(/class="doc-colle"/g) || []).length, 3, 'sous-total, remise, total collés aux articles');
 });
