@@ -126,7 +126,7 @@ import { supabaseAdmin } from './_lib/supabase-admin.js';
 import { depotSupabaseAutopost } from './_lib/autopost-depot.js';
 import { creerClientMeta, TYPE_JETON } from './_lib/autopost-meta.js';
 import { executerPassage, modeGlobalDemande, comptesDepuisEnvironnement } from './_lib/autopost-executeur.js';
-import { alimenterFile } from './_lib/autopost-alimentation.js';
+import { alimenterFile, DECLENCHEURS } from './_lib/autopost-alimentation.js';
 import { traiterApprobation, cleSignatureApprobation } from './_lib/autopost-approbation.js';
 import { creerHebergeurMedias, stockageSupabase } from './_lib/autopost-medias.js';
 import { sonderDrive, lireConfigurationDrive, creerClientDrive, DIAGNOSTICS, MESSAGES } from './_lib/drive.js';
@@ -239,7 +239,7 @@ export function creerGestionnaireAutopost({
    *      est à l'arrêt et en simulation, et la file doit quand même se remplir,
    *      sinon il n'y a rien à regarder avant d'ouvrir les verrous.
    */
-  async function alimenter(depot, instantUtc) {
+  async function alimenter(depot, instantUtc, declencheur = null) {
     /* 🔴 LE RÉGLAGE D'APPROBATION AUTOMATIQUE — LU ICI, PAS DANS LE MODULE.
        `alimenterFile()` ne consulte AUCUN verrou, et un test l'exige
        (« l'alimentation n'appelle pas lireArretGlobal »). La politique
@@ -292,11 +292,13 @@ export function creerGestionnaireAutopost({
         // aujourd'hui : l'approbation automatique est alors écrite sans
         // signature, exactement comme celle de l'écran, et l'écran le dit.
         cleSignature: cleSignatureApprobation(),
+        declencheur,
       });
     } catch (err) {
       console.error('[autopost] alimentation impossible :', err?.message);
       return {
         instant_utc: instantUtc,
+        declencheur,
         diagnostic: DIAGNOSTICS.PANNE,
         message: MESSAGES.panne,
         detail: `alimentation impossible : ${err?.message || err}`,
@@ -515,6 +517,14 @@ export function creerGestionnaireAutopost({
     }
 
     const instant = maintenant();
+    /* ⛔ QUI DÉCLENCHE — écrit au journal de l'alimentation ET du passage.
+       L'audit 41 a dû le deviner d'après les heures (« 08:53:13 chaque jour,
+       à la seconde près, ce qui signe le cron ») : `autorisationTick()` le
+       savait, personne ne l'écrivait. L'administrateur est nommé par
+       l'identifiant de SA SESSION SIGNÉE, jamais par ce que la requête affirme. */
+    const declencheur = droit.autorise
+      ? { par: DECLENCHEURS.CRON }
+      : { par: DECLENCHEURS.ADMIN, utilisateur_id: session?.sub ?? null };
 
     if (voie === 'alimenter') {
       // Chaque alimentation coûte des appels à Google : on borne le bouton.
@@ -523,7 +533,7 @@ export function creerGestionnaireAutopost({
       }
       try {
         const depot = depotFourni || depotSupabaseAutopost(supabaseAdmin());
-        const alimentation = await alimenter(depot, instant);
+        const alimentation = await alimenter(depot, instant, declencheur);
         return res.status(200).json({
           ok: true,
           declenche_par: droit.autorise ? 'cron' : 'admin',
@@ -544,13 +554,13 @@ export function creerGestionnaireAutopost({
          c'est-à-dire une heure de plus — et à 17 h 30, sa tolérance aurait
          expiré. L'alimentation ne lève pas : si le Drive est injoignable, le
          passage publie quand même ce qui est déjà en file. */
-      const alimentation = await alimenter(depot, instant);
+      const alimentation = await alimenter(depot, instant, declencheur);
 
       const bilan = await executerPassage({
         depot,
         client,
         instant,
-        options: {},
+        options: { declencheur },
       });
       bilan.alimentation = alimentation;
       return res.status(200).json({ ok: true, declenche_par: droit.autorise ? 'cron' : 'admin', bilan });

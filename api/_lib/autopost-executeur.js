@@ -48,6 +48,7 @@
  *   relacher(cle, { etat, tentatives, erreur })
  *   noterConteneur(cle, idConteneur)
  *   enregistrerPublication(cle, resultat)
+ *   expirer(cle, details)             → boolean   ← CONDITIONNEL (scheduled, sans témoin)
  *   journaliser(entree)
  *
  * Chaque implémentation réelle doit garantir que `prendre()` est atomique. La
@@ -56,6 +57,7 @@
  */
 import { travauxDus, resumerDecision, RAISONS } from './autopost-selection.js';
 import { COMPTES_CIBLES, resoudreCompteCible } from './autopost-contrat.js';
+import { phraseDeclencheur } from './autopost-alimentation.js';
 import { formaterInstantUtc, formaterInstantLocal, msDepuisInstantUtc, dateLocaleDepuisInstantUtc } from '../../src/lib/dates.js';
 
 /** Modes d'exécution. `dry_run` est le défaut, partout, toujours. */
@@ -151,6 +153,15 @@ export function modeGlobalEffectif(controle) {
 }
 
 /**
+ * Le jeton de Page d'une publication Facebook, en français. Deux mots possibles,
+ * rendus par `publierPhotoFacebook()` — jamais le jeton lui-même.
+ */
+const PHRASES_JETON_PAGE = Object.freeze({
+  echange: 'jeton de Page obtenu par échange',
+  deja_jeton_de_page: 'le jeton configuré était déjà un jeton de Page',
+});
+
+/**
  * Exécute un passage complet.
  *
  * @param {object} arg
@@ -169,8 +180,14 @@ export async function executerPassage({
   tracer = (...a) => console.log(...a),
 }) {
   const instantUtc = typeof instant === 'string' ? instant : formaterInstantUtc(instant);
+  /* ⛔ QUI A DEMANDÉ CE PASSAGE. `api/autopost.js` le sait (`autorisationTick()`
+     ou la session d'un administrateur) et le passe ici ; le journal le porte
+     dans le bilan ET dans la phrase, parce que l'écran n'affiche que la phrase. */
+  const declencheur = options.declencheur ?? null;
+  const signature = phraseDeclencheur(declencheur);
   const bilan = {
     instant_utc: instantUtc,
+    declencheur,
     mode: MODE_SIMULATION,
     jeton_present: Boolean(client?.disponible),
     examines: 0,
@@ -183,6 +200,8 @@ export async function executerPassage({
     ecartes: [],
     alertes: [],
     details: [],
+    // Lignes passées de `scheduled` à `expired` à ce passage. Voir plus bas.
+    expirees: [],
   };
 
   /* ── 0 bis. LA TABLE DES COMPTES — lue UNE fois, au début du passage ───
@@ -201,7 +220,7 @@ export async function executerPassage({
     tracer('[autopost] ARRÊT GLOBAL actif — aucun travail examiné.');
     bilan.arret_global = true;
     await depot.journaliser({
-      instant_utc: instantUtc, evenement: 'passage', resume: 'arrêt global actif', bilan,
+      instant_utc: instantUtc, evenement: 'passage', resume: `arrêt global actif · ${signature}`, bilan,
     });
     return bilan;
   }
@@ -315,6 +334,10 @@ export async function executerPassage({
         code_erreur: null,
         message_erreur: null,
         reconcilie: Boolean(sortie.reconcilie),
+        /* ⛔ Facebook seulement : le jeton de Page a-t-il été OBTENU PAR ÉCHANGE,
+           ou le jeton configuré en était-il déjà un ? Un MOT, jamais le jeton.
+           L'audit 41 (§4) n'a pu que le supposer ; désormais le journal le dit. */
+        jeton_page: sortie.jetonPage ?? null,
       };
 
       // Relecture : elle prouve que l'objet EXISTE, pas qu'il est visible.
@@ -337,10 +360,16 @@ export async function executerPassage({
         evenement: 'publication',
         // Masqué : l'identifiant d'un post Facebook porte celui de la Page en
         // préfixe. La valeur brute reste dans la colonne `id_distant`.
-        resume: masquer(`publié — id_distant=${sortie.idDistant} · visibilité publique NON vérifiée`),
+        resume: masquer(`publié — id_distant=${sortie.idDistant} · visibilité publique NON vérifiée`
+          + (sortie.jetonPage ? ` · ${PHRASES_JETON_PAGE[sortie.jetonPage] || `jeton de Page : ${sortie.jetonPage}`}` : '')),
       });
       bilan.publies += 1;
-      bilan.details.push({ cle, issue: 'publie', id_distant: masquer(sortie.idDistant) });
+      bilan.details.push({
+        cle,
+        issue: 'publie',
+        id_distant: masquer(sortie.idDistant),
+        ...(sortie.jetonPage ? { jeton_page: sortie.jetonPage } : {}),
+      });
       tracer('[autopost] PUBLIÉ %s %s id=%s', travail.publication_id, travail.canal, masquer(sortie.idDistant));
     } catch (err) {
       const incertain = err?.incertain === true;
@@ -377,11 +406,81 @@ export async function executerPassage({
     }
   }
 
+  /* ── 7. CE QUI NE PARTIRA PLUS NE RESTE PAS « PRÉVU » ─────────────────
+     🔴 L'audit 41 a trouvé 5 lignes Facebook/Instagram en `scheduled` avec un
+     créneau passé depuis des jours (19, 20 et 21/09). Chaque passage les
+     recomptait en `hors_tolerance`, et l'écran les affichait « Prévu » : le
+     gérant pouvait croire qu'elles allaient partir. Un état faux est un faux
+     témoin.
+
+     Elles passent donc en `expired` (l'état « Périmé » de l'écran, prévu par
+     la contrainte de la migration 008), avec le motif ET la cause du dernier
+     essai — la ligne du 20/09 doit continuer de dire `url_media_absente`.
+
+     Ce que ce bloc ne fait PAS :
+       - il ne touche qu'aux lignes que la sélection vient d'écarter pour
+         `hors_tolerance` — donc des canaux PUBLIANTS, `scheduled`, sans
+         témoin, dont le manifeste est valide et le créneau cohérent. Les
+         remises à un humain (`whatsapp_handoff`) n'y passent pas : personne ne
+         sait si le relais a été fait, et « Périmé » serait une autre fausseté ;
+       - il n'écrit que par un UPDATE CONDITIONNEL (`scheduled` et sans
+         `id_distant`) : une ligne prise entre-temps n'est pas écrasée ;
+       - il tourne APRÈS les publications : le temps d'un passage va d'abord à
+         ce qui peut encore partir. */
+  const perimes = decision.ecartes.filter((e) => e.raison === RAISONS.HORS_TOLERANCE);
+  if (perimes.length > 0 && typeof depot.expirer === 'function') {
+    const lues = new Map((file || []).map((l) => [l.cle_idempotence, l]));
+    for (const ecartee of perimes) {
+      const ligne = lues.get(ecartee.cle_idempotence);
+      const cause = ligne?.derniere_erreur?.code_erreur ?? null;
+      const details = {
+        code_erreur: 'creneau_depasse',
+        message_erreur: `Créneau passé sans publication (${ecartee.detail}) : cette ligne ne partira plus.`
+          + (cause ? ` Dernier motif connu : ${cause}.` : ''),
+        piste: 'Rien n\'a été publié. Pour la publier quand même, la reprogrammer : redéposer le '
+          + 'manifeste avec un nouveau créneau (nouvelle version) dans le Drive.',
+        cause_precedente: cause,
+        a_utc: instantUtc,
+      };
+      let fait = false;
+      try {
+        fait = await depot.expirer(ecartee.cle_idempotence, details);
+      } catch (err) {
+        // Une écriture d'état qui échoue ne fait pas tomber le passage : les
+        // publications sont déjà faites. Le passage suivant réessaiera.
+        tracer('[autopost] expiration impossible pour %s : %s', ecartee.cle_idempotence, err?.message);
+      }
+      if (!fait) continue;
+      bilan.expirees.push({
+        cle_idempotence: ecartee.cle_idempotence,
+        publication_id: ecartee.publication_id,
+        canal: ecartee.canal,
+        instant_utc: ecartee.instant_utc,
+        cause_precedente: cause,
+      });
+      await depot.journaliser({
+        instant_utc: instantUtc,
+        cle_idempotence: ecartee.cle_idempotence,
+        publication_id: ecartee.publication_id,
+        canal: ecartee.canal,
+        evenement: 'expiration',
+        resume: `périmée — ${details.message_erreur}`,
+        piste: details.piste,
+      });
+    }
+  }
+
   await depot.journaliser({
-    instant_utc: instantUtc, evenement: 'passage', resume: resumerDecision(decision), bilan,
+    instant_utc: instantUtc,
+    evenement: 'passage',
+    resume: resumerDecision(decision)
+      + (bilan.expirees.length ? ` · ${bilan.expirees.length} ligne(s) passée(s) en périmé` : '')
+      + ` · ${signature}`,
+    bilan,
   });
   return bilan;
 }
+
 
 /** Aiguillage par canal. Le média doit être accessible publiquement par Meta. */
 async function publierUnCanal({ travail, client, depot, cle, comptes = {} }) {

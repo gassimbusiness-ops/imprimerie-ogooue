@@ -194,7 +194,7 @@ import {
   erreurDeMedia, CODES_MEDIA, MOTIFS_MEDIA, cheminAttendu, urlPorteChemin,
 } from './autopost-medias.js';
 import { enParalleleBorne, CONCURRENCE_PAR_DEFAUT } from './concurrence.js';
-import { formaterInstantUtc, dateLocaleDepuisInstantUtc } from '../../src/lib/dates.js';
+import { formaterInstantUtc, dateLocaleDepuisInstantUtc, msDepuisInstantUtc } from '../../src/lib/dates.js';
 
 /**
  * Les états depuis lesquels une ligne peut encore être réécrite ou annulée par
@@ -293,6 +293,117 @@ export const BUDGET_HEBERGEMENT_MS = DUREE_MAX_FONCTION_MS - RESERVE_PUBLICATION
 export const TELEVERSEMENTS_MAX_PAR_PASSAGE = 40;
 
 /**
+ * 🔴🔴 L'IMAGE DU JOUR PASSE EN PREMIER — la leçon des 20 et 21/09/2026.
+ *
+ * ════════════════════════════════════════════════════════════════════════════
+ * CE QUI S'EST PASSÉ (audit 41, mesuré en base, confirmé dans ce code)
+ * ════════════════════════════════════════════════════════════════════════════
+ *
+ * ChatGPT a réécrit les 47 manifestes le matin même. Nouvelle version = nouveau
+ * chemin d'objet = tout est à réhéberger. La boucle parcourait les dossiers
+ * DANS L'ORDRE DU DRIVE (l'ordre des noms) : les 25 s du budget sont parties
+ * sur des images de semaines futures, et l'image du 20/09 a été REPORTÉE.
+ * La ligne du jour est entrée en file sans adresse, l'exécuteur l'a prise,
+ * `url_media_absente` sur Facebook ET Instagram. Le passage du soir est arrivé
+ * hors tolérance. Deux jours perdus, et le 23/09 n'est passé que par chance.
+ *
+ * Le défaut n'était PAS l'ordre « alimenter, puis sélectionner » : la sélection
+ * relit la file en base APRÈS l'alimentation (`lireFile()` dans l'exécuteur),
+ * donc une image hébergée pendant l'alimentation est vue par la sélection du
+ * même passage. Un test le prouve de bout en bout. Le défaut était QUE L'IMAGE
+ * DU JOUR N'ÉTAIT PAS HÉBERGÉE : rien ne la faisait passer devant les autres.
+ *
+ * ════════════════════════════════════════════════════════════════════════════
+ * LA RÈGLE, EN DEUX TEMPS
+ * ════════════════════════════════════════════════════════════════════════════
+ *
+ *   1. **L'ORDRE.** Les publications sont traitées par urgence de créneau, pas
+ *      par nom de dossier : d'abord ce qui part dans les 24 h (ou qui est dû et
+ *      encore dans sa tolérance), puis le reste par créneau croissant, puis ce
+ *      qui ne peut plus partir. Une image à J+10 ne passe jamais devant celle
+ *      du jour.
+ *   2. **LE DÉPASSEMENT, BORNÉ.** Une ligne URGENTE est hébergée même si les
+ *      25 s sont épuisées — mais on n'engage plus AUCUN téléversement au-delà
+ *      de `PLAFOND_URGENCE_MS`. Le reste de la minute appartient à la
+ *      publication.
+ *
+ * ════════════════════════════════════════════════════════════════════════════
+ * D'OÙ VIENNENT LES CHIFFRES
+ * ════════════════════════════════════════════════════════════════════════════
+ *
+ * `RESERVE_PUBLICATION_MS` (35 s) reste la réserve du cas ordinaire. Ce que
+ * l'urgence ne peut JAMAIS entamer, c'est la part mesurée de cette réserve :
+ *
+ *   - **publier Facebook + Instagram a pris jusqu'à ~25 s**. Le 23/09, le
+ *     passage part à 09:53:13 et la publication Instagram est publique à
+ *     09:54:03 (scraper, audit 41 §6), après un hébergement qui avait épuisé
+ *     ses 25 s (8 hébergés, 12 reportés) : ~25 s pour publier, sondages du
+ *     conteneur Instagram compris ;
+ *   - **un téléversement engagé juste avant le plafond va au bout** : 5 s de
+ *     marge pour lui (≈ 2 × la durée moyenne d'un média mesurée le 23/09,
+ *     ~20 s pour 8 médias).
+ *
+ * Soit 30 s gardées, et un plafond d'engagement à 60 − 30 = 30 s. Cinq
+ * secondes de plus que le budget ordinaire : de quoi héberger l'image du jour
+ * quand le listing du Drive a mangé le budget, pas de quoi réhéberger la file.
+ *
+ * ⚠️ Ce qui n'est PAS garanti ici, et qui ne l'était pas avant : aucun appel
+ *    réseau (Drive, stockage, Meta) n'a de délai maximal propre. Un appel qui
+ *    pend fait expirer la fonction quoi qu'on compte. Ce plafond borne ce que
+ *    l'alimentation ENGAGE, pas ce que le réseau rend.
+ */
+export const HORIZON_URGENCE_MS = 24 * 60 * 60 * 1000;
+export const DUREE_PUBLICATION_MESUREE_MS = 25_000;
+export const MARGE_TELEVERSEMENT_EN_COURS_MS = 5_000;
+export const RESERVE_PUBLICATION_MINIMALE_MS = DUREE_PUBLICATION_MESUREE_MS + MARGE_TELEVERSEMENT_EN_COURS_MS;
+export const PLAFOND_URGENCE_MS = DUREE_MAX_FONCTION_MS - RESERVE_PUBLICATION_MINIMALE_MS;
+
+/**
+ * Les rangs d'urgence, dans l'ordre où ils sont servis.
+ *   URGENT   — créneau dans les 24 h, ou dû et encore dans sa tolérance ;
+ *   A_VENIR  — au-delà de 24 h ;
+ *   REVOLU   — tolérance dépassée : ne partira plus, servi en dernier ;
+ *   ILLISIBLE — créneau inexploitable : le contrat l'écartera de toute façon.
+ */
+export const RANGS_URGENCE = Object.freeze({
+  URGENT: 0, A_VENIR: 1, REVOLU: 2, ILLISIBLE: 3,
+});
+
+/**
+ * Le rang d'urgence d'une publication à cet instant. Fonction pure.
+ *
+ * @param {object} publication  le manifeste
+ * @param {number|null} maintenantMs
+ * @param {number} [horizonMs]
+ * @returns {{rang: number, instantMs: number}}
+ */
+export function urgenceDuCreneau(publication, maintenantMs, horizonMs = HORIZON_URGENCE_MS) {
+  const instantMs = msDepuisInstantUtc(normaliserInstant(publication?.creneau?.instant_utc));
+  if (instantMs === null || typeof maintenantMs !== 'number') {
+    return { rang: RANGS_URGENCE.ILLISIBLE, instantMs: Number.POSITIVE_INFINITY };
+  }
+  const tolerance = typeof publication?.creneau?.tolerance_minutes === 'number'
+    ? publication.creneau.tolerance_minutes
+    : TOLERANCE_PAR_DEFAUT;
+  if (maintenantMs > instantMs + tolerance * 60_000) return { rang: RANGS_URGENCE.REVOLU, instantMs };
+  if (instantMs <= maintenantMs + horizonMs) return { rang: RANGS_URGENCE.URGENT, instantMs };
+  return { rang: RANGS_URGENCE.A_VENIR, instantMs };
+}
+
+/**
+ * Les publications du dépôt, rangées par urgence puis par créneau croissant.
+ * À rang et créneau égaux, l'ordre du Drive est conservé (tri stable, et
+ * l'index d'origine en dernier critère) : rien ne bouge sans raison.
+ */
+function ordonnerParUrgence(deposees, maintenantMs, horizonMs) {
+  return deposees
+    .map((depose, index) => ({ depose, index, u: urgenceDuCreneau(depose?.publication, maintenantMs, horizonMs) }))
+    .sort((a, b) => (a.u.rang - b.u.rang)
+      || (a.u.instantMs === b.u.instantMs ? 0 : (a.u.instantMs < b.u.instantMs ? -1 : 1))
+      || (a.index - b.index));
+}
+
+/**
  * Pourquoi un média a été REPORTÉ. Un report n'est PAS une erreur : il est
  * compté (`medias.reportes`) et dit au journal, mais il n'écrit rien dans
  * `derniere_erreur`. Un bandeau rouge pour une décision volontaire serait un
@@ -303,6 +414,10 @@ export const TELEVERSEMENTS_MAX_PAR_PASSAGE = 40;
 export const MOTIFS_REPORT = Object.freeze({
   BUDGET_TEMPS: 'budget_temps_epuise',
   PLAFOND_TELEVERSEMENTS: 'plafond_televersements_atteint',
+  /* Une ligne URGENTE reportée quand même : le plafond d'engagement est
+     atteint, la minute restante appartient à la publication. Motif distinct,
+     parce que c'est le seul report qui peut coûter une publication du jour. */
+  PLAFOND_URGENCE: 'plafond_urgence_atteint',
 });
 
 /**
@@ -561,6 +676,11 @@ function approbationPourLaLigne({
  *   par omission. La valeur par défaut du SYSTÈME, elle, est `true` : elle est
  *   en base, pas ici.
  * @param {string|null} [arg.cleSignature] `AUTOPOST_CLE_APPROBATION`, si posée
+ * @param {number} [arg.plafondUrgenceMs] voir `PLAFOND_URGENCE_MS`
+ * @param {number} [arg.horizonUrgenceMs] voir `HORIZON_URGENCE_MS`
+ * @param {{par: string, utilisateur_id?: string|null}|null} [arg.declencheur]
+ *   qui a demandé ce passage — la tâche planifiée ou un administrateur. Écrit
+ *   dans le journal tel quel ; absent, le journal dit « non précisé ».
  * @param {Date|string} [arg.instant]
  * @param {Function} [arg.tracer]
  * @returns {Promise<object>} bilan de l'alimentation
@@ -571,14 +691,18 @@ export async function alimenterFile({
   medias = null,
   televersementsMax = TELEVERSEMENTS_MAX_PAR_PASSAGE,
   budgetHebergementMs = BUDGET_HEBERGEMENT_MS,
+  plafondUrgenceMs = PLAFOND_URGENCE_MS,
+  horizonUrgenceMs = HORIZON_URGENCE_MS,
   concurrenceLegendes = CONCURRENCE_PAR_DEFAUT,
   horloge = () => Date.now(),
   approbationAutomatique = false,
   cleSignature = null,
+  declencheur = null,
   instant = new Date(),
   tracer = (...a) => console.log(...a),
 }) {
   const instantUtc = typeof instant === 'string' ? instant : formaterInstantUtc(instant);
+  const maintenantMs = msDepuisInstantUtc(instantUtc);
   /* 🔴 Le chronomètre part ICI, pas au premier téléversement. L'alimentation est
      la PREMIÈRE chose que fait un passage (`api/autopost.js`) : le temps déjà
      consommé par le listing du Drive et par la lecture des légendes fait donc
@@ -590,6 +714,7 @@ export async function alimenterFile({
     instant_utc: instantUtc,
     // ⚠️ La date de MOANDA à cet instant, pas celle du serveur Vercel (UTC).
     date_locale_moanda: dateLocaleDepuisInstantUtc(instantUtc),
+    declencheur: declencheur ?? null,
     diagnostic: null,
     message: null,
     detail: null,
@@ -619,8 +744,19 @@ export async function alimenterFile({
       // le plafond — deux gestes différents.
       motif_report: null,
       budget_ms: budgetHebergementMs,
+      // Le plafond d'engagement des lignes urgentes : au-delà, même l'image du
+      // jour attend. Écrit dans le bilan pour que le journal dise sur quoi le
+      // passage a compté.
+      plafond_urgence_ms: plafondUrgenceMs,
       televersements_max: televersementsMax,
       televerses: 0,
+      // Lignes urgentes hébergées APRÈS épuisement du budget ordinaire : le
+      // dépassement a servi, et on le compte.
+      urgents_hors_budget: 0,
+      /* ⛔ Les lignes URGENTES reportées malgré tout. C'est le seul report qui
+         peut coûter une publication du jour : il est nommé ligne par ligne, et
+         le journal le dit en tête, jamais noyé dans « N reporté(s) ». */
+      urgents_reportes: [],
       duree_ms: 0,
       ecartes: [],
     },
@@ -661,7 +797,7 @@ export async function alimenterFile({
    */
   const hebergements = new Map();
   let televersements = 0;
-  const hebergerPour = async (depose, canal) => {
+  const hebergerPour = async (depose, canal, { urgent = false } = {}) => {
     if (!medias) return null;
     /* 🔴 LA CLÉ DU CACHE EST LE CHEMIN DE L'OBJET, PAS LE CANAL.
        Facebook et Instagram publient presque toujours la MÊME affiche : même
@@ -683,17 +819,39 @@ export async function alimenterFile({
        ⛔ Le plafond se compte en TÉLÉVERSEMENTS RÉELS, pas en tentatives : un
        média déjà hébergé ne coûte qu'une question au bucket et ne doit pas
        consommer le droit de déposer celui qui suit. Le temps, lui, se compte
-       toujours : une question au bucket prend du temps elle aussi. */
-    const motifReport = ecoule() >= budgetHebergementMs
-      ? MOTIFS_REPORT.BUDGET_TEMPS
-      : (televersements >= televersementsMax ? MOTIFS_REPORT.PLAFOND_TELEVERSEMENTS : null);
+       toujours : une question au bucket prend du temps elle aussi.
+
+       🔴 UNE LIGNE URGENTE (créneau dans les 24 h) NE S'ARRÊTE PAS AU BUDGET
+       ORDINAIRE : elle s'arrête au plafond d'engagement `PLAFOND_URGENCE_MS`,
+       qui garde intacte la part MESURÉE de la réserve de publication. C'est la
+       correction du 20/09 : l'image du jour ne doit plus attendre derrière le
+       budget d'une autre. Voir `PLAFOND_URGENCE_MS`. */
+    const ecouleMs = ecoule();
+    let motifReport = null;
+    if (urgent) {
+      if (ecouleMs >= plafondUrgenceMs) motifReport = MOTIFS_REPORT.PLAFOND_URGENCE;
+    } else if (ecouleMs >= budgetHebergementMs) {
+      motifReport = MOTIFS_REPORT.BUDGET_TEMPS;
+    }
+    if (!motifReport && televersements >= televersementsMax) {
+      motifReport = MOTIFS_REPORT.PLAFOND_TELEVERSEMENTS;
+    }
     if (motifReport) {
       bilan.medias.reportes += 1;
       bilan.medias.motif_report = bilan.medias.motif_report || motifReport;
-      tracer('[autopost] média reporté au prochain passage (%s, %d ms écoulées) : %s',
-        motifReport, ecoule(), cleH);
+      if (urgent) {
+        bilan.medias.urgents_reportes.push({
+          publication_id: depose?.publication?.publication_id ?? null,
+          canal,
+          instant_utc: depose?.publication?.creneau?.instant_utc ?? null,
+          motif: motifReport,
+        });
+      }
+      tracer('[autopost] média%s reporté au prochain passage (%s, %d ms écoulées) : %s',
+        urgent ? ' URGENT' : '', motifReport, ecouleMs, cleH);
       return null;
     }
+    if (urgent && ecouleMs >= budgetHebergementMs) bilan.medias.urgents_hors_budget += 1;
 
     let resultat;
     try {
@@ -806,9 +964,13 @@ export async function alimenterFile({
     }
   });
 
-  /* ── 3. UNE PUBLICATION À LA FOIS ─────────────────────────────────────── */
-  for (const depot_ of deposees) {
+  /* ── 3. UNE PUBLICATION À LA FOIS — LA PLUS URGENTE D'ABORD ─────────────
+     🔴 Plus dans l'ordre des dossiers du Drive. Le 20/09, cet ordre a fait
+     passer 30 dossiers de semaines futures devant celui du jour, et le budget
+     d'hébergement est mort avant de l'atteindre. Voir `PLAFOND_URGENCE_MS`. */
+  for (const { depose: depot_, u: urgence } of ordonnerParUrgence(deposees, maintenantMs, horizonUrgenceMs)) {
     const pub = depot_?.publication;
+    const urgent = urgence.rang === RANGS_URGENCE.URGENT;
 
     // Le contrat, à la lettre, et importé — jamais recopié. Une seconde liste
     // de règles, ce sont deux vérités, et un jour le poster publie ce que le
@@ -979,7 +1141,7 @@ export async function alimenterFile({
         });
         const media = (existante.url_media && !mediaChange)
           ? null
-          : await hebergerPour(depot_, canal.canal);
+          : await hebergerPour(depot_, canal.canal, { urgent });
         const champsMedia = champsDuMedia(media, existante, instantUtc, { mediaChange });
 
         if (depotInchange && !champsMedia) {
@@ -1047,7 +1209,7 @@ export async function alimenterFile({
       // 🔴 Le média est demandé AVANT l'insertion : une ligne qui naîtrait sans
       //    adresse alors que le fichier est hébergeable attendrait le passage
       //    suivant pour rien.
-      const mediaNeuf = await hebergerPour(depot_, canal.canal);
+      const mediaNeuf = await hebergerPour(depot_, canal.canal, { urgent });
       const issue = await depot.inserer({
         cle_idempotence: cle,
         publication_id: pub.publication_id,
@@ -1116,19 +1278,29 @@ async function journaliserSiUtile({ depot, bilan, instantUtc, force = false }) {
   // dans ce calcul, le passage qui débloque enfin une publication resterait
   // muet au journal.
   const a = bilan.approbation_auto || { reglage: 'desactivee', posees: 0, refusees: [] };
+  const urgentsReportes = m.urgents_reportes?.length || 0;
   const change = bilan.creees + bilan.mises_a_jour + bilan.remplacees
     + (m.heberges || 0) + (m.ecartes?.length || 0)
     // Une approbation posée par la machine est un changement qui se dit, même
     // si rien d'autre n'a bougé : c'est la chaîne qui décide à la place du
     // gérant, et ça ne se fait pas en silence.
-    + (a.posees || 0) + (a.refusees?.length || 0);
+    + (a.posees || 0) + (a.refusees?.length || 0)
+    // ⛔ Une image urgente restée sans adresse se dit TOUJOURS : c'est une
+    //    publication du jour qui risque de ne pas partir.
+    + urgentsReportes;
   const pannne = bilan.diagnostic && !['ok', 'dossier_vide'].includes(bilan.diagnostic);
   if (!force && change === 0 && !pannne) return;
 
   await depot.journaliser({
     instant_utc: instantUtc,
     evenement: 'alimentation',
-    resume: `Drive → file : ${bilan.creees} créée(s), ${bilan.mises_a_jour} mise(s) à jour, `
+    resume: (urgentsReportes
+      ? `⚠️ ${urgentsReportes} média(s) URGENT(S) — créneau dans les 24 h — sans adresse à ce passage `
+        // Six noms au plus dans la phrase : la liste complète est dans `bilan`.
+        + `(${m.urgents_reportes.slice(0, 6).map((u) => `${u.publication_id} ${u.canal}`).join(', ')}`
+        + `${urgentsReportes > 6 ? `, et ${urgentsReportes - 6} autre(s)` : ''}) · `
+      : '')
+      + `Drive → file : ${bilan.creees} créée(s), ${bilan.mises_a_jour} mise(s) à jour, `
       + `${bilan.remplacees} remplacée(s), ${bilan.inchangees} inchangée(s), `
       + `${bilan.ecartees.length} écartée(s)`
       + (bilan.conflits ? `, ${bilan.conflits} conflit(s) d'écriture` : '')
@@ -1138,15 +1310,48 @@ async function journaliserSiUtile({ depot, bilan, instantUtc, force = false }) {
         ? `, ${m.reportes} reporté(s) au prochain passage (${m.motif_report}, `
           + `${m.duree_ms} ms sur un budget de ${m.budget_ms} ms)`
         : '')
+      + (m.urgents_hors_budget
+        ? `, ${m.urgents_hors_budget} urgent(s) traité(s) après le budget ordinaire`
+        : '')
       // Le journal est lu par le gérant, pas par une machine : la phrase est en
       // français. Le code (`activee`) reste dans `bilan`, où il se relit.
       + ` · approbation automatique ${a.reglage === 'activee' ? 'activée' : 'désactivée'}`
       + ` : ${a.posees || 0} posée(s)`
       + (a.humaines_respectees ? `, ${a.humaines_respectees} décision(s) humaine(s) respectée(s)` : '')
-      + (a.refusees?.length ? `, ${a.refusees.length} refusée(s) par le contrat` : ''),
-    piste: pannne ? bilan.message : null,
+      + (a.refusees?.length ? `, ${a.refusees.length} refusée(s) par le contrat` : '')
+      + ` · ${phraseDeclencheur(bilan.declencheur)}`,
+    piste: pannne ? bilan.message : (urgentsReportes
+      ? 'Le plafond de temps du passage était atteint : le prochain passage réessaiera en '
+        + 'premier. Si le créneau tombe avant, la publication ne partira pas — relancer un '
+        + 'passage depuis l\'écran.'
+      : null),
     bilan,
   });
+}
+
+/**
+ * ⛔ QUI A DÉCLENCHÉ UN PASSAGE — la question que l'audit 41 n'a pas pu trancher
+ * autrement qu'en devinant d'après les heures (§2 : « lecture cron ou manuel
+ * SUPPOSÉE »). `autorisationTick()` le savait déjà ; le journal ne l'écrivait pas.
+ *
+ * Deux déclencheurs, et deux seulement — ceux que `api/autopost.js` admet :
+ *   `cron`  — la tâche planifiée Vercel, qui présente `CRON_SECRET` ;
+ *   `admin` — un administrateur connecté, identifié par l'identifiant de sa
+ *             session signée (jamais par ce qu'un corps de requête affirme).
+ */
+export const DECLENCHEURS = Object.freeze({ CRON: 'cron', ADMIN: 'admin' });
+
+/**
+ * La phrase du journal, lue par le gérant.
+ * @param {{par?: string, utilisateur_id?: string|null}|null} declencheur
+ * @returns {string}
+ */
+export function phraseDeclencheur(declencheur) {
+  if (declencheur?.par === DECLENCHEURS.CRON) return 'déclenché par la tâche planifiée';
+  if (declencheur?.par === DECLENCHEURS.ADMIN) {
+    return `déclenché par un administrateur (${declencheur.utilisateur_id || 'identifiant inconnu'})`;
+  }
+  return 'déclencheur non précisé';
 }
 
 export { empreinteDepot };

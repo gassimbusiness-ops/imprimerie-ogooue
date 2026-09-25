@@ -506,7 +506,7 @@ export function creerClientMeta({
       /* ⛔ D'ABORD LE BON TYPE DE JETON, ENSUITE SEULEMENT L'APPEL QUI PUBLIE.
          Si l'échange échoue, il lève ici : aucune photo n'est envoyée, et le
          motif dit lequel des trois gestes Meta il reste à faire. */
-      const { jeton: jetonPage } = await jetonDePage(pageId);
+      const { jeton: jetonPage, echange } = await jetonDePage(pageId);
       const reponse = await graph(`${pageId}/photos`, {
         methode: 'POST',
         parametres: { url: urlMedia, caption: legende, published: 'true' },
@@ -524,7 +524,16 @@ export function creerClientMeta({
       }
       // `pageId` repart avec le résultat pour que la RELECTURE emprunte le même
       // jeton (déjà en cache : aucun appel d'échange supplémentaire).
-      return { idDistant, idConteneur: null, pageId: String(pageId), brut: reponse };
+      return {
+        idDistant,
+        idConteneur: null,
+        pageId: String(pageId),
+        /* ⛔ D'OÙ VENAIT LE JETON DE PAGE, EN UN MOT — pour le journal. L'audit
+           41 (§4) n'a pu que le SUPPOSER. Ni le jeton, ni un fragment, ni une
+           longueur : `echange` ou `deja_jeton_de_page`, et rien d'autre. */
+        jetonPage: echange ? 'echange' : 'deja_jeton_de_page',
+        brut: reponse,
+      };
     },
 
     /**

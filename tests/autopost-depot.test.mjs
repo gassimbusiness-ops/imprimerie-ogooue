@@ -185,3 +185,63 @@ test('lireArretGlobal et lireReglages lisent la MÊME ligne — deux noms, un se
   assert.deepEqual(await depot.lireArretGlobal(), await depot.lireReglages(),
     'deux vérités sur le même interrupteur, ce serait une de trop');
 });
+
+/* ═══ LA BOMBE À RETARDEMENT DE LA FILE ═══════════════════════════════════
+   Trouvée le 25/09/2026. `lireFile()` rend les 50 lignes `scheduled` les plus
+   ANCIENNES. Les remises WhatsApp ne quittent jamais cet état et s'accumulent
+   en tête de file, une par jour. Vers le 8 novembre, les 50 lignes lues
+   auraient toutes été des remises périmées : les publications du jour, hors
+   de la fenêtre, n'auraient plus été vues. Arrêt silencieux de l'auto-post.
+
+   Ce test utilise une doublure qui APPLIQUE vraiment les filtres, le tri et la
+   limite — une doublure qui se contente de les noter ne verrait rien. */
+
+function tableEnMemoire(lignes) {
+  return {
+    from() {
+      let res = [...lignes];
+      let lim = Infinity;
+      const chaine = {
+        select() { return chaine; },
+        eq(c, v) { res = res.filter((l) => l[c] === v); return chaine; },
+        in(c, v) { res = res.filter((l) => v.includes(l[c])); return chaine; },
+        order(c, { ascending = true } = {}) {
+          res.sort((a, b) => (a[c] < b[c] ? -1 : a[c] > b[c] ? 1 : 0) * (ascending ? 1 : -1));
+          return chaine;
+        },
+        limit(n) { lim = n; return chaine; },
+        then(ok, ko) { return Promise.resolve({ data: res.slice(0, lim), error: null }).then(ok, ko); },
+      };
+      return chaine;
+    },
+  };
+}
+
+test('bombe à retardement : 60 remises WhatsApp périmées ne masquent PAS la publication du jour', async () => {
+  // 60 jours de remises WhatsApp, toutes plus anciennes que la publication du jour.
+  const lignes = [];
+  for (let j = 0; j < 60; j += 1) {
+    const jour = new Date(Date.UTC(2026, 8, 19 + j, 8)).toISOString().replace('.000', '');
+    lignes.push({ cle_idempotence: `WA-${j}`, canal: 'whatsapp_handoff', etat: 'scheduled', instant_utc: jour });
+  }
+  const aujourdhui = '2026-11-20T08:00:00Z';
+  lignes.push({ cle_idempotence: 'IG-JOUR', canal: 'instagram', etat: 'scheduled', instant_utc: aujourdhui });
+  lignes.push({ cle_idempotence: 'FB-JOUR', canal: 'facebook', etat: 'scheduled', instant_utc: aujourdhui });
+
+  const file = await depotSupabaseAutopost(tableEnMemoire(lignes)).lireFile({ limite: 50 });
+  const cles = file.map((l) => l.cle_idempotence);
+
+  assert.ok(cles.includes('IG-JOUR'),
+    'la publication Instagram du jour a été poussée hors de la fenêtre par des remises WhatsApp périmées');
+  assert.ok(cles.includes('FB-JOUR'), 'idem pour Facebook');
+  assert.ok(!cles.some((c) => c.startsWith('WA-')),
+    'l\'exécuteur ne fait rien des remises WhatsApp : il ne doit pas les charger');
+});
+
+test('la lecture de la file ne demande que les canaux qui publient', async () => {
+  const supabase = supabaseFactice({ data: [], error: null });
+  await depotSupabaseAutopost(supabase).lireFile();
+  const req = supabase.requetes[0];
+  assert.deepEqual(filtre(req, 'in', 'canal')?.[2], ['facebook', 'instagram']);
+  assert.equal(filtre(req, 'eq', 'etat')?.[2], 'scheduled');
+});

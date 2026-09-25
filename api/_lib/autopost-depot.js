@@ -35,6 +35,7 @@
  */
 
 import { ETATS_MODIFIABLES } from './autopost-alimentation.js';
+import { CANAUX_PUBLIANTS } from './autopost-contrat.js';
 import { formaterInstantUtc } from '../../src/lib/dates.js';
 
 export const TABLE_FILE = 'autopost_file';
@@ -133,11 +134,27 @@ export function depotSupabaseAutopost(supabase) {
       return this.lireReglages();
     },
 
+    /* ⛔ UNE BOMBE À RETARDEMENT, DÉSAMORCÉE LE 25/09/2026.
+       Cette lecture rend les `limite` lignes `scheduled` les plus ANCIENNES. Or
+       les remises à un humain (`whatsapp_handoff`) ne quittent JAMAIS cet état :
+       l'exécuteur ne les publie pas, ne les expire pas — personne ne sait si le
+       relais a été fait, et « Périmé » serait une fausseté.
+
+       Une par jour s'accumule donc, en tête de file puisqu'elles sont les plus
+       anciennes. Au 25/09, il y en avait déjà 7. Vers le 8 novembre, les 50
+       lignes lues auraient TOUTES été des remises WhatsApp périmées — et les
+       publications Facebook/Instagram du jour, hors de la fenêtre, n'auraient
+       plus jamais été vues. L'auto-post se serait arrêté SANS UN BRUIT : aucune
+       erreur, aucun échec, juste plus rien.
+
+       L'exécuteur ne fait rien des remises WhatsApp : il ne lit donc plus que
+       les canaux qui publient. Leur état n'est pas touché. */
     async lireFile({ limite = 50 } = {}) {
       const { data, error } = await supabase
         .from(TABLE_FILE)
         .select(COLONNES)
         .eq('etat', 'scheduled')
+        .in('canal', [...CANAUX_PUBLIANTS])
         .order('instant_utc', { ascending: true })
         .limit(limite);
       if (error) throw new Error(`lecture ${TABLE_FILE} : ${error.message}`);
@@ -355,6 +372,31 @@ export function depotSupabaseAutopost(supabase) {
         })
         .eq('cle_idempotence', cle);
       if (error) throw new Error(`publication ${TABLE_FILE} : ${error.message}`);
+    },
+
+    /**
+     * Passe en `expired` une ligne dont le créneau est passé hors tolérance.
+     *
+     * ⛔ CONDITIONNEL DANS L'INSTRUCTION : ne mord que sur une ligne ENCORE
+     * `scheduled` et SANS témoin. Une ligne prise par un autre passage entre la
+     * sélection et cette écriture n'est pas écrasée ; une ligne partie non plus.
+     * `expired` est un état prévu par la contrainte de la migration 008 — rien
+     * n'est inventé en base.
+     */
+    async expirer(cle, details) {
+      const { data, error } = await supabase
+        .from(TABLE_FILE)
+        .update({
+          etat: 'expired',
+          derniere_erreur: details ?? null,
+          updated_at: formaterInstantUtc(new Date()),
+        })
+        .eq('cle_idempotence', cle)
+        .eq('etat', 'scheduled')
+        .is('id_distant', null)
+        .select('cle_idempotence');
+      if (error) throw new Error(`expiration ${TABLE_FILE} : ${error.message}`);
+      return (data || []).length === 1;
     },
 
     /**
