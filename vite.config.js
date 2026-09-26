@@ -2,6 +2,7 @@ import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
 import { VitePWA } from 'vite-plugin-pwa'
 import path from 'path'
+import { NAVIGATIONS_HORS_APPLICATION } from './src/lib/pages-publiques.js'
 
 export default defineConfig({
   define: {
@@ -46,6 +47,13 @@ export default defineConfig({
       workbox: {
         maximumFileSizeToCacheInBytes: 5 * 1024 * 1024,
         globPatterns: ['**/*.{js,css,html,png,svg,ico,woff,woff2}'],
+        // L'icone destinee au tableau de bord Meta (1024 px, ~200 Ko) n'a rien a
+        // faire dans le cache de chaque telephone : elle est servie, pas precachee.
+        globIgnores: ['**/node_modules/**/*', '**/icone-meta-1024.png'],
+        // Les pages legales declarees a Meta, sous leur chemin propre : le
+        // service worker les laisse au reseau au lieu de servir l'application.
+        // Voir src/lib/pages-publiques.js.
+        navigateFallbackDenylist: NAVIGATIONS_HORS_APPLICATION,
         runtimeCaching: [
           {
             urlPattern: /^https:\/\/fonts\.googleapis\.com\/.*/i,

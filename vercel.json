@@ -190,6 +190,18 @@
       "destination": "/suppression-donnees.html"
     },
     {
+      "source": "/politique-confidentialite",
+      "destination": "/confidentialite.html"
+    },
+    {
+      "source": "/conditions-utilisation",
+      "destination": "/conditions.html"
+    },
+    {
+      "source": "/suppression-donnees",
+      "destination": "/suppression-donnees.html"
+    },
+    {
       "source": "/api/(.*)",
       "destination": "/api/$1"
     },
