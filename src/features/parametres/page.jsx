@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { todayISO } from '@/lib/dates';
+import { exporterToutesLesCollections } from '@/services/sauvegarde';
 
 const ROLE_OPTIONS = [
   { value: 'admin', label: 'Administrateur', color: 'bg-violet-100 text-violet-700' },
@@ -201,19 +202,10 @@ export default function Parametres() {
   const handleExportAll = async () => {
     setExporting(true);
     try {
-      const collections = [
-        'employes', 'clients', 'commandes', 'devis', 'factures', 'produits',
-        'rapports', 'stocks', 'comptes_bancaires', 'mouvements_financiers',
-        'charges_fixes', 'dettes', 'dettes_associes', 'remboursements_associes',
-        'apports_associes', 'investisseurs', 'actionnaires', 'investissements',
-        'pointages', 'demandes_rh', 'performances_employes', 'taches',
-        'projets_travaux', 'etapes_travaux', 'paiements_mobile', 'paiements_singpay',
-        'notifications_app', 'gouvernance_parametres', 'tarifs_clients', 'evenements',
-      ];
-      const dump = { _exported_at: new Date().toISOString(), _app: 'imprimerie-ogooue' };
-      for (const col of collections) {
-        try { dump[col] = await db[col].list(); } catch { dump[col] = []; }
-      }
+      /* ⛔ Plus de liste écrite à la main : elle avait divergé de la base (le
+         journal, le stock et le catalogue n'étaient pas sauvegardés, et les
+         paiements sortaient vides). Voir src/services/sauvegarde.js. */
+      const { dump, erreurs, comptes } = await exporterToutesLesCollections();
       const blob = new Blob([JSON.stringify(dump, null, 2)], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -223,8 +215,19 @@ export default function Parametres() {
       a.download = `sauvegarde-ogooue-${todayISO()}.json`;
       a.click();
       URL.revokeObjectURL(url);
-      await logAction('export', 'parametres', { details: 'Export complet des données (sauvegarde)' });
-      toast.success('Sauvegarde téléchargée');
+      const illisibles = Object.keys(erreurs);
+      const total = Object.values(comptes).reduce((a, b) => a + b, 0);
+      await logAction('export', 'parametres', {
+        details: `Export complet : ${Object.keys(comptes).length} collections, ${total} lignes`
+          + (illisibles.length ? ` — ${illisibles.length} ILLISIBLE(S) : ${illisibles.join(', ')}` : ''),
+      });
+      // Une sauvegarde incomplète ne doit JAMAIS s'afficher en vert.
+      if (illisibles.length) {
+        toast.error(`Sauvegarde INCOMPLÈTE : ${illisibles.join(', ')} n'ont pas pu être lues. `
+          + 'Le fichier les signale dans « _erreurs ». Recommencez avec une meilleure connexion.', { duration: 15000 });
+      } else {
+        toast.success(`Sauvegarde téléchargée : ${Object.keys(comptes).length} collections, ${total} lignes`);
+      }
     } catch (e) {
       console.error('[Export] Erreur:', e);
       toast.error('Échec de l\'export');
