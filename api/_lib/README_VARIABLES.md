@@ -23,6 +23,7 @@
 | `CRON_SECRET` | authentifier les tâches planifiées Vercel sur `/api/autopost-tick` | **toute tâche planifiée est refusée — voulu** |
 | `GOOGLE_SERVICE_ACCOUNT_EMAIL` · `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY` · `DRIVE_DOSSIER_PUBLICATIONS_ID` | lire le dossier `10_PUBLICATIONS/` du Drive en lecture seule | pas de lecture du Drive ; le dépôt se fait depuis l'application |
 | `CHATGPT_BRIDGE_TOKEN` | ouvrir le pont de lecture `/api/chatgpt-*` à un GPT personnalisé (`api/chatgpt.js`) | **503 sur toutes les voies — le pont ne sert rien, y compris son schéma. Voulu.** |
+| `TELEGRAM_BOT_TOKEN` · `TELEGRAM_CHAT_ID` | envoyer les alertes caisse / stock dans le groupe Telegram « OGOOUÉ Alertes » (`api/_lib/telegram.js`, appelé en fin de passage de l'auto-post). Mode d'emploi : `livrables_claude/42_ALERTES_TELEGRAM.md` | **Telegram inactif — aucun appel réseau. Les alertes restent dans l'application, et le tableau de bord affiche « Telegram non configuré ». Voulu.** Il faut les DEUX. Jamais de préfixe `VITE_`. |
 
 ## Le pont ChatGPT
 

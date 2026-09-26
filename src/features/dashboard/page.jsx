@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo } from 'react';
+import { useState, useCallback, useMemo, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { db } from '@/services/db';
 import { toISODate, todayISO, startOfMonthISO } from '@/lib/dates';
@@ -7,6 +7,11 @@ import {
   ACTIVITE_IMPRIMERIE, ACTIVITE_PAPETERIE, libelleActivite, repartirParActivite,
 } from '@/services/activites';
 import { useAuth } from '@/services/auth';
+import { phraseTelegram, ligneEtatVerification } from '@/services/alertes-etat';
+import { lireEtatAlertes } from '@/services/alertes-lecture';
+// La regle d'alerte n'existe qu'a UN endroit, partage avec le passage planifie
+// qui envoie sur Telegram : l'ecran ne peut pas dire autre chose que Telegram.
+import { evaluerAlertes, libelleJour } from '../../../api/_lib/alertes.js';
 import { useChargeur } from '@/services/chargement';
 import { EnChargement, EchecChargement } from '@/features/partages/etat-chargement';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -233,6 +238,9 @@ export default function Dashboard() {
           </Button>
         </Link>
       </div>
+
+      {/* Alertes automatiques (caisse, stock) — meme regle que Telegram */}
+      <CarteAlertes rapports={rapports} produits={produits} />
 
       {/* Stats — employés: pas de données financières */}
       {isEmploye ? (
@@ -529,6 +537,70 @@ export default function Dashboard() {
         </Card>
       )}
     </div>
+  );
+}
+
+/**
+ * Les alertes actives, et ce que le passage planifié en a fait.
+ *
+ * ⚠️ Les silences sont dits en clair (`ligneEtatVerification`), et l'absence
+ * de seuil confirmé aussi : chacun ressemble à « tout va bien » s'il se tait.
+ */
+function CarteAlertes({ rapports, produits }) {
+  const [serveur, setServeur] = useState({ chargement: true, erreur: null, etat: null, traces: [], disponible: false });
+
+  useEffect(() => {
+    let vivant = true;
+    lireEtatAlertes()
+      .then((r) => { if (vivant) setServeur({ chargement: false, erreur: null, ...r }); })
+      .catch((e) => { if (vivant) setServeur({ chargement: false, erreur: String(e?.message || e), etat: null, traces: [], disponible: false }); });
+    return () => { vivant = false; };
+  }, []);
+
+  const evaluation = useMemo(
+    () => evaluerAlertes({ rapports, produits, instant: new Date() }),
+    [rapports, produits],
+  );
+
+  const traceDe = (a) => serveur.traces.find((t) => (a.id ? t.alerte_id === a.id : (t.cle_episode === a.cle_episode && !t.resolue_le)));
+
+  const ligne = ligneEtatVerification(serveur);
+  const alertes = evaluation.alertes;
+
+  return (
+    <Card className={alertes.length ? 'border-l-4 border-l-red-500' : ''}>
+      <CardHeader className="pb-2">
+        <CardTitle className="flex items-center gap-2 text-base">
+          <AlertTriangle className={`h-4 w-4 ${alertes.length ? 'text-red-600' : 'text-muted-foreground'}`} />
+          Alertes automatiques
+          <Badge variant={alertes.length ? 'destructive' : 'secondary'} className="ml-auto">{alertes.length}</Badge>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        {alertes.length === 0 ? (
+          <p className="text-sm text-muted-foreground">
+            Aucune alerte. Caisses suivies :{' '}
+            {evaluation.caisses.filter((c) => c.suivie).map((c) => `${libelleActivite(c.activite)} (dernier rapport ${libelleJour(c.dernier_rapport)})`).join(' · ') || 'aucune'}.
+          </p>
+        ) : alertes.map((a) => {
+          const trace = traceDe(a);
+          return (
+            <Link key={a.id || a.cle_episode} to={a.lien} className="block rounded-lg bg-red-50 p-3 hover:bg-red-100">
+              <p className="text-sm font-semibold text-red-800">{a.gravite === 'haute' ? '🔴' : '🟠'} {a.titre}</p>
+              <p className="mt-0.5 text-xs text-red-900">{a.message}</p>
+              <p className="mt-1 text-[11px] text-muted-foreground">{phraseTelegram(trace)}</p>
+            </Link>
+          );
+        })}
+        <p className={`text-[11px] ${ligne.alarme ? 'font-semibold text-amber-700' : 'text-muted-foreground'}`}>
+          {ligne.texte}
+        </p>
+        <p className="text-[11px] text-muted-foreground">
+          Stock : {evaluation.seuils.confirmes} article(s) sur {evaluation.seuils.total} avec un seuil confirmé.
+          {evaluation.seuils.confirmes === 0 ? ' Aucune alerte de stock ne peut partir : ouvrir l’article dans « Stocks », vérifier « Seuil min », enregistrer.' : ''}
+        </p>
+      </CardContent>
+    </Card>
   );
 }
 

@@ -62,7 +62,9 @@ const emptyForm = {
   nom: '', reference: '', categorie: 'Papiers', description: '',
   fournisseur: '', fournisseur_contact: '',
   prix_unitaire: '', unite: 'unité',
-  quantite: '', quantite_minimum: 10,
+  // Aucun seuil par defaut (26/09/2026) : un seuil devine est une fausse
+  // alerte ou un silence. Vide = aucune alerte tant que le gerant n'en pose pas.
+  quantite: '', quantite_minimum: '',
   emplacement: '', masque: false, actif: true,
   type_article: 'consommable',
   // A quel commerce appartient l'article. Les 45 articles deja en base n'ont
@@ -373,6 +375,12 @@ export default function Stocks() {
       masque: form.masque,
       actif: form.actif,
       type_article: form.type_article || 'consommable',
+      /* LE TEMOIN HUMAIN DU SEUIL (26/09/2026). Les alertes automatiques
+         (application + Telegram, api/_lib/alertes.js) n'ecoutent QUE les seuils
+         enregistres ici, champ « Seuil min » sous les yeux : les 45 seuils
+         herites (26 forces a 10 par l'ancien ecran, cf. migration 002) ne
+         declenchent rien tant que le gerant ne les a pas confirmes. */
+      seuil_confirme_le: (Number(form.quantite_minimum) || 0) > 0 ? new Date().toISOString() : null,
     };
     // Sans activite sur l'article, l'inventaire des deux commerces est un seul
     // tas : ni la valeur du stock, ni les seuils d'alerte ne peuvent etre lus
@@ -847,6 +855,10 @@ export default function Stocks() {
                 <Input type="number" value={form.quantite_minimum} onChange={(e) => setForm({ ...form, quantite_minimum: e.target.value })} />
               </div>
             </div>
+            <p className="-mt-1 text-[11px] text-muted-foreground">
+              Enregistrer confirme ce seuil : quand le stock passera dessous (ou l'atteindra),
+              une alerte partira dans l'application et sur Telegram. Vide ou 0 = aucune alerte.
+            </p>
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <label className="mb-1.5 block text-sm font-medium">Unité</label>

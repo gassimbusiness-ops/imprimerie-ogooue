@@ -130,6 +130,7 @@ import { alimenterFile, DECLENCHEURS } from './_lib/autopost-alimentation.js';
 import { traiterApprobation, cleSignatureApprobation } from './_lib/autopost-approbation.js';
 import { creerHebergeurMedias, stockageSupabase } from './_lib/autopost-medias.js';
 import { sonderDrive, lireConfigurationDrive, creerClientDrive, DIAGNOSTICS, MESSAGES } from './_lib/drive.js';
+import { verifierAlertesDuPassage } from './_lib/alertes-envoi.js';
 
 /** Voies servies par ce point d'entrée. */
 export const VOIES_AUTOPOST = Object.freeze(['tick', 'etat', 'alimenter', 'approuver']);
@@ -225,6 +226,7 @@ export function creerGestionnaireAutopost({
   maintenant = () => new Date(),
   sonde = sonderDrive,
   alimente = null,
+  alertes = verifierAlertesDuPassage,
 } = {}) {
   /**
    * ⛔ LE MAILLON QUI MANQUAIT — le Drive devient des lignes de file.
@@ -548,6 +550,7 @@ export function creerGestionnaireAutopost({
     try {
       const depot = depotFourni || depotSupabaseAutopost(supabaseAdmin());
       const client = clientFourni || creerClientMeta();
+      const debutPassageMs = Date.now();
 
       /* ⛔ L'ORDRE COMPTE : on remplit la file AVANT de la regarder. Sinon une
          publication déposée il y a dix minutes attendrait le passage suivant,
@@ -563,6 +566,14 @@ export function creerGestionnaireAutopost({
         options: { declencheur },
       });
       bilan.alimentation = alimentation;
+      /* ⛔ LES ALERTES (caisse, stock) — APRÈS la publication, jamais avant, et
+         enveloppées : une panne d'alerte ne doit JAMAIS empêcher de publier ni
+         faire échouer le passage. `verifierAlertesDuPassage()` ne lève pas et
+         se borne au temps qui reste de la minute ; ce `.catch` est le filet du
+         filet. Voir `api/_lib/alertes-envoi.js`. */
+      bilan.alertes = await Promise.resolve()
+        .then(() => alertes({ instant, debutMs: debutPassageMs }))
+        .catch(() => ({ statut: 'panne', motif: 'vérification des alertes impossible' }));
       return res.status(200).json({ ok: true, declenche_par: droit.autorise ? 'cron' : 'admin', bilan });
     } catch (err) {
       console.error('[autopost] passage en échec :', err?.message);
