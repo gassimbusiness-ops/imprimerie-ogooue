@@ -34,6 +34,7 @@
 import crypto from 'node:crypto';
 import { supabaseAdmin } from './supabase-admin.js';
 import { hacherMotDePasse, genererSel } from './session.js';
+import { ligneAppData } from '../../src/services/ligne-app-data.js';
 import {
   assainir,
   auteurDepuisSessionServeur,
@@ -192,8 +193,10 @@ export function depotSupabase() {
     },
 
     async insererEmploye(id, donnees) {
+      // `ligneAppData` REFUSE un `donnees.id` différent de `id` : un employé
+      // à deux identifiants ne se modifierait plus depuis l'écran.
       const { error } = await sb().from('app_data')
-        .insert({ id, collection: 'employes', data: donnees });
+        .insert(ligneAppData({ id, collection: 'employes', data: donnees }));
       if (error) throw new Error(error.message);
     },
 
@@ -257,10 +260,9 @@ export function depotSupabase() {
     },
 
     async ecrireJournal(entree) {
-      const id = crypto.randomUUID();
-      await sb().from('app_data').insert({
-        id, collection: 'audit_logs', data: { ...entree, id },
-      });
+      await sb().from('app_data').insert(ligneAppData({
+        collection: 'audit_logs', data: { ...entree, id: crypto.randomUUID() },
+      }));
     },
   };
 }

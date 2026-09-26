@@ -17,6 +17,7 @@
  */
 import { getSingPayHeaders, getPaiementEndpoint, SINGPAY_BASE_URL } from '../../src/lib/singpayAuth.js';
 import { controlerPlafond } from './singpay-encaissement.js';
+import { ligneAppData } from '../../src/services/ligne-app-data.js';
 import { createClient } from '@supabase/supabase-js';
 
 const supabase = createClient(
@@ -217,11 +218,13 @@ export default async function handler(req, res) {
     // ── Persistance dans Supabase (en best-effort : si echec, on log mais on continue
     //    car la transaction SingPay est deja creee et le frontend va polling le statut)
     try {
-      await supabase.from('app_data').insert({
-        id: crypto.randomUUID(),
+      // UN identifiant pour la colonne et pour `data.id` (voir
+      // src/services/ligne-app-data.js). Le rappel SingPay, lui, retrouve le
+      // paiement par `payment_reference` / `singpay_transaction_id`, jamais par
+      // cet identifiant-ci.
+      await supabase.from('app_data').insert(ligneAppData({
         collection: 'paiements_singpay',
         data: {
-          id: crypto.randomUUID(),
           commande_id: commandeId,
           singpay_transaction_id: transactionId,
           payment_reference: reference,
@@ -238,7 +241,7 @@ export default async function handler(req, res) {
         },
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
-      });
+      }));
 
       // Mise a jour de la commande
       const { data: cmdRow } = await supabase

@@ -7,6 +7,7 @@ import { apiFetch } from './api-client';
 import { ErreurEcriture } from './erreur-ecriture';
 import { ErreurLecture } from './erreur-lecture';
 import { LIBELLES_COLLECTION } from './erreur-ecriture';
+import { ligneAppData } from './ligne-app-data';
 
 /** Le filtrage de `filter()` et de `filterOuLeve()` — ecrit une seule fois. */
 function filtrerSur(items, criteria) {
@@ -102,16 +103,58 @@ class Collection {
     return (await this.listOuLeve()).length;
   }
 
+  /**
+   * Retrouve LA ligne qu'un écran désigne par `id`.
+   *
+   * Les écrans ne connaissent que `data.id` (`listOuLeve()` ne lit que `data`).
+   * Normalement il égale la colonne `id` — mais des écrivains hors de
+   * `create()` en ont posé deux différents (voir `ligne-app-data.js`). Une telle
+   * ligne était devenue impossible à modifier : « ligne introuvable ».
+   *
+   * Donc : la colonne `id` d'abord (le cas normal, une requête), puis
+   * `data->>'id'` dans la même collection. On rend l'identifiant de COLONNE de
+   * la ligne trouvée : c'est par lui, et lui seul, qu'on écrit ensuite.
+   *
+   * Rend `{ ligne: {idLigne, data} | null, erreur }`. Ne lève pas : chaque
+   * appelant décide. Deux lignes portant le même `data.id` → aucune n'est
+   * choisie (`erreur` le dit) : écrire sur la mauvaise serait pire qu'échouer.
+   */
+  async _trouverLigne(id) {
+    let erreur = null;
+    const parColonne = await supabase
+      .from('app_data')
+      .select('id, data')
+      .eq('id', id)
+      .eq('collection', this.name)
+      .maybeSingle();
+    if (parColonne.data) {
+      return { ligne: { idLigne: parColonne.data.id, data: parColonne.data.data }, erreur: null };
+    }
+    // 22P02 : `id` n'a pas la forme d'un UUID — la colonne ne peut pas le
+    // porter, mais `data.id` le peut. Ce n'est pas une panne.
+    if (parColonne.error && parColonne.error.code !== '22P02') erreur = parColonne.error;
+
+    const parData = await supabase
+      .from('app_data')
+      .select('id, data')
+      .eq('collection', this.name)
+      .eq('data->>id', String(id))
+      .limit(2);
+    if (parData.error) return { ligne: null, erreur: erreur || parData.error };
+    const trouvees = parData.data || [];
+    if (trouvees.length > 1) {
+      return { ligne: null, erreur: `${trouvees.length} lignes portent l'identifiant ${id}` };
+    }
+    if (trouvees.length === 1) {
+      return { ligne: { idLigne: trouvees[0].id, data: trouvees[0].data }, erreur: null };
+    }
+    return { ligne: null, erreur };
+  }
+
   async getById(id) {
     if (USE_SUPABASE) {
-      const { data, error } = await supabase
-        .from('app_data')
-        .select('data')
-        .eq('id', id)
-        .eq('collection', this.name)
-        .maybeSingle();
-      if (error || !data) return null;
-      return data.data;
+      const { ligne } = await this._trouverLigne(id);
+      return ligne ? ligne.data : null;
     }
     try {
       return JSON.parse(localStorage.getItem(this.lsKey) || '[]').find((i) => i.id === id) || null;
@@ -135,13 +178,12 @@ class Collection {
     const newItem = { ...data, id, created_at: data.created_at || now, updated_at: now };
 
     if (USE_SUPABASE) {
-      const { error } = await supabase.from('app_data').insert({
-        id,
+      const { error } = await supabase.from('app_data').insert(ligneAppData({
         collection: this.name,
         data: newItem,
         created_at: newItem.created_at,
         updated_at: now,
-      });
+      }));
       if (error) { console.error(`[db] create ${this.name}:`, error.message); throw error; }
     } else {
       const items = this._lsRead();
@@ -164,21 +206,26 @@ class Collection {
    *
    * Tout rejet non rattrape est montre au gerant par le filet global pose dans
    * src/main.jsx (src/services/filet-ecriture.js).
+   *
+   * Depuis le 26/09/2026, une ligne dont `data.id` differe de la colonne `id`
+   * se modifie quand meme : `_trouverLigne()` la retrouve par `data.id`, et
+   * l'ecriture vise la COLONNE `id` de la ligne trouvee. `data.id` n'est pas
+   * reecrit : c'est l'identifiant que les ecrans (et d'autres lignes) portent.
    */
   async update(id, updates) {
     if (USE_SUPABASE) {
-      const existing = await this.getById(id);
-      if (!existing) {
+      const { ligne, erreur } = await this._trouverLigne(id);
+      if (!ligne) {
         throw new ErreurEcriture({
           collection: this.name, operation: 'update', id,
-          cause: 'ligne introuvable',
+          cause: erreur || 'ligne introuvable',
         });
       }
-      const merged = { ...existing, ...updates, updated_at: new Date().toISOString() };
+      const merged = { ...ligne.data, ...updates, updated_at: new Date().toISOString() };
       const { error } = await supabase
         .from('app_data')
         .update({ data: merged, updated_at: merged.updated_at })
-        .eq('id', id)
+        .eq('id', ligne.idLigne)
         .eq('collection', this.name);
       if (error) {
         console.error(`[db] update ${this.name}:`, error.message);
@@ -198,13 +245,21 @@ class Collection {
     return items[idx];
   }
 
-  /** ⚠️ `delete()` LEVE en cas d'echec — voir le commentaire de `update()`. */
+  /**
+   * ⚠️ `delete()` LEVE en cas d'echec — voir le commentaire de `update()`.
+   *
+   * Une ligne a deux identifiants etait « supprimee » sans que rien ne parte :
+   * zero ligne ne portait ce `id` en colonne, et Supabase ne s'en plaint pas.
+   * On vise donc la colonne `id` de la ligne retrouvee. Si la recherche ne
+   * trouve rien, on supprime par `id` comme avant (comportement inchange).
+   */
   async delete(id) {
     if (USE_SUPABASE) {
+      const { ligne } = await this._trouverLigne(id);
       const { error } = await supabase
         .from('app_data')
         .delete()
-        .eq('id', id)
+        .eq('id', ligne ? ligne.idLigne : id)
         .eq('collection', this.name);
       if (error) {
         console.error(`[db] delete ${this.name}:`, error.message);
@@ -466,11 +521,10 @@ export async function saveSettings(settings) {
         .update({ data: settings, updated_at: new Date().toISOString() })
         .eq('id', existing[0].id);
     } else {
-      await supabase.from('app_data').insert({
-        id: crypto.randomUUID(),
+      await supabase.from('app_data').insert(ligneAppData({
         collection: '_settings',
         data: settings,
-      });
+      }));
     }
   } else {
     localStorage.setItem('io_settings', JSON.stringify(settings));

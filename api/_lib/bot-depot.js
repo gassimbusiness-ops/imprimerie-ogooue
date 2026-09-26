@@ -45,6 +45,7 @@
  * bot sera rallumé ou le jeton posé.
  */
 import crypto from 'node:crypto';
+import { ligneAppData } from '../../src/services/ligne-app-data.js';
 import { COLLECTION_BOT_CONTROLE, COLLECTION_BOT_JOURNAL, MODE_SIMULATION } from './bot-executeur.js';
 // ⚠️ Cycle assumé : `meta-webhook.js` importe ce module, et ce module lui
 //    emprunte le nom de sa collection. Les deux sont des `const` lues à
@@ -179,13 +180,12 @@ export function depotSupabaseBot(supabase) {
     async reserver(entree) {
       const id = crypto.randomUUID();
       const maintenant = new Date().toISOString();
-      const { error } = await supabase.from(TABLE).insert({
-        id,
+      const { error } = await supabase.from(TABLE).insert(ligneAppData({
         collection: COLLECTION_BOT_JOURNAL,
-        data: { id, ...entree },
+        data: { ...entree, id },
         created_at: maintenant,
         updated_at: maintenant,
-      });
+      }));
       if (error) {
         if (/duplicate key|unique constraint/i.test(error.message || '')) {
           return { reserve: false, id: null };
@@ -226,13 +226,13 @@ export function depotSupabaseBot(supabase) {
      */
     async journaliser(entree) {
       const maintenant = new Date().toISOString();
-      const { error } = await supabase.from(TABLE).insert({
-        id: crypto.randomUUID(),
+      // UN identifiant, colonne et `data.id` (src/services/ligne-app-data.js).
+      const { error } = await supabase.from(TABLE).insert(ligneAppData({
         collection: COLLECTION_BOT_JOURNAL,
-        data: { id: crypto.randomUUID(), ...entree },
+        data: { ...entree, id: crypto.randomUUID() },
         created_at: maintenant,
         updated_at: maintenant,
-      });
+      }));
       // Quand l'index unique existera, un doublon simultané sera rejeté ici :
       // c'est le résultat attendu, pas une panne.
       if (error && !/duplicate key|unique constraint/i.test(error.message || '')) {

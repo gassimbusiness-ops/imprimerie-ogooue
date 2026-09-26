@@ -87,11 +87,16 @@ CREATE INDEX IF NOT EXISTS idx_bot_journal_recu
 --    passer par la console Supabase.
 --    La ligne se reconnaît donc à `cle = 'global'`, pas à son identifiant.
 
+-- ⚠️ Corrigé le 2026-09-26 : la version d'origine ne posait PAS `id` dans
+--    `data`, contrairement à ce que dit le paragraphe ci-dessus. Un seul
+--    `gen_random_uuid()`, tiré UNE fois dans `nouvel`, sert aux deux.
+WITH nouvel AS (SELECT gen_random_uuid() AS id)
 INSERT INTO app_data (id, collection, data, created_at, updated_at)
 SELECT
-  gen_random_uuid(),
+  nouvel.id,
   'bot_controle',
   jsonb_build_object(
+    'id',     nouvel.id::text,
     'cle',    'global',
     'actif',  false,             -- ⛔ le bot démarre ÉTEINT
     'mode',   'dry_run',         -- ⛔ et en simulation
@@ -99,6 +104,7 @@ SELECT
   ),
   NOW(),
   NOW()
+FROM nouvel
 WHERE NOT EXISTS (
   SELECT 1 FROM app_data
   WHERE collection = 'bot_controle' AND data->>'cle' = 'global'

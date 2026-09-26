@@ -125,6 +125,7 @@ import crypto from 'node:crypto';
 import { empreintesEgales } from './_lib/session.js';
 import { supabaseAdmin } from './_lib/supabase-admin.js';
 import { toISODate } from '../src/lib/dates.js';
+import { ligneAppData } from '../src/services/ligne-app-data.js';
 import { repondreAuxEvenements } from './_lib/bot-executeur.js';
 import { depotSupabaseBot } from './_lib/bot-depot.js';
 import { creerClientBot } from './_lib/bot-envoi.js';
@@ -391,13 +392,13 @@ export function depotSupabaseMeta(supabase) {
 
     async inserer(doc) {
       const maintenant = new Date().toISOString();
-      const { error } = await supabase.from('app_data').insert({
-        id: crypto.randomUUID(),
+      // UN identifiant, colonne et `data.id` (src/services/ligne-app-data.js).
+      const { error } = await supabase.from('app_data').insert(ligneAppData({
         collection: COLLECTION_MESSAGES,
-        data: { id: crypto.randomUUID(), ...doc },
+        data: { ...doc, id: crypto.randomUUID() },
         created_at: maintenant,
         updated_at: maintenant,
-      });
+      }));
       // Quand l'index unique existera, un doublon simultané sera rejeté ici :
       // c'est le résultat attendu, pas une panne.
       if (error && !/duplicate key|unique constraint/i.test(error.message || '')) {

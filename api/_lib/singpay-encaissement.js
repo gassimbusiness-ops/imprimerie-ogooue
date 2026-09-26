@@ -79,6 +79,7 @@ import { resoudreCompteClient } from '../../src/services/compte-client.js';
 // Date metier a Libreville. `src/lib/dates.js` est un module pur, importable
 // ici comme dans le navigateur — et c'est le seul endroit ou la regle vit.
 import { dateLocaleDepuisInstantUtc } from '../../src/lib/dates.js';
+import { ligneAppData } from '../../src/services/ligne-app-data.js';
 
 /* ═══════════════════════════════════════════════════════════════════════════
    1. STATUTS
@@ -845,13 +846,12 @@ export function depotSupabase(supabase) {
       const deja = (existants || []).some((m) => m.data?.reference === mouvement.reference);
       if (deja) return { insere: false, raison: 'mouvement déjà présent' };
 
-      const { error } = await supabase.from('app_data').insert({
-        id: crypto.randomUUID(),
+      const { error } = await supabase.from('app_data').insert(ligneAppData({
         collection: 'mouvements_financiers',
-        data: { id: crypto.randomUUID(), ...mouvement },
+        data: mouvement,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
-      });
+      }));
 
       if (error) {
         if (estViolationUnicite(error)) return { insere: false, raison: 'doublon rejeté par la base' };
@@ -891,13 +891,12 @@ export function depotSupabase(supabase) {
     },
 
     async insererNotification(notification) {
-      await supabase.from('app_data').insert({
-        id: crypto.randomUUID(),
+      await supabase.from('app_data').insert(ligneAppData({
         collection: 'notifications_app',
-        data: { id: crypto.randomUUID(), ...notification },
+        data: notification,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
-      });
+      }));
     },
   };
 }

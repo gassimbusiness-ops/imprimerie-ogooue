@@ -70,6 +70,7 @@
 import { supabaseAdmin } from './supabase-admin.js';
 import { creerVerrouExecution } from '../../src/services/execution-unique.js';
 import { auteurChatGPT, ligneJournal } from '../../src/services/journal-audit.js';
+import { ligneAppData } from '../../src/services/ligne-app-data.js';
 import {
   GESTES,
   BESOINS_CONTEXTE,
@@ -244,26 +245,20 @@ export function depotEcriture() {
      *
      * Le même identifiant est posé dans la colonne `id` ET dans `data.id` :
      * c'est la convention de `src/services/db.js`, celle que les écrans
-     * connaissent. (`api/_lib/singpay-encaissement.js` en pose deux
-     * différents ; une ligne écrite ainsi ne se retrouve jamais par
-     * `db.getById`. On ne reprend pas cette divergence.)
+     * connaissent, et `ligneAppData()` la garantit (un `data.id` absent
+     * laissait la base tirer la colonne seule — deux identifiants).
      */
     async creer(collection, data) {
       const quand = maintenant();
-      const { error } = await sb().from('app_data').insert({
-        id: data.id,
-        collection,
-        data,
-        created_at: quand,
-        updated_at: quand,
-      });
+      const ligne = ligneAppData({ collection, data, created_at: quand, updated_at: quand });
+      const { error } = await sb().from('app_data').insert(ligne);
       if (error) {
         if (estViolationUnicite(error)) {
           return { insere: false, id: null, raison: 'doublon rejeté par la base' };
         }
         throw new Error(error.message);
       }
-      return { insere: true, id: data.id };
+      return { insere: true, id: ligne.id };
     },
 
     /** Fusionne des champs dans une ligne existante, sans jamais la retirer. */
@@ -313,14 +308,12 @@ export function depotEcriture() {
 
     /** La trace d'audit, à la forme exacte de `src/services/audit.js`. */
     async journaliser(entree) {
-      const id = crypto.randomUUID();
-      const { error } = await sb().from('app_data').insert({
-        id,
+      const { error } = await sb().from('app_data').insert(ligneAppData({
         collection: 'audit_logs',
-        data: { ...entree, id },
+        data: { ...entree, id: crypto.randomUUID() },
         created_at: maintenant(),
         updated_at: maintenant(),
-      });
+      }));
       if (error) throw new Error(error.message);
     },
 
