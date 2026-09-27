@@ -22,7 +22,8 @@
  * ── Les règles ──────────────────────────────────────────────────────────────
  *
  * - l'arrêt d'urgence (`autopost_controle.actif = false`) arrête aussi les
- *   remises ; en simulation (`mode = dry_run`), rien ne part ;
+ *   remises ; en simulation (`mode = dry_run`, ou manifeste resté en
+ *   `"mode_execution": "dry_run"`), rien ne part ;
  * - l'approbation est vérifiée comme pour Facebook : un « Retirer
  *   l'approbation » à l'écran empêche la remise ;
  * - jamais avant le créneau ; toute la journée ensuite (un statut WhatsApp
@@ -123,6 +124,14 @@ export async function remettreStoriesWhatsApp({ depot, telegram, instant, restan
       if (!appro.approuve) { bilan.ecartees += 1; continue; }
 
       if (arret.mode !== 'live') { bilan.en_attente += 1; bilan.motif = 'mode simulation : rien ne part'; continue; }
+      // Le verrou PAR PUBLICATION, comme pour Facebook/Instagram : un manifeste
+      // resté en "dry_run" est simulé là-bas — sa story ne part pas seule ici.
+      // Mesuré le 28/09 : toute la semaine S40 était encore en "dry_run".
+      if (ligne.publication?.mode_execution !== 'live') {
+        bilan.en_attente += 1;
+        bilan.motif = 'manifeste en "dry_run" : publication simulée, story retenue';
+        continue;
+      }
       if (!telegram?.configure) { bilan.en_attente += 1; bilan.motif = 'Telegram pas encore branché'; continue; }
       if (!ligne.url_media) {
         await depot.relacher(ligne.cle_idempotence, {

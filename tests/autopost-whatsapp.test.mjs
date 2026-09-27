@@ -26,6 +26,7 @@ function publication(date, id) {
   return {
     publication_id: id,
     version_contenu: 5,
+    mode_execution: 'live',
     date_locale: date,
     cta: 'Préparez vos besoins et vos quantités.',
     creneau: { date_locale: date, heure_locale: '09:00', offset_utc: '+01:00', fuseau: 'Africa/Libreville' },
@@ -279,4 +280,17 @@ test('passage : la remise tourne APRÈS les alertes, son bilan est dans celui du
   } finally {
     if (avant === undefined) delete process.env.CRON_SECRET; else process.env.CRON_SECRET = avant;
   }
+});
+
+test('⛔ manifeste resté en "dry_run" (la semaine S40 au 28/09) : la story est retenue, comme Facebook est simulé', async () => {
+  const l = ligne('2026-09-28');
+  l.publication.mode_execution = 'dry_run';
+  l.approbation = construireApprobation({ publication: l.publication, canal: CANAL_WHATSAPP, approuvePar: 'machine', instant: '2026-09-23T17:18:00Z', origine: 'automatique' });
+  const d = depot({ lignes: [l] });
+  const t = telegram();
+  const b = await passer(d, t);
+  assert.equal(t.photos.length, 0);
+  assert.equal(b.en_attente, 1);
+  assert.match(b.motif, /dry_run/);
+  assert.equal(d.table.get('PUB-2026-09-28|whatsapp_handoff').etat, 'scheduled', 'elle partira si le manifeste passe en live dans la journée');
 });
