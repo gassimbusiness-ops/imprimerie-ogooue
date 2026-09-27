@@ -178,6 +178,10 @@
       "destination": "/api/chatgpt?voie=facture"
     },
     {
+      "source": "/api/chatgpt-transfert",
+      "destination": "/api/chatgpt?voie=transfert"
+    },
+    {
       "source": "/confidentialite.html",
       "destination": "/confidentialite.html"
     },

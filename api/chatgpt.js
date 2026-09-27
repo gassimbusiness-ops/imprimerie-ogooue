@@ -209,6 +209,7 @@ export const CHEMINS_CHATGPT = Object.freeze({
   '/api/chatgpt-cloture-caisse': 'cloture-caisse',
   '/api/chatgpt-devis': 'devis',
   '/api/chatgpt-facture': 'facture',
+  '/api/chatgpt-transfert': 'transfert',
 });
 
 /**

@@ -90,6 +90,10 @@ const {
   planAnnulation,
   CHAMP_MARQUEUR,
   CHAMP_CLE,
+  DEPENSES_REFUSEES,
+  natureHorsDepense,
+  resoudreCompte,
+  resumerEcriture,
 } = await import('../src/services/chatgpt-gestes.js');
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -311,6 +315,8 @@ test('GESTES : la liste est fermée, et couvre exactement ce que le dirigeant a 
       // Élargissement — « les événements et tous les trucs possibles de tous les modules »
       'catalogue', 'client', 'cloture-caisse', 'commande', 'devis', 'evenement',
       'facture', 'objectif', 'projet-travaux', 'prospect', 'rapport', 'stock-mouvement',
+      // 27/09 — l'avance du comptoir papeterie, dictée le 24/09 et écrite en dépense
+      'transfert',
     ].sort(),
     'la liste est FERMÉE : on y ajoute des entrées nommées, on ne l’ouvre jamais',
   );
@@ -2443,4 +2449,322 @@ test('⛔ EXÉCUTION : les deux exécutants honorent la condition, pas seulement
       + `(trouvée ${gardes.length} fois)`,
     );
   }
+});
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   13. L'AVANCE DU COMPTOIR PAPETERIE — le rejeu du 24/09/2026
+   ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Le 24/09 à 19 h 24 (Moanda), le gérant a dicté la phrase ci-dessous. ChatGPT
+ * a appelé `enregistrerDepense` : une sortie de 25 000 F sur « LIQUIDE ARGENT
+ * Hebdo », catégorie `depense_chatgpt`, activité papeterie (ligne
+ * 51df0b51-d6aa-4123-9e2f-a33b6d2aa87c). Or l'argent n'a pas quitté
+ * l'entreprise : il a changé de tiroir. Le corps rejoué ici est celui que
+ * ChatGPT a RÉELLEMENT envoyé, relu en base le 27/09 (clé, phrase, motif,
+ * activité, date).
+ */
+
+const PHRASE_24_09 = "Ajoute 25000F de sortie pour aujourd'hui il s'agit d'une avance pour le comptoir de la papeterie.";
+
+function corpsDu24Septembre(extra = {}) {
+  return {
+    cle: 'avance-comptoir-papeterie-2026-09-24-25000',
+    phrase: PHRASE_24_09,
+    montant: 25000,
+    motif: 'Avance pour le comptoir de la papeterie',
+    compte: 'caisse',
+    activite: 'papeterie',
+    date: '2026-09-24',
+    ...extra,
+  };
+}
+
+/** Les comptes réels, plus le compte que le dirigeant doit créer à l'écran Finances. */
+function comptesAvecCaissePapeterie() {
+  return [...comptesDeTest(), { id: 'cpt-caisse-pap', nom: 'CAISSE PAPETERIE', solde: 0 }];
+}
+
+test('24/09 REJOUÉ : la dictée exacte ne produit PLUS de dépense — ni ligne, ni débit, ni trace', async () => {
+  await avecJeton(JETON, async () => {
+    const depot = faussDepot();
+    const avant = depot.soldes.get('cpt-caisse');
+    const { code, corps } = await appeler({ voie: 'depense', corps: corpsDu24Septembre() }, { depot });
+
+    assert.equal(code, 409, `la dépense du 24/09 est passée : ${JSON.stringify(corps)}`);
+    assert.equal(corps.error, "Ce n'est pas une dépense");
+    assert.match(corps.detail, /enregistrerTransfert/, 'le refus doit dire QUEL geste utiliser à la place');
+    assert.match(corps.detail, /Rien n'a été écrit/);
+    assert.equal(depot.tables.mouvements_financiers.length, 0, 'aucune ligne ne doit exister');
+    assert.equal(depot.soldes.get('cpt-caisse'), avant, 'la caisse ne doit pas bouger');
+    assert.equal(depot.tables.audit_logs.length, 0, 'un refus n\'est pas une écriture tentée : pas de trace « écrit »');
+  });
+});
+
+test('24/09 REJOUÉ : ChatGPT suit le refus — sans compte papeterie, le transfert est refusé AUSSI, sans repli', async () => {
+  await avecJeton(JETON, async () => {
+    // La base d'aujourd'hui : aucun compte ne représente le comptoir papeterie.
+    const depot = faussDepot();
+    const avant = [...depot.soldes.entries()];
+    const { code, corps } = await appeler({
+      voie: 'transfert',
+      corps: {
+        cle: 'avance-comptoir-papeterie-2026-09-24-25000',
+        phrase: PHRASE_24_09,
+        montant: 25000,
+        compte_source: 'caisse',
+        compte_destination: 'papeterie',
+        motif: 'Avance pour le comptoir de la papeterie',
+        activite: 'papeterie',
+        date: '2026-09-24',
+      },
+    }, { depot });
+    assert.equal(code, 409, JSON.stringify(corps));
+    assert.match(corps.detail, /écran Finances/, 'le refus doit dire où créer le compte');
+    assert.match(corps.detail, /CAISSE PAPETERIE/);
+    assert.match(corps.detail, /PAS en dépense/, 'le refus doit interdire le repli vers la dépense');
+    assert.equal(depot.tables.mouvements_financiers.length, 0);
+    assert.deepEqual([...depot.soldes.entries()], avant, 'aucun solde ne bouge');
+  });
+});
+
+test('24/09 REJOUÉ : avec le compte CAISSE PAPETERIE, l\'avance est un TRANSFERT — la caisse baisse, la papeterie monte', async () => {
+  await avecJeton(JETON, async () => {
+    const depot = faussDepot({ comptes: comptesAvecCaissePapeterie() });
+    const caisseAvant = depot.soldes.get('cpt-caisse');
+    const { code, corps } = await appeler({
+      voie: 'transfert',
+      corps: {
+        cle: 'avance-comptoir-papeterie-2026-09-24-25000',
+        phrase: PHRASE_24_09,
+        montant: 25000,
+        compte_destination: 'papeterie',
+        motif: 'Avance pour le comptoir de la papeterie',
+        activite: 'papeterie',
+        date: '2026-09-24',
+      },
+    }, { depot });
+    assert.equal(code, 201, JSON.stringify(corps));
+
+    const [mvt] = depot.tables.mouvements_financiers;
+    assert.equal(mvt.type, 'transfert', 'le type de l\'écran Finances, pas un type inventé');
+    assert.equal(mvt.compte_id, 'cpt-caisse', 'compte_id = d\'où l\'argent SORT (défaut : la caisse principale)');
+    assert.equal(mvt.compte_dest_id, 'cpt-caisse-pap', 'compte_dest_id = où l\'argent ARRIVE');
+    assert.equal(mvt.categorie, 'transfert_chatgpt');
+    assert.equal(mvt.activite, 'papeterie');
+    assert.equal(mvt.date, '2026-09-24');
+    assert.equal(depot.soldes.get('cpt-caisse'), caisseAvant - 25000);
+    assert.equal(depot.soldes.get('cpt-caisse-pap'), 25000);
+
+    // Les garanties des autres gestes, toutes les quatre.
+    assert.equal(mvt[CHAMP_MARQUEUR], true);
+    assert.equal(mvt.chatgpt.phrase, PHRASE_24_09, 'la phrase dictée, mot pour mot');
+    assert.equal(mvt.chatgpt.geste, 'transfert');
+    assert.ok(
+      depot.trace.indexOf('journaliser') < depot.trace.indexOf('creer:mouvements_financiers'),
+      'la trace d\'audit passe AVANT l\'acte',
+    );
+    assert.match(depot.tables.audit_logs[0].details, /Transfert de 25 000 F/);
+    assert.match(corps.resume, /pas une dépense/);
+    assert.equal(corps.identifiant, 'chatgpt:avance-comptoir-papeterie-2026-09-24-25000');
+  });
+});
+
+test('TRANSFERT : la même clé deux fois ne déplace l\'argent qu\'UNE fois', async () => {
+  await avecJeton(JETON, async () => {
+    const depot = faussDepot({ comptes: comptesAvecCaissePapeterie() });
+    const corps = {
+      cle: 'fonds-pap-2026-09-27', phrase: 'mets 10 000 de fonds de caisse à la papeterie',
+      montant: 10000, compte_destination: 'papeterie', motif: 'Fonds de caisse papeterie',
+    };
+    const un = await appeler({ voie: 'transfert', corps }, { depot });
+    const deux = await appeler({ voie: 'transfert', corps }, { depot });
+    assert.equal(un.code, 201);
+    assert.equal(deux.code, 200);
+    assert.equal(deux.corps.deja_fait, true);
+    assert.equal(depot.tables.mouvements_financiers.length, 1);
+    assert.equal(depot.soldes.get('cpt-caisse-pap'), 10000);
+  });
+});
+
+test('TRANSFERT : l\'annulation par ChatGPT remet les DEUX soldes, la trace reste', async () => {
+  await avecJeton(JETON, async () => {
+    const depot = faussDepot({ comptes: comptesAvecCaissePapeterie() });
+    const caisseAvant = depot.soldes.get('cpt-caisse');
+    const creation = await appeler({
+      voie: 'transfert',
+      corps: {
+        cle: 'avance-pap-annul', phrase: PHRASE_24_09, montant: 25000,
+        compte_destination: 'papeterie', motif: 'Avance pour le comptoir de la papeterie',
+      },
+    }, { depot });
+    const annul = await appeler({
+      voie: 'annuler',
+      corps: { identifiant: creation.corps.identifiant, phrase: 'annule, mauvais montant' },
+    }, { depot });
+    assert.ok([200, 201].includes(annul.code), JSON.stringify(annul.corps));
+    assert.equal(depot.soldes.get('cpt-caisse'), caisseAvant);
+    assert.equal(depot.soldes.get('cpt-caisse-pap'), 0);
+    assert.equal(depot.tables.mouvements_financiers.length, 2, 'compenser, jamais effacer');
+    const inverse = depot.tables.mouvements_financiers[1];
+    assert.equal(inverse.type, 'transfert');
+    assert.equal(inverse.compte_id, 'cpt-caisse-pap', 'l\'argent revient d\'où il est parti');
+    assert.equal(inverse.compte_dest_id, 'cpt-caisse');
+  });
+});
+
+test('ÉCRAN « Écritures ChatGPT » : un transfert s\'y lit comme tel et s\'y annule par le même plan', () => {
+  // La ligne telle que le SQL de reclassement proposé le 27/09 la laisse
+  // (livrables_claude/43_GPT_AVANCE_CAISSE.md) : c'est elle que le gérant
+  // pourra défaire au bouton, si le reclassement lui-même était une erreur.
+  const ligne = {
+    collection: 'mouvements_financiers',
+    data: {
+      id: '51df0b51-d6aa-4123-9e2f-a33b6d2aa87c',
+      type: 'transfert', montant: 25000, date: '2026-09-24',
+      compte_id: '040d593a-0f42-4311-b465-0c2a516a919c', compte_dest_id: 'cpt-caisse-pap',
+      reference: 'chatgpt:avance-comptoir-papeterie-2026-09-24-25000',
+      categorie: 'transfert_chatgpt', activite: 'papeterie',
+      description: 'Avance pour le comptoir de la papeterie',
+      [CHAMP_MARQUEUR]: true, [CHAMP_CLE]: 'avance-comptoir-papeterie-2026-09-24-25000',
+      chatgpt: { geste: 'transfert', phrase: PHRASE_24_09, cle: 'avance-comptoir-papeterie-2026-09-24-25000' },
+    },
+  };
+  const r = resumerEcriture(ligne);
+  assert.equal(r.libelle_geste, 'Transfert entre caisses');
+  assert.equal(r.montant, 25000);
+
+  const ctx = { instant_utc: '2026-09-27T10:00:00Z', lisible: '2026-09-27 11:00:00', date_locale: '2026-09-27' };
+  const plan = planAnnulation(ligne, { ctx, phrase: 'reclassement annulé' });
+  assert.equal(plan.ok, true);
+  const soldes = Object.fromEntries(plan.operations.filter((o) => o.op === 'solde').map((o) => [o.compte_id, o.delta]));
+  assert.deepEqual(soldes, { '040d593a-0f42-4311-b465-0c2a516a919c': 25000, 'cpt-caisse-pap': -25000 });
+});
+
+test('VRAIE DÉPENSE : « carburant 5 000 F » passe toujours, et débite la caisse', async () => {
+  await avecJeton(JETON, async () => {
+    const depot = faussDepot();
+    const avant = depot.soldes.get('cpt-caisse');
+    const { code, corps } = await appeler({
+      voie: 'depense',
+      corps: { cle: 'carburant-2026-09-27', phrase: 'carburant 5 000 F', montant: 5000, motif: 'Carburant' },
+    }, { depot });
+    assert.equal(code, 201, JSON.stringify(corps));
+    assert.equal(depot.tables.mouvements_financiers[0].type, 'sortie');
+    assert.equal(depot.soldes.get('cpt-caisse'), avant - 5000);
+  });
+});
+
+test('VRAIES DÉPENSES : le garde-fou ne bloque aucune charge réelle, même avec un mot piège', () => {
+  for (const motif of [
+    'Carburant',
+    'Achat de papier A4',
+    'Réparation de la photocopieuse',
+    'Achat papier transfert DTF',            // « transfert » = technique d'impression
+    'Film transfert pour t-shirts',
+    'Frais de transfert Airtel Money',       // des frais sont une charge
+    'Commission de virement BGFI',
+    'Avance au menuisier pour la vitrine',   // acompte à un tiers : l'argent sort vraiment
+    'Acompte fournisseur encre',
+    'Achat caisse enregistreuse',
+    'Réparation du comptoir',
+    'Versement loyer septembre',
+  ]) {
+    assert.equal(natureHorsDepense(motif), null, `« ${motif} » est une vraie dépense et doit passer`);
+  }
+});
+
+test('PAS UNE DÉPENSE : avances et fonds de caisse sont reconnus, quelle que soit la tournure', () => {
+  for (const motif of [
+    'Avance pour le comptoir de la papeterie',
+    'avance comptoir papeterie',
+    'Fonds de caisse papeterie',
+    'Fond de caisse du comptoir',
+    'Approvisionnement du tiroir de la papeterie',
+    'Comptoir papeterie : avance',
+    'Monnaie pour la caisse de la papeterie',
+    'Transfert vers la caisse papeterie',
+    'Virement entre comptes',
+  ]) {
+    assert.equal(natureHorsDepense(motif), 'transfert', `« ${motif} » n'est pas une dépense`);
+  }
+  for (const motif of ['Avance sur salaire de Paul', 'Acompte employé Jean', 'avance de paie']) {
+    assert.equal(natureHorsDepense(motif), 'paie', `« ${motif} » relève de la paie`);
+  }
+  assert.match(DEPENSES_REFUSEES.paie, /Avances & Charges/, 'une avance sur salaire se saisit à cet écran');
+});
+
+test('AVANCE SUR SALAIRE : refusée en dépense, avec l\'écran où la saisir', async () => {
+  await avecJeton(JETON, async () => {
+    const depot = faussDepot();
+    const { code, corps } = await appeler({
+      voie: 'depense',
+      corps: { cle: 'avance-paul', phrase: 'donne 20 000 d\'avance sur salaire à Paul', montant: 20000, motif: 'Avance sur salaire Paul' },
+    }, { depot });
+    assert.equal(code, 409);
+    assert.match(corps.detail, /Avances & Charges/);
+    assert.equal(depot.tables.mouvements_financiers.length, 0);
+  });
+});
+
+test('RECETTE : un acompte de client qui dit « avance » entre toujours', async () => {
+  await avecJeton(JETON, async () => {
+    const depot = faussDepot();
+    const { code } = await appeler({
+      voie: 'recette',
+      corps: {
+        cle: 'acompte-mairie', phrase: 'la mairie a donné 50 000 d\'avance pour les flyers',
+        montant: 50000, motif: 'Avance du client mairie pour 200 flyers',
+      },
+    }, { depot });
+    assert.equal(code, 201, 'le garde-fou ne concerne que les SORTIES');
+  });
+});
+
+test('COMPTES : « caisse » reste la caisse principale quand CAISSE PAPETERIE existe', async () => {
+  // Le compte papeterie doit contenir « caisse » pour compter dans la
+  // trésorerie (`isCompteCaisse`). Sans exclusion, le défaut de TOUTES les
+  // dépenses dictées dépendrait de l'ordre de la base.
+  const comptesPapeterieDAbord = [
+    { id: 'cpt-caisse-pap', nom: 'CAISSE PAPETERIE', solde: 0 },
+    ...comptesDeTest(),
+  ];
+  assert.equal(resoudreCompte(comptesPapeterieDAbord, 'caisse').id, 'cpt-caisse');
+  assert.equal(resoudreCompte(comptesPapeterieDAbord, 'papeterie').id, 'cpt-caisse-pap');
+  assert.equal(resoudreCompte(comptesPapeterieDAbord, 'comptoir papeterie').id, 'cpt-caisse-pap');
+  assert.equal(resoudreCompte(comptesDeTest(), 'papeterie'), null, 'aujourd\'hui : aucun compte, donc refus');
+
+  await avecJeton(JETON, async () => {
+    const depot = faussDepot({ comptes: comptesPapeterieDAbord });
+    await appeler({
+      voie: 'depense',
+      corps: { cle: 'papier-a4', phrase: 'achat papier 12 000', montant: 12000, motif: 'Achat de papier A4' },
+    }, { depot });
+    assert.equal(depot.soldes.get('cpt-caisse'), 608000 - 12000);
+    assert.equal(depot.soldes.get('cpt-caisse-pap'), 0);
+  });
+});
+
+test('COMPTES : deux comptes pour un même mot-clé → refus, jamais « le premier venu »', () => {
+  const doublon = [...comptesDeTest(), { id: 'cpt-bgfi-2', nom: 'BGFI épargne', solde: 0 }];
+  assert.equal(resoudreCompte(doublon, 'bgfi'), null);
+});
+
+test('SCHÉMA : enregistrerTransfert existe, exige sa destination, et enregistrerDepense y renvoie', () => {
+  const schema = JSON.parse(lire('api/_lib/chatgpt-openapi.json'));
+  const op = schema.paths['/api/chatgpt-transfert']?.post;
+  assert.ok(op, 'le chemin /api/chatgpt-transfert doit exister');
+  assert.equal(op.operationId, 'enregistrerTransfert');
+  const corps = schema.components.schemas.Transfert;
+  assert.ok(corps.required.includes('compte_destination'), 'un transfert sans arrivée ferait disparaître l\'argent');
+  assert.ok(corps.properties.compte_destination.enum.includes('papeterie'));
+  assert.match(schema.paths['/api/chatgpt-depense'].post.description, /enregistrerTransfert/);
+  assert.match(schema.info.description, /avance de caisse ou un fonds de caisse n'est JAMAIS une depense/i);
+  assert.ok(schema.paths['/api/chatgpt-depense'].post.responses['409'], 'le refus doit être déclaré');
+});
+
+test('PLATEFORME : la voie transfert n\'ajoute AUCUN fichier dans api/ — 12 fonctions, pas 13', async () => {
+  const { readdirSync } = await import('node:fs');
+  const fonctions = readdirSync(new URL('api/', racine)).filter((f) => f.endsWith('.js'));
+  assert.equal(fonctions.length, 12, `api/ contient ${fonctions.length} fonctions : ${fonctions.join(', ')}`);
+  assert.equal(CHEMINS_CHATGPT['/api/chatgpt-transfert'], 'transfert');
 });

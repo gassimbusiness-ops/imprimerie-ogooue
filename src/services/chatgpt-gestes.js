@@ -160,6 +160,9 @@ export const GESTES = Object.freeze([
   'cloture-caisse',
   'devis',
   'facture',
+  // ── 27/09/2026 : l'avance du comptoir papeterie, dictée le 24/09 et
+  //    enregistrée en DÉPENSE faute de geste pour la dire ─────────────────
+  'transfert',
 ]);
 
 /**
@@ -292,6 +295,26 @@ export const MOTS_CLES_COMPTE = Object.freeze({
   bgfi: ['bgfi'],
   airtel: ['airtel'],
   moov: ['moov'],
+  // Le fonds de caisse du comptoir PAPETERIE (ajouté le 27/09/2026, après
+  // l'avance du 24/09 enregistrée en dépense). ⚠️ Le compte n'existe PAS
+  // encore en base : tant que le dirigeant ne l'a pas créé à l'écran Finances,
+  // ce mot-clé ne résout rien et le geste est REFUSÉ — jamais rabattu sur la
+  // caisse principale. Voir `livrables_claude/43_GPT_AVANCE_CAISSE.md`.
+  papeterie: ['papeterie'],
+});
+
+/**
+ * Morceaux de nom qui EXCLUENT un compte d'un mot-clé.
+ *
+ * Le compte du comptoir papeterie doit contenir « caisse » dans son nom pour
+ * être compté dans la trésorerie (`isCompteCaisse()` de `finance-calc.js`
+ * cherche « caisse » ou « liquide »). Sans cette exclusion, le mot-clé
+ * `caisse` — le DÉFAUT de toutes les dépenses dictées — pourrait tomber sur
+ * « CAISSE PAPETERIE » au lieu de la caisse principale, selon l'ordre de la
+ * base. C'est exactement une erreur qui ne lève rien et qui s'affiche.
+ */
+const EXCLUSIONS_COMPTE = Object.freeze({
+  caisse: ['papeterie'],
 });
 
 /** Écritures tolérées pour un même compte. Un import ou une dictée varient. */
@@ -306,6 +329,10 @@ const ALIAS_COMPTE = Object.freeze({
   'moov money': 'moov',
   'bgfi gabon': 'bgfi',
   banque: 'bgfi',
+  'caisse papeterie': 'papeterie',
+  'comptoir papeterie': 'papeterie',
+  'fonds de caisse papeterie': 'papeterie',
+  'tiroir papeterie': 'papeterie',
 });
 
 /** Mot-clé canonique d'un compte, ou `null` si la valeur n'en désigne aucun. */
@@ -324,6 +351,9 @@ export function motCleCompte(valeur) {
  * compte venu » ferait tomber une sortie de caisse sur la BGFI sans que
  * personne le voie. L'appelant doit refuser le geste. Voir l'en-tête.
  *
+ * Rend aussi `null` quand DEUX comptes répondent au même mot-clé : choisir le
+ * premier, c'est laisser l'ordre de la base décider où tombe l'argent.
+ *
  * @param {Array<{id: string, nom: string}>} comptes
  * @param {string} valeur mot-clé dicté (`caisse`, `bgfi`, `airtel money`…)
  * @returns {{id: string, nom: string}|null}
@@ -332,10 +362,12 @@ export function resoudreCompte(comptes, valeur) {
   const cle = motCleCompte(valeur);
   if (!cle) return null;
   const morceaux = MOTS_CLES_COMPTE[cle];
-  return (comptes || []).find((c) => {
+  const exclus = EXCLUSIONS_COMPTE[cle] || [];
+  const candidats = (comptes || []).filter((c) => {
     const nom = String(c?.nom || '').toLowerCase();
-    return morceaux.some((m) => nom.includes(m));
-  }) || null;
+    return morceaux.some((m) => nom.includes(m)) && !exclus.some((m) => nom.includes(m));
+  });
+  return candidats.length === 1 ? candidats[0] : null;
 }
 
 /** Les mots-clés acceptés, pour les messages d'erreur et le schéma OpenAPI. */
@@ -514,6 +546,102 @@ function fmt(n) {
   return String(Math.round(Number(n) || 0)).replace(/\B(?=(\d{3})+(?!\d))/g, ' ');
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+   CE QUI N'EST PAS UNE DÉPENSE — le garde-fou du 24/09
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Les raisons servies à ChatGPT quand il appelle `enregistrerDepense` pour de
+ * l'argent qui ne quitte PAS l'entreprise.
+ *
+ * Le 24/09/2026, le gérant a dicté « Ajoute 25000F de sortie pour aujourd'hui
+ * il s'agit d'une avance pour le comptoir de la papeterie ». ChatGPT n'avait
+ * aucun geste pour déplacer de l'argent d'une caisse à une autre : il a pris
+ * `enregistrerDepense`. Les 25 000 F sont sortis des totaux de trésorerie et
+ * se sont ajoutés aux « Sorties » de la papeterie, alors qu'ils étaient
+ * toujours dans l'entreprise — dans le tiroir du comptoir.
+ *
+ * Même logique que `GESTES_NON_LIVRES` et `STATUTS_COMMANDE_REFUSES` : le
+ * refus n'est pas une note, c'est ce que ChatGPT lit et redit au gérant.
+ */
+export const DEPENSES_REFUSEES = Object.freeze({
+  transfert:
+    "Une avance de caisse, un fonds de caisse ou un transfert entre caisses n'est PAS une "
+    + "dépense : l'argent reste dans l'entreprise, il change seulement de tiroir. Utilise "
+    + 'enregistrerTransfert (compte_source → compte_destination). Rien n\'a été écrit.',
+  paie:
+    "Une avance sur salaire n'est pas une dépense ordinaire : elle se déduit du net à payer de "
+    + "l'employé. Elle se saisit à l'écran « Avances & Charges », pas par ChatGPT. Rien n'a été écrit.",
+});
+
+/** Minuscules, sans accents, espaces simples — pour chercher des mots, pas des octets. */
+function normaliserMotif(valeur) {
+  return String(valeur || '')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .toLowerCase()
+    .replace(/[’']/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/** Lieux où dort l'argent liquide de l'entreprise. */
+const LIEU_CAISSE = '(caisse|comptoir|tiroir|guichet)';
+/** Ce qu'on fait pour garnir un tiroir. */
+const GARNIR = '(avance|avances|approvisionnement|approvisionner|alimentation|alimenter|reapprovisionnement|renflouement|renflouer)';
+
+/**
+ * Motifs qui disent « argent déplacé entre nos propres caisses ».
+ *
+ * ⚠️ Volontairement ÉTROITS. Un mot seul ne suffit jamais :
+ *   - « transfert » est aussi une TECHNIQUE d'impression (papier transfert,
+ *     transfert DTF, film transfert) — un achat bien réel ;
+ *   - « avance » seule peut être un acompte à un menuisier ou un fournisseur,
+ *     c'est-à-dire de l'argent qui sort vraiment ;
+ *   - « frais de transfert », « commission de virement » sont des charges.
+ * On n'exige donc un refus que quand le mot d'argent déplacé ET le lieu d'une
+ * caisse apparaissent ensemble.
+ */
+const MOTIFS_TRANSFERT = Object.freeze([
+  /\bfonds? de caisse\b/,
+  new RegExp(`\\b${GARNIR}\\b.{0,40}\\b${LIEU_CAISSE}\\b`),
+  new RegExp(`\\b${LIEU_CAISSE}\\b.{0,40}\\b${GARNIR}\\b`),
+  /\bmonnaie\b.{0,30}\b(caisse|comptoir|tiroir)\b/,
+  /\b(transfert|transferer|virement|versement|verser)\b.{0,30}\b(de|a|vers|dans|pour) (la |le )?(caisse|comptoir|tiroir)\b/,
+  /\b(transfert|virement)\b.{0,20}\bentre (les )?(caisses|comptes)\b/,
+]);
+
+/** Motifs qui disent « avance sur salaire » : c'est de la paie. */
+const MOTIFS_PAIE = Object.freeze([
+  /\b(avance|acompte)s? (sur|de) (salaire|paie|la paie)\b/,
+  /\b(avance|acompte)s?\b.{0,30}\b(employe|employee|salarie|salariee|personnel)\b/,
+]);
+
+/** Ce qui fait d'un motif une vraie charge, quoi qu'il contienne d'autre. */
+const MOTIFS_CHARGE = Object.freeze([/\bfrais\b/, /\bcommission\b/, /\bagios?\b/]);
+
+/**
+ * Ce motif de « dépense » décrit-il en fait de l'argent qui ne quitte pas
+ * l'entreprise ?
+ *
+ * Rend `'transfert'`, `'paie'`, ou `null` quand c'est une vraie dépense.
+ * On lit le MOTIF, pas la phrase : une phrase dictée peut mêler deux actions
+ * (« 5 000 de carburant et 25 000 d'avance au comptoir »), et bloquer le
+ * carburant parce que la phrase parle aussi d'avance serait bloquer une vraie
+ * dépense. Le 24/09, ChatGPT avait recopié les mots dans le motif.
+ *
+ * @param {string} motif
+ * @returns {'transfert'|'paie'|null}
+ */
+export function natureHorsDepense(motif) {
+  const m = normaliserMotif(motif);
+  if (!m) return null;
+  if (MOTIFS_CHARGE.some((re) => re.test(m))) return null;
+  if (MOTIFS_PAIE.some((re) => re.test(m))) return 'paie';
+  if (MOTIFS_TRANSFERT.some((re) => re.test(m))) return 'transfert';
+  return null;
+}
+
 function gesteArgent({ sens, corps, ctx, contexte, marqueur, cle, geste }) {
   const { comptes } = contexte;
   const montant = montantValide(corps.montant);
@@ -531,6 +659,19 @@ function gesteArgent({ sens, corps, ctx, contexte, marqueur, cle, geste }) {
         ? "Une sortie de caisse sans raison écrite ne se retrouve plus : dis à quoi l'argent a servi."
         : "Dis d'où vient cette recette.",
     );
+  }
+  // Le garde-fou du 24/09 : SEULEMENT pour une sortie. Une recette qui parle
+  // d'avance est le plus souvent un acompte de client — de l'argent qui entre
+  // vraiment, et qu'il ne faut surtout pas refuser.
+  if (sens === 'sortie') {
+    const nature = natureHorsDepense(motif);
+    if (nature) {
+      return refus(
+        nature === 'paie' ? 'Avance sur salaire : pas une dépense' : "Ce n'est pas une dépense",
+        DEPENSES_REFUSEES[nature],
+        409,
+      );
+    }
   }
   const compte = resoudreCompte(comptes, corps.compte ?? 'caisse');
   if (!compte) {
@@ -692,6 +833,127 @@ function gesteCaisse({ corps, ctx, contexte, marqueur, cle }) {
       metadata: {
         geste: 'depot_banque', montant, date: d.date,
         compte_source: source.nom.trim(), compte_destination: destination.nom.trim(),
+      },
+    },
+  };
+}
+
+/**
+ * Transfert entre deux comptes de l'entreprise — avance de caisse, fonds de
+ * caisse d'un comptoir, retrait de la banque vers la caisse.
+ *
+ * ── Pourquoi ce geste existe ─────────────────────────────────────────────
+ *
+ * Le 24/09/2026 : « Ajoute 25000F de sortie pour aujourd'hui il s'agit d'une
+ * avance pour le comptoir de la papeterie. » Aucun geste ne savait dire
+ * « l'argent change de tiroir » : ChatGPT a pris `enregistrerDepense`.
+ *
+ * ── Le modèle, celui de l'écran Finances, sans rien inventer ─────────────
+ *
+ * Le type `transfert` existe à l'écran Finances depuis l'origine, et
+ * `src/services/mouvements-financiers.js` en fixe la convention :
+ *   `compte_id` = d'où l'argent SORT, `compte_dest_id` = où il ARRIVE.
+ * UNE ligne, deux soldes : `effetSurSoldes()` débite l'un et crédite l'autre du
+ * même montant. Un transfert n'est compté ni en entrée ni en sortie
+ * (`estEntreeDeTresorerie`, et l'écran n'additionne que `sortie` en sorties).
+ *
+ * ── Ce qu'il REFUSE ──────────────────────────────────────────────────────
+ *
+ * - pas de compte d'arrivée : un transfert sans destination ne ferait rien
+ *   (`effetSurSoldes` rend un objet vide), et la ligne aurait l'air d'avoir
+ *   eu lieu ;
+ * - départ = arrivée : ça ne déplace rien ;
+ * - compte d'arrivée introuvable — en particulier le comptoir papeterie tant
+ *   que son compte n'a pas été créé à l'écran Finances. Se rabattre sur la
+ *   caisse principale reproduirait l'erreur du 24/09 sous une autre forme.
+ */
+function gesteTransfert({ corps, ctx, contexte, marqueur, cle }) {
+  const { comptes } = contexte;
+  const montant = montantValide(corps.montant);
+  if (montant === null) {
+    return refus('Montant invalide', 'Nombre entier de francs CFA, strictement supérieur à zéro.');
+  }
+  const motif = texte(corps.motif, 300);
+  if (!motif) {
+    return refus(
+      'Motif requis',
+      "Dis pourquoi l'argent change de caisse, par exemple « fonds de caisse du comptoir papeterie ».",
+    );
+  }
+  const d = dateDuGeste(corps.date, ctx);
+  if (d.erreur) return refus('Date invalide', 'Format attendu : AAAA-MM-JJ, et le jour doit exister.');
+
+  const activite = corps.activite === undefined ? undefined : corps.activite;
+  if (activite !== undefined && !ACTIVITES.includes(String(activite).trim().toLowerCase())) {
+    return refus('Activité inconnue', `Valeurs acceptées : ${ACTIVITES.join(', ')}.`);
+  }
+
+  const demandeSource = corps.compte_source ?? 'caisse';
+  const source = resoudreCompte(comptes, demandeSource);
+  if (!source) {
+    return refus(
+      'Compte de départ introuvable',
+      `Compte « ${demandeSource} » introuvable ou ambigu. Comptes acceptés : ${COMPTES_ACCEPTES.join(', ')}.`,
+    );
+  }
+  if (corps.compte_destination === undefined || corps.compte_destination === null
+    || corps.compte_destination === '') {
+    return refus(
+      'Compte de destination requis',
+      "Un transfert DÉPLACE de l'argent : sans compte d'arrivée, rien ne serait crédité et la somme "
+      + `disparaîtrait des totaux. Comptes acceptés : ${COMPTES_ACCEPTES.join(', ')}.`,
+    );
+  }
+  const destination = resoudreCompte(comptes, corps.compte_destination);
+  if (!destination) {
+    const versPapeterie = motCleCompte(corps.compte_destination) === 'papeterie';
+    return refus(
+      'Compte de destination introuvable',
+      versPapeterie
+        ? "Le comptoir papeterie n'a pas encore de compte dans l'application. Le dirigeant doit le "
+          + "créer à l'écran Finances → Comptes, avec un nom contenant « CAISSE PAPETERIE ». Rien n'a été "
+          + "écrit : ne l'enregistre PAS en dépense à la place."
+        : `Compte « ${corps.compte_destination} » introuvable ou ambigu. `
+          + `Comptes acceptés : ${COMPTES_ACCEPTES.join(', ')}.`,
+      versPapeterie ? 409 : 400,
+    );
+  }
+  if (source.id === destination.id) {
+    return refus('Départ et arrivée identiques', "Un transfert vers le compte de départ ne déplace rien.");
+  }
+
+  const reference = identifiantDe(cle);
+  const ligne = mouvement({
+    type: 'transfert',
+    montant,
+    description: motif,
+    compteId: source.id,
+    compteDestId: destination.id,
+    date: d.date,
+    reference,
+    categorie: 'transfert_chatgpt',
+    activite,
+    marqueur,
+  });
+
+  return {
+    ok: true,
+    temoin: { collection: 'mouvements_financiers', reference },
+    operations: [
+      opCreer('mouvements_financiers', ligne, 'mvt'),
+      ...soldesDuMouvement(ligne, 'mvt'),
+    ],
+    resume: `Transfert de ${fmt(montant)} F : ${source.nom.trim()} → ${destination.nom.trim()}, le ${d.date} `
+      + `— ${motif}. Ce n'est pas une dépense : l'un baisse d'autant que l'autre monte.`,
+    journal: {
+      module: 'finances',
+      entity_label: motif,
+      details: `Transfert de ${fmt(montant)} F CFA de « ${source.nom.trim()} » vers `
+        + `« ${destination.nom.trim()} », date ${d.date}, motif « ${motif} »`,
+      metadata: {
+        geste: 'transfert', montant, date: d.date, motif,
+        compte_source: source.nom.trim(), compte_source_id: source.id,
+        compte_destination: destination.nom.trim(), compte_destination_id: destination.id,
       },
     },
   };
@@ -2248,6 +2510,7 @@ const FABRIQUES = Object.freeze({
   'cloture-caisse': gesteClotureCaisse,
   devis: gesteDevis,
   facture: gesteFacture,
+  transfert: gesteTransfert,
 });
 
 /**
@@ -2278,6 +2541,7 @@ export const BESOINS_CONTEXTE = Object.freeze({
   'cloture-caisse': ['rapports', 'clotures'],
   devis: [],
   facture: ['factures'],
+  transfert: ['comptes'],
 });
 
 /* ═══════════════════════════════════════════════════════════════════════════
@@ -2646,6 +2910,7 @@ export const LIBELLES_GESTE = Object.freeze({
   'cloture-caisse': 'Clôture de caisse',
   devis: 'Devis',
   facture: 'Facture',
+  transfert: 'Transfert entre caisses',
   annulation: 'Annulation',
 });
 

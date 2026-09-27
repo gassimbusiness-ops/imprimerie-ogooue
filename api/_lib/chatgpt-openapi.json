@@ -2,8 +2,8 @@
   "openapi": "3.1.0",
   "info": {
     "title": "IMPRIMERIE OGOOUÉ — pont de gestion",
-    "version": "3.0.0",
-    "description": "Acces aux donnees de gestion de l'IMPRIMERIE OGOOUE (Moanda, Gabon). Les operations GET LISENT ; les operations POST ECRIVENT dans l'application : depense, recette, caisse, travaux, tache, catalogue, stock, rapport journalier, commande, client, evenement, prospect, objectif, cloture de caisse, devis, facture — plus l'annulation. Le dirigeant a demande qu'elles s'executent SANS CONFIRMATION : n'en demande pas, ecris directement, puis redis a voix haute ce qui a ete enregistre et l'identifiant rendu, pour qu'on puisse revenir dessus. Chaque ecriture exige une `cle` d'idempotence que TU choisis et que tu reprends a l'identique si tu relances le meme appel. Ce que le pont NE FAIT PAS, et qu'il faut renvoyer a l'ecran : passer une commande a livree ou annulee, convertir un devis en facture, la paie, les pointages, les avances, les associes, les comptes bancaires eux-memes et les utilisateurs. Montants en francs CFA entiers. Dates et heures de Moanda (Africa/Libreville, UTC+1) — jamais celles du serveur. Chaque reponse porte `calcule_le` : cite-le quand tu donnes un chiffre. Si une information n'est pas dans une reponse, dis-le plutot que de l'estimer : ces chiffres servent a decider, pas a illustrer."
+    "version": "3.1.0",
+    "description": "Acces aux donnees de gestion de l'IMPRIMERIE OGOOUE (Moanda, Gabon). Les operations GET LISENT ; les operations POST ECRIVENT dans l'application : depense, recette, caisse, transfert entre caisses (avance ou fonds de caisse), travaux, tache, catalogue, stock, rapport journalier, commande, client, evenement, prospect, objectif, cloture de caisse, devis, facture — plus l'annulation. Le dirigeant a demande qu'elles s'executent SANS CONFIRMATION : n'en demande pas, ecris directement, puis redis a voix haute ce qui a ete enregistre et l'identifiant rendu, pour qu'on puisse revenir dessus. Chaque ecriture exige une `cle` d'idempotence que TU choisis et que tu reprends a l'identique si tu relances le meme appel. Ce que le pont NE FAIT PAS, et qu'il faut renvoyer a l'ecran : passer une commande a livree ou annulee, convertir un devis en facture, la paie, les pointages, les avances SUR SALAIRE, les associes, les comptes bancaires eux-memes et les utilisateurs. Une avance de caisse ou un fonds de caisse n'est JAMAIS une depense : enregistrerTransfert. Montants en francs CFA entiers. Dates et heures de Moanda (Africa/Libreville, UTC+1) — jamais celles du serveur. Chaque reponse porte `calcule_le` : cite-le quand tu donnes un chiffre. Si une information n'est pas dans une reponse, dis-le plutot que de l'estimer : ces chiffres servent a decider, pas a illustrer."
   },
   "servers": [
     {
@@ -218,7 +218,7 @@
       "post": {
         "operationId": "enregistrerDepense",
         "summary": "Enregistrer une depense (sortie d'argent)",
-        "description": "Argent SORTI : « j'ai paye X francs pour… », une facture reglee, un achat, une sortie de caisse. Debite le compte indique. Pour une depense de TRAVAUX sur un chantier, utilise plutot enregistrerEtapeDeTravaux. Ecris sans demander confirmation, puis redis le montant, la date et l'identifiant.",
+        "description": "Argent SORTI de l'entreprise : achat, facture reglee, carburant. PAS une avance ni un fonds de caisse (l'argent change de tiroir, il ne sort pas) : enregistrerTransfert. Travaux : enregistrerEtapeDeTravaux. Ecris sans confirmation, puis redis montant, date, identifiant.",
         "requestBody": {
           "required": true,
           "content": {
@@ -252,6 +252,16 @@
           },
           "400": {
             "description": "Demande refusee : un champ manque ou une valeur n'est pas acceptee. Le detail dit quoi corriger.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Erreur"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Refuse : ce n'est pas une depense (avance ou fonds de caisse, avance sur salaire). Le detail dit quel geste utiliser. Rien n'a ete ecrit.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1238,6 +1248,65 @@
           },
           "409": {
             "description": "Refuse : l'ecriture existe deja, ou la regle metier s'y oppose. Le detail dit quoi faire.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Erreur"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/chatgpt-transfert": {
+      "post": {
+        "operationId": "enregistrerTransfert",
+        "summary": "Avance de caisse, fonds de caisse, transfert entre comptes",
+        "description": "Argent qui CHANGE DE CAISSE sans quitter l'entreprise : avance ou fonds de caisse pour un comptoir, retrait de la banque vers la caisse. Le depart baisse, l'arrivee monte du meme montant. Ce n'est pas une depense. Ecris sans confirmation, redis montant, date, identifiant.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/Transfert"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Deja enregistre : la meme cle avait deja ete envoyee. Rien n'a ete ecrit une seconde fois.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EcritureFaite"
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "Enregistre. L'identifiant rendu permet d'annuler.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EcritureFaite"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Demande refusee : un champ manque ou une valeur n'est pas acceptee. Le detail dit quoi corriger.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Erreur"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Refuse : le compte d'arrivee n'existe pas encore dans l'application. Le detail dit quoi faire a l'ecran. N'enregistre pas en depense a la place.",
             "content": {
               "application/json": {
                 "schema": {
@@ -2691,6 +2760,70 @@
         "required": [
           "cle",
           "phrase"
+        ]
+      },
+      "Transfert": {
+        "type": "object",
+        "properties": {
+          "cle": {
+            "type": "string",
+            "description": "Cle d'idempotence que TU choisis, 4 a 80 caracteres. La MEME cle renvoyee deux fois n'ecrit qu'une seule fois : reprends-la a l'identique si tu relances le meme appel apres une erreur reseau."
+          },
+          "phrase": {
+            "type": "string",
+            "description": "La demande de l'utilisateur, mot pour mot. Obligatoire : comme l'ecriture part sans confirmation, c'est la seule trace de ce qui a ete voulu."
+          },
+          "montant": {
+            "type": "integer",
+            "description": "Montant en francs CFA, nombre entier strictement positif. Pas de decimale : le franc CFA n'a pas de centime."
+          },
+          "compte_source": {
+            "type": "string",
+            "description": "Compte d'ou l'argent part. Defaut caisse (la caisse principale).",
+            "enum": [
+              "caisse",
+              "finam",
+              "bgfi",
+              "airtel",
+              "moov",
+              "papeterie"
+            ]
+          },
+          "compte_destination": {
+            "type": "string",
+            "description": "Compte ou l'argent arrive. OBLIGATOIRE. papeterie = le fonds de caisse du comptoir papeterie. S'il est refuse, ne te rabats JAMAIS sur enregistrerDepense.",
+            "enum": [
+              "caisse",
+              "finam",
+              "bgfi",
+              "airtel",
+              "moov",
+              "papeterie"
+            ]
+          },
+          "motif": {
+            "type": "string",
+            "description": "Pourquoi l'argent change de caisse, en clair. Obligatoire. Ex. : avance pour le comptoir de la papeterie."
+          },
+          "date": {
+            "type": "string",
+            "description": "Date de l'operation, AAAA-MM-JJ. Omettre pour aujourd'hui, heure de Moanda."
+          },
+          "activite": {
+            "type": "string",
+            "description": "Caisse concernee par l'avance. papeterie pour le comptoir papeterie. Defaut imprimerie.",
+            "enum": [
+              "imprimerie",
+              "papeterie"
+            ]
+          }
+        },
+        "required": [
+          "cle",
+          "phrase",
+          "montant",
+          "compte_destination",
+          "motif"
         ]
       }
     }
