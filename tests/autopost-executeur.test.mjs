@@ -272,14 +272,31 @@ test('⛔ la base seule ne peut PAS ouvrir : il faut aussi AUTOPOST_MODE', async
   }
 });
 
-test('mode global live mais publication en dry_run → simulation quand même', async () => {
+test('28/09 — VERROU DU MANIFESTE RETIRÉ : un manifeste resté en dry_run PUBLIE quand l écran est en live', async () => {
+  // Rejeu : la semaine S40 était restée en "dry_run" depuis un redépôt de
+  // ChatGPT. Décision de Gassim : ce champ ne bloque plus rien.
   const p = manifeste({ mode: 'dry_run' });
   const depot = depotMemoire([ligneDe(p)], { mode: 'live' });
+  const appel = fauxFetch([
+    echangeOk(),
+    ok({ id: '999', post_id: `${PAGE_ID}_999` }),
+    ok({ id: `${PAGE_ID}_999`, permalink_url: 'https://fb/x' }),
+  ]);
+  const client = creerClientMeta({ jeton: 'jeton-de-test', fetchImpl: appel });
+
+  const bilan = await executerPassage({ depot, client, instant: INSTANT, tracer: muet });
+  assert.equal(bilan.publies, 1, 'le mode_execution du manifeste ne décide plus');
+  assert.equal(bilan.simules, 0);
+});
+
+test('28/09 — l écran en dry_run simule TOUJOURS, quel que soit le manifeste', async () => {
+  const p = manifeste({ mode: 'live' });
+  const depot = depotMemoire([ligneDe(p)], { mode: 'dry_run' });
   const appel = fauxFetch([]);
   const client = creerClientMeta({ jeton: 'jeton-de-test', fetchImpl: appel });
 
   const bilan = await executerPassage({ depot, client, instant: INSTANT, tracer: muet });
-  assert.equal(appel.appels.length, 0, 'il faut les DEUX modes en live, jamais un seul');
+  assert.equal(appel.appels.length, 0, 'le verrou que le dirigeant tient reste entier');
   assert.equal(bilan.simules, 1);
 });
 

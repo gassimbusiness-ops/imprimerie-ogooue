@@ -282,15 +282,13 @@ test('passage : la remise tourne APRÈS les alertes, son bilan est dans celui du
   }
 });
 
-test('⛔ manifeste resté en "dry_run" (la semaine S40 au 28/09) : la story est retenue, comme Facebook est simulé', async () => {
+test('28/09 — verrou du manifeste retiré : un manifeste resté en "dry_run" n empêche plus la story', async () => {
   const l = ligne('2026-09-28');
   l.publication.mode_execution = 'dry_run';
   l.approbation = construireApprobation({ publication: l.publication, canal: CANAL_WHATSAPP, approuvePar: 'machine', instant: '2026-09-23T17:18:00Z', origine: 'automatique' });
   const d = depot({ lignes: [l] });
   const t = telegram();
   const b = await passer(d, t);
-  assert.equal(t.photos.length, 0);
-  assert.equal(b.en_attente, 1);
-  assert.match(b.motif, /dry_run/);
-  assert.equal(d.table.get('PUB-2026-09-28|whatsapp_handoff').etat, 'scheduled', 'elle partira si le manifeste passe en live dans la journée');
+  assert.equal(t.photos.length, 1);
+  assert.equal(b.remises, 1);
 });

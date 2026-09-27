@@ -287,8 +287,16 @@ export async function executerPassage({
       continue;
     }
 
-    const modePublication = travail.publication?.mode_execution === MODE_REEL ? MODE_REEL : MODE_SIMULATION;
-    const reel = client?.disponible === true && modeGlobal === MODE_REEL && modePublication === MODE_REEL;
+    /* ⛔ LE VERROU DU MANIFESTE EST RETIRÉ — décision de Gassim, 28/09/2026 à 01 h 52.
+       `mode_execution` de publication.json ne décide plus de rien. Mesuré ce
+       soir-là : la semaine S40 entière (28/09 → 04/10) était restée en "dry_run"
+       depuis un redépôt de ChatGPT le 23/09 — rien ne serait parti, sans une
+       erreur, jusqu'à ce qu'on relise la base à 1 h du matin. Un verrou que
+       ChatGPT ferme par mégarde et que personne ne voit est un arrêt silencieux.
+       Restent ceux que le dirigeant tient : l'interrupteur et le mode de l'écran
+       (`autopost_controle`), la variable AUTOPOST_MODE, le jeton, l'approbation
+       (que « Retirer l'approbation » révoque), et l'arrêt d'urgence. */
+    const reel = client?.disponible === true && modeGlobal === MODE_REEL;
 
     if (!reel) {
       /* ── SIMULATION : aucun appel réseau, aucun témoin posé ───────────── */
@@ -297,8 +305,7 @@ export async function executerPassage({
       let raison;
       if (!client?.disponible) raison = 'jeton_absent';
       else if (controle?.mode !== MODE_REEL) raison = 'interrupteur_base_en_dry_run';
-      else if (modeGlobalDemande() !== MODE_REEL) raison = 'variable_AUTOPOST_MODE_en_dry_run';
-      else raison = 'mode_publication_dry_run';
+      else raison = 'variable_AUTOPOST_MODE_en_dry_run';
       await depot.relacher(cle, { etat: 'scheduled', tentatives: travail.tentatives || 0, erreur: null });
       await depot.journaliser({
         instant_utc: instantUtc,
