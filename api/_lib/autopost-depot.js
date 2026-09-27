@@ -161,6 +161,24 @@ export function depotSupabaseAutopost(supabase) {
       return data || [];
     },
 
+    /**
+     * Les stories WhatsApp encore à remettre (28/09/2026). Lecture SÉPARÉE de
+     * `lireFile()` : la file des canaux qui publient reste exactement celle
+     * qu'elle était, et la bombe ci-dessus reste désamorcée. Voir
+     * `api/_lib/autopost-whatsapp.js`.
+     */
+    async lireRemisesWhatsApp({ limite = 60 } = {}) {
+      const { data, error } = await supabase
+        .from(TABLE_FILE)
+        .select(COLONNES)
+        .eq('etat', 'scheduled')
+        .eq('canal', 'whatsapp_handoff')
+        .order('instant_utc', { ascending: true })
+        .limit(limite);
+      if (error) throw new Error(`lecture des remises WhatsApp : ${error.message}`);
+      return data || [];
+    },
+
     async lireAReconcilier() {
       const { data, error } = await supabase
         .from(TABLE_FILE)
@@ -177,6 +195,9 @@ export function depotSupabaseAutopost(supabase) {
         .from(TABLE_FILE)
         .select('cle_idempotence', { count: 'exact', head: true })
         .eq('etat', 'published')
+        // Les stories WhatsApp remises sur Telegram (28/09) ne mangent pas le
+        // plafond des publications Facebook/Instagram.
+        .in('canal', [...CANAUX_PUBLIANTS])
         .eq('date_locale', dateLocale);
       if (error) throw new Error(`comptage ${TABLE_FILE} : ${error.message}`);
       return count || 0;

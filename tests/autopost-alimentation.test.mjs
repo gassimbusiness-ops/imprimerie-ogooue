@@ -1193,6 +1193,9 @@ test('⛔ le passage ALIMENTE AVANT de sélectionner — sinon un dépôt attend
     depot,
     client: { disponible: false },
     alimente: async () => { ordre.push('alimentation'); return { creees: 2, ecartees: [] }; },
+    // La remise WhatsApp (28/09) relit l'interrupteur APRÈS la publication :
+    // elle a son propre test d'ordre (tests/autopost-whatsapp.test.mjs).
+    whatsapp: async () => ({ statut: 'ok' }),
   });
 
   const rep = repFactice();

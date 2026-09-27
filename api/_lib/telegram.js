@@ -73,45 +73,62 @@ export function creerClientTelegram({ env = process.env, fetch: fetchFourni = nu
      * @returns {Promise<{statut: 'envoye'|'echec'|'incertain'|'non_configure', motif: string|null}>}
      */
     async envoyer(texte, { delaiMs = DELAI_PAR_DEFAUT_MS } = {}) {
-      if (!configure) return { statut: 'non_configure', motif: 'TELEGRAM_BOT_TOKEN ou TELEGRAM_CHAT_ID absente' };
-      if (typeof faireFetch !== 'function') return { statut: 'echec', motif: 'fetch indisponible' };
+      return appeler('sendMessage', {
+        text: String(texte).slice(0, 4000),
+        disable_web_page_preview: true,
+      }, delaiMs);
+    },
 
-      const controleur = new AbortController();
-      const minuterie = setTimeout(() => controleur.abort(), Math.max(250, delaiMs));
-      let reponse;
-      try {
-        reponse = await faireFetch(`https://api.telegram.org/bot${jeton}/sendMessage`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            chat_id: chatId,
-            text: String(texte).slice(0, 4000),
-            disable_web_page_preview: true,
-          }),
-          signal: controleur.signal,
-        });
-      } catch (err) {
-        clearTimeout(minuterie);
-        if (controleur.signal.aborted || err?.name === 'AbortError') {
-          return { statut: 'incertain', motif: `pas de réponse de Telegram en ${delaiMs} ms — message peut-être parti` };
-        }
-        return { statut: 'echec', motif: masquerJeton(`connexion impossible : ${err?.message || err}`, jeton) };
-      }
-
-      let corps = null;
-      try { corps = await reponse.json(); } catch { corps = null; }
-      clearTimeout(minuterie);
-
-      if (reponse.ok && corps?.ok === true) return { statut: 'envoye', motif: null };
-      // 200 reçu mais corps illisible (délai expiré pendant la lecture) : Telegram
-      // a très probablement accepté. On ne le réenverra pas.
-      if (reponse.ok && corps === null) {
-        return { statut: 'incertain', motif: 'réponse de Telegram illisible — message probablement parti' };
-      }
-      const description = corps?.description ? String(corps.description) : `HTTP ${reponse.status}`;
-      return { statut: 'echec', motif: masquerJeton(`Telegram refuse : ${description}`, jeton) };
+    /**
+     * Une image, par son ADRESSE publique : Telegram va la chercher lui-même
+     * (moins de 5 Mo). Ajouté le 28/09/2026 pour la story WhatsApp du jour.
+     * La légende d'une photo est limitée à 1 024 caractères par Telegram.
+     */
+    async envoyerPhoto(urlImage, legende = '', { delaiMs = DELAI_PAR_DEFAUT_MS } = {}) {
+      return appeler('sendPhoto', {
+        photo: String(urlImage),
+        caption: String(legende).slice(0, 1024),
+      }, delaiMs);
     },
   };
+
+  async function appeler(methode, champs, delaiMs) {
+    if (!configure) return { statut: 'non_configure', motif: 'TELEGRAM_BOT_TOKEN ou TELEGRAM_CHAT_ID absente' };
+    if (typeof faireFetch !== 'function') return { statut: 'echec', motif: 'fetch indisponible' };
+
+    const controleur = new AbortController();
+    const minuterie = setTimeout(() => controleur.abort(), Math.max(250, delaiMs));
+    let reponse;
+    try {
+      reponse = await faireFetch(`https://api.telegram.org/bot${jeton}/${methode}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: chatId, ...champs }),
+        signal: controleur.signal,
+      });
+    } catch (err) {
+      clearTimeout(minuterie);
+      if (controleur.signal.aborted || err?.name === 'AbortError') {
+        return { statut: 'incertain', motif: `pas de réponse de Telegram en ${delaiMs} ms — message peut-être parti` };
+      }
+      return { statut: 'echec', motif: masquerJeton(`connexion impossible : ${err?.message || err}`, jeton) };
+    }
+
+    let corps = null;
+    try { corps = await reponse.json(); } catch { corps = null; }
+    clearTimeout(minuterie);
+
+    if (reponse.ok && corps?.ok === true) {
+      return { statut: 'envoye', motif: null, message_id: corps?.result?.message_id ?? null };
+    }
+    // 200 reçu mais corps illisible (délai expiré pendant la lecture) : Telegram
+    // a très probablement accepté. On ne le réenverra pas.
+    if (reponse.ok && corps === null) {
+      return { statut: 'incertain', motif: 'réponse de Telegram illisible — message probablement parti' };
+    }
+    const description = corps?.description ? String(corps.description) : `HTTP ${reponse.status}`;
+    return { statut: 'echec', motif: masquerJeton(`Telegram refuse : ${description}`, jeton) };
+  }
 }
 
 /**

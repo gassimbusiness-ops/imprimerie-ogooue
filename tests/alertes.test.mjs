@@ -576,7 +576,7 @@ function repFactice() {
   return r;
 }
 
-async function tick({ alertes, apresPublication }) {
+async function tick({ alertes, apresPublication, whatsapp = async () => ({ statut: 'ok' }) }) {
   const { creerGestionnaireAutopost } = await import('../api/autopost.js');
   const avant = process.env.CRON_SECRET;
   process.env.CRON_SECRET = 'secret-de-test';
@@ -584,7 +584,7 @@ async function tick({ alertes, apresPublication }) {
   const lire = depot.lireArretGlobal;
   depot.lireArretGlobal = async () => { apresPublication?.(); return lire(); };
   const g = creerGestionnaireAutopost({
-    depot, client: { disponible: false }, alimente: async () => ({ creees: 0, ecartees: [] }), alertes,
+    depot, client: { disponible: false }, alimente: async () => ({ creees: 0, ecartees: [] }), alertes, whatsapp,
   });
   const rep = repFactice();
   try {

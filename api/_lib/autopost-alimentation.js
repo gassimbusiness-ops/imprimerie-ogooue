@@ -451,6 +451,24 @@ const DIAGNOSTIC_PANNE = 'panne';
  * à chaque passage, et la file serait réécrite toutes les heures pour rien.
  * On compare donc des composants ORDONNÉS et STABLES.
  */
+/**
+ * Sous quel nom le manifeste range la légende d'un canal.
+ *
+ * Mesuré le 28/09/2026 : ChatGPT déclare `captions.whatsapp` (le nom de
+ * l'application), alors que le canal s'appelle `whatsapp_handoff` (la remise à
+ * un humain). La légende de la story était donc lue « absente » — sans
+ * conséquence tant que personne ne recevait la story, mais la story remise
+ * dans Telegram partirait sans son texte. Le nom exact du canal a toujours la
+ * priorité ; le nom court n'est pris que pour les remises à un humain.
+ */
+export function cleLegende(captions, canal) {
+  if (!captions || typeof captions !== 'object') return canal;
+  if (Object.prototype.hasOwnProperty.call(captions, canal)) return canal;
+  const court = String(canal || '').replace(/_handoff$/, '');
+  if (court !== canal && Object.prototype.hasOwnProperty.call(captions, court)) return court;
+  return canal;
+}
+
 function empreinteDepot({ publication, approbation, legende, surface, tolerance }) {
   const a = approbation || {};
   const composants = [
@@ -951,7 +969,7 @@ export async function alimenterFile({
   const aLire = new Set();
   for (const d of deposees) {
     for (const canal of d?.publication?.canaux || []) {
-      const fichierId = d?.captions?.[canal?.canal]?.fichier_id;
+      const fichierId = d?.captions?.[cleLegende(d?.publication?.captions, canal?.canal)]?.fichier_id;
       if (fichierId) aLire.add(fichierId);
     }
   }
@@ -1013,8 +1031,8 @@ export async function alimenterFile({
          directement dans `publication.json`, ou le NOM d'un fichier du dossier.
          Le texte en ligne ne coûte aucun téléchargement — c'est ce qui retire
          jusqu'à 48 appels d'un passage de 16 publications sur trois canaux. */
-      const lue = lireDeclarationLegende(pub.captions?.[canal.canal]);
-      const resolue = depot_?.captions?.[canal.canal];
+      const lue = lireDeclarationLegende(pub.captions?.[cleLegende(pub.captions, canal.canal)]);
+      const resolue = depot_?.captions?.[cleLegende(pub.captions, canal.canal)];
       let legende = null;
 
       if (lue.forme === 'absente') {

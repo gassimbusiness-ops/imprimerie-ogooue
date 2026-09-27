@@ -131,6 +131,7 @@ import { traiterApprobation, cleSignatureApprobation } from './_lib/autopost-app
 import { creerHebergeurMedias, stockageSupabase } from './_lib/autopost-medias.js';
 import { sonderDrive, lireConfigurationDrive, creerClientDrive, DIAGNOSTICS, MESSAGES } from './_lib/drive.js';
 import { verifierAlertesDuPassage } from './_lib/alertes-envoi.js';
+import { remettreWhatsAppDuPassage } from './_lib/autopost-whatsapp.js';
 
 /** Voies servies par ce point d'entrée. */
 export const VOIES_AUTOPOST = Object.freeze(['tick', 'etat', 'alimenter', 'approuver']);
@@ -227,6 +228,7 @@ export function creerGestionnaireAutopost({
   sonde = sonderDrive,
   alimente = null,
   alertes = verifierAlertesDuPassage,
+  whatsapp = remettreWhatsAppDuPassage,
 } = {}) {
   /**
    * ⛔ LE MAILLON QUI MANQUAIT — le Drive devient des lignes de file.
@@ -574,6 +576,12 @@ export function creerGestionnaireAutopost({
       bilan.alertes = await Promise.resolve()
         .then(() => alertes({ instant, debutMs: debutPassageMs }))
         .catch(() => ({ statut: 'panne', motif: 'vérification des alertes impossible' }));
+      /* La story WhatsApp du jour, remise dans le groupe Telegram (28/09).
+         EN DERNIER, et enveloppée comme les alertes : elle ne peut ni retarder
+         ni empêcher une publication. Voir `api/_lib/autopost-whatsapp.js`. */
+      bilan.whatsapp = await Promise.resolve()
+        .then(() => whatsapp({ depot, instant, debutMs: debutPassageMs }))
+        .catch(() => ({ statut: 'panne', motif: 'remise WhatsApp impossible' }));
       return res.status(200).json({ ok: true, declenche_par: droit.autorise ? 'cron' : 'admin', bilan });
     } catch (err) {
       console.error('[autopost] passage en échec :', err?.message);
