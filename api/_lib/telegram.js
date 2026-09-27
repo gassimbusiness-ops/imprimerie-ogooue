@@ -164,11 +164,17 @@ export async function trouverGroupesTelegram({ jeton, fetch: fetchFourni = null,
   }
 
   const groupes = new Map();
+  // Ce que Telegram a rendu, compté sans aucun contenu : de quoi comprendre un
+  // « aucun groupe » sans relire les messages de personne.
+  const vus = { mises_a_jour: corps.result.length, privees: 0, groupes: 0, autres: 0 };
   const estGroupe = (chat) => chat && (chat.type === 'group' || chat.type === 'supergroup') && chat.id != null;
   for (const u of corps.result) {
     for (const cle of ['message', 'edited_message', 'channel_post', 'my_chat_member', 'chat_member']) {
       const evenement = u?.[cle];
       const chat = evenement?.chat;
+      if (chat?.type === 'private') vus.privees += 1;
+      else if (estGroupe(chat)) vus.groupes += 1;
+      else if (chat) vus.autres += 1;
       if (!estGroupe(chat)) continue;
       const id = String(chat.id);
       const titre = String(chat.title || '').slice(0, 80);
@@ -184,5 +190,5 @@ export async function trouverGroupesTelegram({ jeton, fetch: fetchFourni = null,
       groupes.set(id, titre);
     }
   }
-  return { statut: 'ok', groupes: [...groupes].map(([id, titre]) => ({ id, titre })) };
+  return { statut: 'ok', groupes: [...groupes].map(([id, titre]) => ({ id, titre })), vus };
 }

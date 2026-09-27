@@ -869,3 +869,13 @@ test('28/09 : bot retiré du groupe, groupe devenu supergroupe — on suit l ord
   ]);
   assert.deepEqual(migre.groupes, [{ id: '-1004001', titre: 'OGOOUÉ Alertes' }]);
 });
+
+test('28/09 : « aucun groupe » dit CE QUE Telegram a rendu — compté, sans aucun contenu', async () => {
+  const depot = depotMemoire({ rapports: AVANT_LE_TROU });
+  const f = apiTelegram({ getUpdates: () => ({ status: 200, corps: { ok: true, result: [MISES_A_JOUR_28_09[0]] } }) });
+  await passageSansVariableDeGroupe({ depot, instant: '2026-09-20T08:00:00Z', f });
+  const motif = depot.etat().telegram_motif;
+  assert.match(motif, /1 mise\(s\) à jour : 1 en privé, 0 de groupe/);
+  assert.match(motif, /\/start@Ogoouealertesbot/);
+  assert.ok(!motif.includes('/start ') && !motif.includes('Gassim'), 'aucun contenu de message, aucun nom');
+});

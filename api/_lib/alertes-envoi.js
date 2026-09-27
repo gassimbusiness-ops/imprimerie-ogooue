@@ -374,7 +374,9 @@ export async function resoudreGroupeTelegram({ depot, jeton, chatVariable, fetch
     jeton_pose: true,
     groupes_vus: r.groupes.slice(0, 5),
     motif: r.groupes.length === 0
-      ? "le bot n'a vu aucun groupe : ajoute-le au groupe « OGOOUÉ Alertes », puis écris un message dans le groupe"
+      ? `le bot n'a vu aucun groupe (Telegram a rendu ${r.vus?.mises_a_jour ?? 0} mise(s) à jour : `
+        + `${r.vus?.privees ?? 0} en privé, ${r.vus?.groupes ?? 0} de groupe). Dans le groupe « OGOOUÉ Alertes », `
+        + 'envoie la commande /start@Ogoouealertesbot, puis relance le passage'
       : 'le bot est dans plusieurs groupes : pose TELEGRAM_CHAT_ID dans Vercel pour choisir',
   };
 }
