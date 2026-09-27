@@ -2569,6 +2569,93 @@ test('24/09 REJOUÉ : avec le compte CAISSE PAPETERIE, l\'avance est un TRANSFER
   });
 });
 
+/*
+ * 28/09/2026 — le dirigeant ne recolle PAS le schéma du GPT. ChatGPT ne connaît
+ * donc pas `enregistrerTransfert` et rappellera `enregistrerDepense` à la
+ * prochaine avance. Le compte CAISSE PAPETERIE existe désormais en base : le
+ * serveur enregistre l'avance comme le transfert qu'elle est.
+ */
+test('28/09 SANS NOUVEAU SCHÉMA : la dictée exacte du 24/09, envoyée à enregistrerDepense, devient un TRANSFERT', async () => {
+  await avecJeton(JETON, async () => {
+    const depot = faussDepot({ comptes: comptesAvecCaissePapeterie() });
+    const caisseAvant = depot.soldes.get('cpt-caisse');
+    const { code, corps } = await appeler({ voie: 'depense', corps: corpsDu24Septembre() }, { depot });
+    assert.equal(code, 201, JSON.stringify(corps));
+
+    assert.equal(depot.tables.mouvements_financiers.length, 1);
+    const [mvt] = depot.tables.mouvements_financiers;
+    assert.equal(mvt.type, 'transfert', 'jamais une sortie : l\'argent reste dans l\'entreprise');
+    assert.equal(mvt.compte_id, 'cpt-caisse', 'l\'argent part de la caisse principale');
+    assert.equal(mvt.compte_dest_id, 'cpt-caisse-pap', 'et arrive dans le tiroir de la papeterie');
+    assert.equal(mvt.categorie, 'transfert_chatgpt');
+    assert.equal(mvt.activite, 'papeterie');
+    assert.equal(mvt.date, '2026-09-24');
+    assert.equal(mvt.chatgpt.geste, 'transfert', 'l\'écran « Écritures ChatGPT » doit dire Transfert');
+    assert.equal(mvt.chatgpt.requalifie_depuis, 'depense', 'on garde la trace de ce que ChatGPT avait demandé');
+    assert.equal(mvt.chatgpt.phrase, PHRASE_24_09);
+    assert.equal(depot.soldes.get('cpt-caisse'), caisseAvant - 25000);
+    assert.equal(depot.soldes.get('cpt-caisse-pap'), 25000);
+    assert.match(corps.resume, /ENREGISTRÉ COMME TRANSFERT/, 'ChatGPT doit pouvoir le redire au gérant');
+    assert.match(depot.tables.audit_logs[0].details, /Transfert de 25 000 F/);
+  });
+});
+
+test('28/09 : ChatGPT met « papeterie » comme compte — l\'argent part quand même de la caisse principale', async () => {
+  await avecJeton(JETON, async () => {
+    const depot = faussDepot({ comptes: comptesAvecCaissePapeterie() });
+    const { code, corps } = await appeler({
+      voie: 'depense', corps: corpsDu24Septembre({ cle: 'avance-pap-compte-pap', compte: 'papeterie' }),
+    }, { depot });
+    assert.equal(code, 201, JSON.stringify(corps));
+    const [mvt] = depot.tables.mouvements_financiers;
+    assert.equal(mvt.compte_id, 'cpt-caisse');
+    assert.equal(mvt.compte_dest_id, 'cpt-caisse-pap');
+  });
+});
+
+test('28/09 : un fonds de caisse SANS destination nommée reste refusé — on ne devine pas un tiroir', async () => {
+  await avecJeton(JETON, async () => {
+    const depot = faussDepot({ comptes: comptesAvecCaissePapeterie() });
+    const { code, corps } = await appeler({
+      voie: 'depense',
+      corps: { cle: 'fonds-sans-dest', phrase: 'mets 10 000 de fonds de caisse', montant: 10000, motif: 'Fonds de caisse' },
+    }, { depot });
+    assert.equal(code, 409, JSON.stringify(corps));
+    assert.equal(depot.tables.mouvements_financiers.length, 0);
+  });
+});
+
+test('28/09 : un VRAI achat pour la papeterie reste une dépense', async () => {
+  await avecJeton(JETON, async () => {
+    const depot = faussDepot({ comptes: comptesAvecCaissePapeterie() });
+    const { code, corps } = await appeler({
+      voie: 'depense',
+      corps: {
+        cle: 'achat-cahiers-pap', phrase: 'on a acheté des cahiers pour la papeterie 15 000',
+        montant: 15000, motif: 'Achat de cahiers pour la papeterie', activite: 'papeterie',
+      },
+    }, { depot });
+    assert.equal(code, 201, JSON.stringify(corps));
+    const [mvt] = depot.tables.mouvements_financiers;
+    assert.equal(mvt.type, 'sortie');
+    assert.equal(mvt.categorie, 'depense_chatgpt');
+    assert.equal(depot.soldes.get('cpt-caisse-pap'), 0, 'le tiroir papeterie n\'a rien reçu');
+  });
+});
+
+test('28/09 : la même avance envoyée deux fois ne déplace l\'argent qu\'UNE fois', async () => {
+  await avecJeton(JETON, async () => {
+    const depot = faussDepot({ comptes: comptesAvecCaissePapeterie() });
+    const corps = corpsDu24Septembre({ cle: 'avance-pap-deux-fois' });
+    const un = await appeler({ voie: 'depense', corps }, { depot });
+    const deux = await appeler({ voie: 'depense', corps }, { depot });
+    assert.equal(un.code, 201);
+    assert.equal(deux.code, 200);
+    assert.equal(depot.tables.mouvements_financiers.length, 1);
+    assert.equal(depot.soldes.get('cpt-caisse-pap'), 25000);
+  });
+});
+
 test('TRANSFERT : la même clé deux fois ne déplace l\'argent qu\'UNE fois', async () => {
   await avecJeton(JETON, async () => {
     const depot = faussDepot({ comptes: comptesAvecCaissePapeterie() });

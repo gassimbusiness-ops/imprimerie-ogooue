@@ -568,7 +568,8 @@ export const DEPENSES_REFUSEES = Object.freeze({
   transfert:
     "Une avance de caisse, un fonds de caisse ou un transfert entre caisses n'est PAS une "
     + "dépense : l'argent reste dans l'entreprise, il change seulement de tiroir. Utilise "
-    + 'enregistrerTransfert (compte_source → compte_destination). Rien n\'a été écrit.',
+    + 'enregistrerTransfert (compte_source → compte_destination). Pour le comptoir papeterie, '
+    + 'un motif qui dit « papeterie » est enregistré en transfert automatiquement. Rien n\'a été écrit.',
   paie:
     "Une avance sur salaire n'est pas une dépense ordinaire : elle se déduit du net à payer de "
     + "l'employé. Elle se saisit à l'écran « Avances & Charges », pas par ChatGPT. Rien n'a été écrit.",
@@ -642,6 +643,56 @@ export function natureHorsDepense(motif) {
   return null;
 }
 
+/**
+ * Une « dépense » qui est en fait l'avance du comptoir papeterie — ENREGISTRÉE
+ * comme le transfert qu'elle est, au lieu d'être refusée.
+ *
+ * Ajouté le 28/09/2026. Le dirigeant ne recolle pas le schéma du GPT : ChatGPT
+ * ne connaît donc pas `enregistrerTransfert`, et continuera d'appeler
+ * `enregistrerDepense` quand le gérant dira « avance pour le comptoir de la
+ * papeterie ». Refuser laissait le gérant sans solution ; l'enregistrer en
+ * dépense était l'erreur du 24/09. On fait donc ce que l'écran Finances aurait
+ * fait : un transfert de la caisse principale vers « CAISSE PAPETERIE ».
+ *
+ * ⚠️ ÉTROIT, VOLONTAIREMENT. Seulement quand le motif est déjà reconnu comme de
+ * l'argent qui change de tiroir (`natureHorsDepense` = 'transfert') ET qu'il
+ * nomme la papeterie. Tout le reste garde le refus : on ne devine pas une
+ * destination. Si le transfert lui-même est refusé (compte papeterie absent,
+ * ambigu…), on rend le refus « Ce n'est pas une dépense » — jamais une dépense.
+ *
+ * Le compte d'où l'argent part : celui que ChatGPT a donné, sauf s'il désigne
+ * la papeterie elle-même (ChatGPT y met parfois l'activité) — alors la caisse
+ * principale, comme l'écran Finances le fait par défaut.
+ *
+ * @returns {object|null} la réponse du geste, ou `null` pour « pas mon cas »
+ */
+function requalifierEnTransfert({ corps, motif, ctx, contexte, marqueur, cle }) {
+  if (!/\bpapeterie\b/.test(normaliserMotif(motif))) return null;
+  const demandeSource = corps.compte ?? 'caisse';
+  const source = motCleCompte(demandeSource) === 'papeterie' ? 'caisse' : demandeSource;
+  const r = gesteTransfert({
+    corps: { ...corps, compte_source: source, compte_destination: 'papeterie' },
+    ctx,
+    contexte,
+    marqueur: {
+      ...marqueur,
+      chatgpt: { ...marqueur.chatgpt, geste: 'transfert', requalifie_depuis: 'depense' },
+    },
+    cle,
+  });
+  if (!r.ok) {
+    return refus("Ce n'est pas une dépense", `${DEPENSES_REFUSEES.transfert} ${r.detail}`, 409);
+  }
+  return {
+    ...r,
+    resume: `Demandé comme dépense, ENREGISTRÉ COMME TRANSFERT (pas une dépense). ${r.resume}`,
+    journal: {
+      ...r.journal,
+      metadata: { ...r.journal.metadata, requalifie_depuis: 'depense' },
+    },
+  };
+}
+
 function gesteArgent({ sens, corps, ctx, contexte, marqueur, cle, geste }) {
   const { comptes } = contexte;
   const montant = montantValide(corps.montant);
@@ -665,6 +716,10 @@ function gesteArgent({ sens, corps, ctx, contexte, marqueur, cle, geste }) {
   // vraiment, et qu'il ne faut surtout pas refuser.
   if (sens === 'sortie') {
     const nature = natureHorsDepense(motif);
+    if (nature === 'transfert') {
+      const requalifie = requalifierEnTransfert({ corps, motif, ctx, contexte, marqueur, cle });
+      if (requalifie) return requalifie;
+    }
     if (nature) {
       return refus(
         nature === 'paie' ? 'Avance sur salaire : pas une dépense' : "Ce n'est pas une dépense",

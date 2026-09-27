@@ -113,3 +113,76 @@ export function creerClientTelegram({ env = process.env, fetch: fetchFourni = nu
     },
   };
 }
+
+/**
+ * Trouve le groupe où le bot a été ajouté — pour que le dirigeant n'ait PAS à
+ * chercher un numéro de groupe (méthode `getUpdates`, lecture seule).
+ *
+ * Ajouté le 28/09/2026 : pour trouver `TELEGRAM_CHAT_ID`, il fallait ouvrir une
+ * adresse de l'API avec le jeton dedans — l'essai du dirigeant a rendu
+ * « Not Found ». Le serveur, qui a déjà le jeton, fait la même lecture lui-même.
+ *
+ * Telegram garde les mises à jour 24 h : l'ajout du bot au groupe (`my_chat_member`)
+ * y figure, même quand le bot ne lit pas les messages du groupe (mode privé).
+ * On ne confirme rien (pas d'`offset`) : la lecture ne consomme rien.
+ *
+ * Rend seulement les GROUPES (`group`, `supergroup`), jamais une conversation
+ * privée : une alerte de caisse n'a rien à faire dans le fil personnel de quelqu'un.
+ * Suit l'ordre des mises à jour : un bot retiré du groupe (`left`, `kicked`)
+ * n'y est plus ; un groupe devenu « supergroupe » change de numéro
+ * (`migrate_to_chat_id`) — on garde le nouveau.
+ *
+ * @returns {Promise<{statut: 'ok', groupes: Array<{id: string, titre: string}>}|{statut: 'echec', motif: string}>}
+ */
+export async function trouverGroupesTelegram({ jeton, fetch: fetchFourni = null, delaiMs = 2_000 } = {}) {
+  const faireFetch = fetchFourni || globalThis.fetch;
+  if (!jeton) return { statut: 'echec', motif: 'TELEGRAM_BOT_TOKEN absente' };
+  if (typeof faireFetch !== 'function') return { statut: 'echec', motif: 'fetch indisponible' };
+
+  const controleur = new AbortController();
+  const minuterie = setTimeout(() => controleur.abort(), Math.max(250, delaiMs));
+  let reponse;
+  let corps = null;
+  try {
+    reponse = await faireFetch(`https://api.telegram.org/bot${jeton}/getUpdates`, { method: 'GET', signal: controleur.signal });
+    try { corps = await reponse.json(); } catch { corps = null; }
+  } catch (err) {
+    clearTimeout(minuterie);
+    const motif = controleur.signal.aborted || err?.name === 'AbortError'
+      ? `pas de réponse de Telegram en ${delaiMs} ms`
+      : `connexion impossible : ${err?.message || err}`;
+    return { statut: 'echec', motif: masquerJeton(motif, jeton) };
+  }
+  clearTimeout(minuterie);
+
+  if (!reponse.ok || corps?.ok !== true || !Array.isArray(corps.result)) {
+    const description = corps?.description ? String(corps.description) : `HTTP ${reponse.status}`;
+    const aide = reponse.status === 401 || reponse.status === 404
+      ? ' — le jeton posé dans Vercel est refusé : recopie-le en entier depuis @BotFather, sans espace'
+      : '';
+    return { statut: 'echec', motif: masquerJeton(`Telegram refuse : ${description}${aide}`, jeton) };
+  }
+
+  const groupes = new Map();
+  const estGroupe = (chat) => chat && (chat.type === 'group' || chat.type === 'supergroup') && chat.id != null;
+  for (const u of corps.result) {
+    for (const cle of ['message', 'edited_message', 'channel_post', 'my_chat_member', 'chat_member']) {
+      const evenement = u?.[cle];
+      const chat = evenement?.chat;
+      if (!estGroupe(chat)) continue;
+      const id = String(chat.id);
+      const titre = String(chat.title || '').slice(0, 80);
+      if (evenement.migrate_to_chat_id != null) {
+        groupes.delete(id);
+        groupes.set(String(evenement.migrate_to_chat_id), titre);
+        continue;
+      }
+      if (cle === 'my_chat_member' && ['left', 'kicked'].includes(evenement.new_chat_member?.status)) {
+        groupes.delete(id);
+        continue;
+      }
+      groupes.set(id, titre);
+    }
+  }
+  return { statut: 'ok', groupes: [...groupes].map(([id, titre]) => ({ id, titre })) };
+}

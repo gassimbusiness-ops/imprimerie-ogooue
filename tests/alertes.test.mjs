@@ -743,3 +743,129 @@ test('dépôt réel : la réservation Telegram est conditionnée à la version l
   assert.deepEqual(faux.journal[0].filtres, [['id', 'id1'], ['collection', 'alertes'], ['updated_at', 'v-lue']]);
   assert.deepEqual(await d.remplacerSiVersion('id1', { a: 1 }, null), { ok: false, version: null }, 'sans version, pas de réservation');
 });
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   7. LE GROUPE TROUVÉ PAR LE SERVEUR — 28/09/2026
+   ═══════════════════════════════════════════════════════════════════════════
+ *
+ * Le dirigeant a posé TELEGRAM_BOT_TOKEN dans Vercel, créé le groupe
+ * « OGOOUÉ Alertes » et y a ajouté le bot. Pour trouver le numéro du groupe, il
+ * a ouvert l'adresse `getUpdates` : « Not Found ». Le serveur, qui a déjà le
+ * jeton, fait cette lecture lui-même : plus de numéro à chercher.
+ */
+
+/** Doublure de l'API Telegram : `getUpdates` rend `miseAJour`, `sendMessage` note le groupe. */
+function apiTelegram({ getUpdates = () => ({ status: 200, corps: { ok: true, result: [] } }) } = {}) {
+  const lectures = [];
+  const envois = [];
+  const f = async (url, init = {}) => {
+    const methode = String(url).split('/').pop();
+    let r;
+    if (methode === 'getUpdates') { lectures.push(url); r = getUpdates(); }
+    else { envois.push(JSON.parse(init.body)); r = { status: 200, corps: { ok: true, result: {} } }; }
+    return { ok: r.status >= 200 && r.status < 300, status: r.status, json: async () => r.corps };
+  };
+  f.lectures = lectures;
+  f.envois = envois;
+  return f;
+}
+
+const MISES_A_JOUR_28_09 = [
+  // Le /start envoyé au bot en privé : une conversation privée, JAMAIS une destination.
+  { update_id: 1, message: { chat: { id: 7001, type: 'private', first_name: 'Gassim' }, text: '/start' } },
+  // L'ajout du bot au groupe.
+  { update_id: 2, my_chat_member: { chat: { id: -4001, type: 'group', title: 'OGOOUÉ Alertes' }, new_chat_member: { status: 'member' } } },
+];
+
+function passageSansVariableDeGroupe({ depot, instant, f }) {
+  return verifierAlertesDuPassage({
+    instant: new Date(instant), debutMs: Date.now(), depot,
+    env: { TELEGRAM_BOT_TOKEN: FAUX_JETON }, fetchTelegram: f,
+  });
+}
+
+test('28/09 : jeton posé, pas de TELEGRAM_CHAT_ID — le serveur trouve « OGOOUÉ Alertes » et y envoie', async () => {
+  const depot = depotMemoire({ rapports: AVANT_LE_TROU });
+  const f = apiTelegram({ getUpdates: () => ({ status: 200, corps: { ok: true, result: MISES_A_JOUR_28_09 } }) });
+  const b = await passageSansVariableDeGroupe({ depot, instant: '2026-09-20T08:00:00Z', f });
+
+  assert.equal(b.telegram.configure, true);
+  assert.equal(f.envois.length, 1, 'l alerte du trou part sur Telegram');
+  assert.equal(String(f.envois[0].chat_id), '-4001', 'dans le GROUPE, jamais dans la conversation privée');
+  const etat = depot.etat();
+  assert.equal(etat.telegram_chat_id_detecte, '-4001');
+  assert.equal(etat.telegram_groupe_titre, 'OGOOUÉ Alertes');
+  assert.ok(!JSON.stringify(etat).includes(FAUX_JETON.split(':')[1]), 'le jeton ne s écrit jamais en base');
+
+  const ligne = ligneEtatVerification({ disponible: true, etat }, Date.parse('2026-09-20T09:00:00Z'));
+  assert.match(ligne.texte, /Telegram configuré\. Groupe « OGOOUÉ Alertes » trouvé automatiquement/);
+});
+
+test('28/09 : le groupe trouvé est GARDÉ — les passages suivants ne relisent pas Telegram (les mises à jour expirent en 24 h)', async () => {
+  const depot = depotMemoire({ rapports: AVANT_LE_TROU });
+  let resultat = MISES_A_JOUR_28_09;
+  const f = apiTelegram({ getUpdates: () => ({ status: 200, corps: { ok: true, result: resultat } }) });
+  await passageSansVariableDeGroupe({ depot, instant: '2026-09-20T08:00:00Z', f });
+  resultat = []; // 24 h plus tard, Telegram a tout oublié
+  const b = await passageSansVariableDeGroupe({ depot, instant: '2026-09-21T17:00:00Z', f });
+  assert.equal(f.lectures.length, 1, 'une seule lecture de getUpdates');
+  assert.equal(b.telegram.configure, true);
+  assert.equal(depot.etat().telegram_chat_id_detecte, '-4001');
+});
+
+test('28/09 : TELEGRAM_CHAT_ID posée a toujours raison — aucune lecture de getUpdates', async () => {
+  const depot = depotMemoire({ rapports: AVANT_LE_TROU });
+  const f = apiTelegram({ getUpdates: () => { throw new Error('⛔ lecture inutile'); } });
+  await verifierAlertesDuPassage({
+    instant: new Date('2026-09-20T08:00:00Z'), debutMs: Date.now(), depot,
+    env: { TELEGRAM_BOT_TOKEN: FAUX_JETON, TELEGRAM_CHAT_ID: '-777' }, fetchTelegram: f,
+  });
+  assert.equal(f.lectures.length, 0);
+  assert.equal(String(f.envois[0].chat_id), '-777');
+  assert.equal(depot.etat().telegram_source_groupe, 'variable');
+});
+
+test('28/09 : jeton refusé (le « Not Found ») — rien ne part, l écran dit quoi faire, sans le jeton', async () => {
+  const depot = depotMemoire({ rapports: AVANT_LE_TROU });
+  const f = apiTelegram({ getUpdates: () => ({ status: 404, corps: { ok: false, error_code: 404, description: 'Not Found' } }) });
+  const b = await passageSansVariableDeGroupe({ depot, instant: '2026-09-20T08:00:00Z', f });
+  assert.equal(b.statut, 'ok', 'le passage ne tombe pas');
+  assert.equal(b.telegram.configure, false);
+  assert.equal(f.envois.length, 0);
+  const etat = depot.etat();
+  assert.equal(etat.telegram_jeton_pose, true);
+  assert.match(etat.telegram_motif, /recopie-le en entier/);
+  const ligne = ligneEtatVerification({ disponible: true, etat }, Date.parse('2026-09-20T09:00:00Z'));
+  assert.match(ligne.texte, /Jeton Telegram posé, mais aucun groupe utilisable/);
+  assert.equal(ligne.alarme, true);
+  assert.ok(!ligne.texte.includes(FAUX_JETON.split(':')[1]));
+});
+
+test('28/09 : deux groupes — on ne choisit PAS, on les nomme', async () => {
+  const depot = depotMemoire({ rapports: AVANT_LE_TROU });
+  const f = apiTelegram({ getUpdates: () => ({ status: 200, corps: { ok: true, result: [
+    ...MISES_A_JOUR_28_09,
+    { update_id: 3, my_chat_member: { chat: { id: -4002, type: 'supergroup', title: 'Famille' }, new_chat_member: { status: 'member' } } },
+  ] } }) });
+  const b = await passageSansVariableDeGroupe({ depot, instant: '2026-09-20T08:00:00Z', f });
+  assert.equal(b.telegram.configure, false);
+  assert.equal(f.envois.length, 0, 'une alerte de caisse dans le mauvais groupe est pire que rien');
+  assert.deepEqual(depot.etat().telegram_groupes_vus.map((g) => g.id).sort(), ['-4001', '-4002']);
+});
+
+test('28/09 : bot retiré du groupe, groupe devenu supergroupe — on suit l ordre des mises à jour', async () => {
+  const { trouverGroupesTelegram } = await import('../api/_lib/telegram.js');
+  const lire = (result) => trouverGroupesTelegram({
+    jeton: FAUX_JETON, fetch: apiTelegram({ getUpdates: () => ({ status: 200, corps: { ok: true, result } }) }),
+  });
+  const retire = await lire([
+    ...MISES_A_JOUR_28_09,
+    { update_id: 3, my_chat_member: { chat: { id: -4001, type: 'group', title: 'OGOOUÉ Alertes' }, new_chat_member: { status: 'left' } } },
+  ]);
+  assert.deepEqual(retire.groupes, []);
+  const migre = await lire([
+    ...MISES_A_JOUR_28_09,
+    { update_id: 3, message: { chat: { id: -4001, type: 'group', title: 'OGOOUÉ Alertes' }, migrate_to_chat_id: -1004001 } },
+  ]);
+  assert.deepEqual(migre.groupes, [{ id: '-1004001', titre: 'OGOOUÉ Alertes' }]);
+});

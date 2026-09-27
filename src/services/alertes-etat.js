@@ -68,7 +68,20 @@ export function ligneEtatVerification(serveur, maintenantMs = Date.now()) {
   const perimee = (maintenantMs - new Date(etat.dernier_passage_le).getTime()) > FRAICHEUR_VERIFICATION_MS;
   const suite = perimee ? ' ⚠️ Plus de 36 h sans vérification : aucune alerte ne part plus.' : '';
   if (etat.telegram_configure) {
-    return { texte: `Telegram configuré. Dernière vérification : ${quand}.${suite}`, alarme: perimee };
+    const groupe = etat.telegram_source_groupe === 'detecte'
+      ? ` Groupe « ${etat.telegram_groupe_titre || 'sans nom'} » trouvé automatiquement.`
+      : '';
+    return { texte: `Telegram configuré.${groupe} Dernière vérification : ${quand}.${suite}`, alarme: perimee };
+  }
+  if (etat.telegram_jeton_pose) {
+    const vus = Array.isArray(etat.telegram_groupes_vus) && etat.telegram_groupes_vus.length
+      ? ` Groupes vus : ${etat.telegram_groupes_vus.map((g) => `« ${g.titre || 'sans nom'} » (${g.id})`).join(', ')}.`
+      : '';
+    return {
+      texte: `Jeton Telegram posé, mais aucun groupe utilisable : ${etat.telegram_motif || 'raison inconnue'}.${vus} `
+        + `Les alertes ne s’affichent que dans l’application. Dernière vérification : ${quand}.${suite}`,
+      alarme: true,
+    };
   }
   return {
     texte: `Telegram non configuré : les alertes ne s’affichent que dans l’application. Dernière vérification : ${quand}.${suite}`,

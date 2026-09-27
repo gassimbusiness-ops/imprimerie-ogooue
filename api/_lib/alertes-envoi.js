@@ -51,7 +51,7 @@
  */
 import { createHash } from 'node:crypto';
 import { evaluerAlertes, identifierAlertes, texteTelegram } from './alertes.js';
-import { creerClientTelegram, lireConfigurationTelegram, masquerJeton } from './telegram.js';
+import { creerClientTelegram, lireConfigurationTelegram, masquerJeton, trouverGroupesTelegram } from './telegram.js';
 import { DUREE_MAX_FONCTION_MS } from './autopost-alimentation.js';
 import { supabaseAdmin } from './supabase-admin.js';
 import { ligneAppData } from '../../src/services/ligne-app-data.js';
@@ -338,6 +338,60 @@ function avecDelai(promesse, ms) {
 }
 
 /**
+ * Le groupe Telegram où envoyer, sans que le dirigeant ait à chercher son numéro.
+ *
+ * Ordre : `TELEGRAM_CHAT_ID` si elle est posée (elle a toujours raison) ; sinon
+ * le groupe déjà trouvé et gardé sur la ligne d'état ; sinon on demande à
+ * Telegram (`trouverGroupesTelegram`). On ne CHOISIT jamais entre plusieurs
+ * groupes : une alerte de caisse envoyée au mauvais groupe est pire que pas
+ * d'alerte. Dans ce cas, la ligne d'état les nomme et la variable tranche.
+ *
+ * NE LÈVE JAMAIS. Ne rend aucun secret : un numéro de groupe n'en est pas un.
+ */
+export async function resoudreGroupeTelegram({ depot, jeton, chatVariable, fetch = null, delaiMs = 2_000 }) {
+  if (!jeton) return { jeton_pose: false };
+  if (chatVariable) return { jeton_pose: true, source: 'variable', chat_id: chatVariable };
+  let precedent = null;
+  try {
+    const traces = await depot.lireTraces();
+    precedent = traces.find((t) => t.data?.type_ligne === 'etat')?.data || null;
+  } catch { precedent = null; }
+  if (precedent?.telegram_chat_id_detecte) {
+    return {
+      jeton_pose: true, source: 'detecte',
+      chat_id: String(precedent.telegram_chat_id_detecte), titre: precedent.telegram_groupe_titre || '',
+    };
+  }
+  let r;
+  try { r = await trouverGroupesTelegram({ jeton, fetch, delaiMs }); } catch (err) {
+    r = { statut: 'echec', motif: masquerJeton(err?.message || err, jeton) };
+  }
+  if (r.statut !== 'ok') return { jeton_pose: true, motif: r.motif };
+  if (r.groupes.length === 1) {
+    return { jeton_pose: true, source: 'detecte', chat_id: r.groupes[0].id, titre: r.groupes[0].titre };
+  }
+  return {
+    jeton_pose: true,
+    groupes_vus: r.groupes.slice(0, 5),
+    motif: r.groupes.length === 0
+      ? "le bot n'a vu aucun groupe : ajoute-le au groupe « OGOOUÉ Alertes », puis écris un message dans le groupe"
+      : 'le bot est dans plusieurs groupes : pose TELEGRAM_CHAT_ID dans Vercel pour choisir',
+  };
+}
+
+/** Ce que la ligne d'état garde du groupe — jamais le jeton. */
+function champsEtatGroupe(g) {
+  return {
+    telegram_jeton_pose: Boolean(g?.jeton_pose),
+    telegram_source_groupe: g?.source || null,
+    telegram_chat_id_detecte: g?.source === 'detecte' ? g.chat_id : null,
+    telegram_groupe_titre: g?.source === 'detecte' ? (g.titre || '') : null,
+    telegram_groupes_vus: Array.isArray(g?.groupes_vus) ? g.groupes_vus : null,
+    telegram_motif: g?.motif || null,
+  };
+}
+
+/**
  * Le point d'entrée du passage. NE LÈVE JAMAIS.
  *
  * @param {object} p
@@ -351,12 +405,15 @@ function avecDelai(promesse, ms) {
  */
 export async function verifierAlertesDuPassage({
   instant, debutMs, horloge = () => Date.now(), depot = null, telegram = null, env = process.env,
+  fetchTelegram = null,
 } = {}) {
   const t0 = horloge();
-  const { jeton } = lireConfigurationTelegram(env);
+  const { jeton, chatId: chatVariable } = lireConfigurationTelegram(env);
   const restantFonction = () => DUREE_MAX_FONCTION_MS - (horloge() - (debutMs ?? t0)) - MARGE_REPONSE_MS;
   const budget = Math.min(BUDGET_ALERTES_MS, restantFonction());
-  const client = telegram || creerClientTelegram({ env });
+  // Client provisoire, pour les sorties anticipées : il ne connaît que les variables.
+  let client = telegram || creerClientTelegram({ env, fetch: fetchTelegram });
+  let groupe = {};
 
   if (budget < BUDGET_MINIMAL_MS) {
     return {
@@ -375,6 +432,18 @@ export async function verifierAlertesDuPassage({
   }
 
   const fin = t0 + budget;
+
+  // Le groupe : la variable si elle est posée, sinon celui que le bot a vu.
+  if (!telegram) {
+    groupe = await resoudreGroupeTelegram({
+      depot: d, jeton, chatVariable, fetch: fetchTelegram,
+      delaiMs: Math.min(2_000, Math.max(250, fin - horloge() - BUDGET_MINIMAL_MS)),
+    });
+    if (groupe.chat_id) {
+      client = creerClientTelegram({ env: { ...env, TELEGRAM_CHAT_ID: groupe.chat_id }, fetch: fetchTelegram });
+    }
+  }
+
   let bilan;
   try {
     const resultat = await avecDelai(
@@ -401,6 +470,7 @@ export async function verifierAlertesDuPassage({
         statut: bilan.statut,
         motif: bilan.motif || null,
         telegram_configure: client.configure,
+        ...champsEtatGroupe(groupe),
         actives: Array.isArray(bilan.actives) ? bilan.actives.length : null,
         duree_ms: bilan.duree_ms,
       }, instant.toISOString()), Math.max(200, fin - horloge()));
